@@ -25,4 +25,4 @@ mac:
   category: public.app-category.developer-tools
   target:
     - target: dmg
-      arch: [universal]
+      arch: [arm64]
