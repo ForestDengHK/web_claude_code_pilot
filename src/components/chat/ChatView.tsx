@@ -147,7 +147,7 @@ export function ChatView({ sessionId, initialMessages = [], modelName, initialMo
       // Build display content: embed file metadata as HTML comment for MessageItem to parse
       let displayContent = content;
       if (files && files.length > 0) {
-        const fileMeta = files.map(f => ({ id: f.id, name: f.name, type: f.type, size: f.size }));
+        const fileMeta = files.map(f => ({ id: f.id, name: f.name, type: f.type, size: f.size, data: f.data }));
         displayContent = `<!--files:${JSON.stringify(fileMeta)}-->${content}`;
       }
 

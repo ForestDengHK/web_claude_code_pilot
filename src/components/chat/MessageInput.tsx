@@ -770,6 +770,9 @@ export function MessageInput({
             />
             <PromptInputFooter>
               <PromptInputTools>
+                {/* Attach file button */}
+                <AttachFileButton />
+
                 {/* Folder picker button */}
                 <PromptInputButton
                   onClick={() => setFolderPickerOpen(true)}
@@ -780,9 +783,6 @@ export function MessageInput({
                     {folderShortName || 'Folder'}
                   </span>
                 </PromptInputButton>
-
-                {/* Attach file button */}
-                <AttachFileButton />
 
                 {/* Mode selector */}
                 <div className="relative" ref={modeMenuRef}>

@@ -366,61 +366,28 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           }
         };
 
-        // Build the prompt: if there are file attachments, construct multimodal content
-        let finalPrompt: string | { content: unknown[] } = prompt;
+        // Build the prompt: save all file attachments to disk and reference them in the prompt.
+        // Claude Code's built-in Read tool can read images (converts to base64 internally),
+        // PDFs, and text files — this is more reliable than constructing SDK multimodal messages.
+        let finalPrompt: string = prompt;
 
         if (files && files.length > 0) {
-          // Allowed image types for Claude multimodal: JPEG, PNG, GIF, WebP; max 5MB each
-          const allowedImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-          const maxImageSize = 5 * 1024 * 1024;
-          const imageFiles = files.filter(f =>
-            isImageFile(f.type) && allowedImageTypes.includes(f.type) && f.size <= maxImageSize
-          );
-          const nonImageFiles = files.filter(f => !isImageFile(f.type));
-
-          // Save non-image files to disk so Claude's Read tool can access them
-          let fileReferences = '';
-          if (nonImageFiles.length > 0) {
-            const workDir = workingDirectory || process.cwd();
-            const savedPaths = saveUploadedFiles(nonImageFiles, workDir);
-            fileReferences = savedPaths
-              .map((p, i) => `[User attached file: ${p} (${nonImageFiles[i].name})]`)
-              .join('\n') + '\n\n';
-          }
-
-          // For image files, construct multimodal content blocks
-          if (imageFiles.length > 0) {
-            const contentBlocks: unknown[] = [];
-
-            // Add image content blocks
-            for (const img of imageFiles) {
-              // Supported: image/jpeg, image/png, image/gif, image/webp
-              const mediaType = img.type as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
-              contentBlocks.push({
-                type: 'image',
-                source: {
-                  type: 'base64',
-                  media_type: mediaType,
-                  data: img.data,
-                },
-              });
-            }
-
-            // Add text block with optional file references prepended
-            contentBlocks.push({
-              type: 'text',
-              text: fileReferences + prompt,
-            });
-
-            finalPrompt = { content: contentBlocks };
-          } else {
-            // No images, just prepend file references to the text prompt
-            finalPrompt = fileReferences + prompt;
-          }
+          const workDir = workingDirectory || process.cwd();
+          const savedPaths = saveUploadedFiles(files, workDir);
+          const fileReferences = savedPaths
+            .map((p, i) => {
+              const f = files[i];
+              if (isImageFile(f.type)) {
+                return `[User attached image: ${p} (${f.name})]`;
+              }
+              return `[User attached file: ${p} (${f.name})]`;
+            })
+            .join('\n');
+          finalPrompt = `${fileReferences}\n\nPlease read the attached file(s) above using your Read tool, then respond to the user's message:\n\n${prompt}`;
         }
 
         const conversation = query({
-          prompt: finalPrompt as string,
+          prompt: finalPrompt,
           options: queryOptions,
         });
 
