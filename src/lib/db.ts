@@ -483,3 +483,60 @@ export function deactivateAllProviders(): void {
   const db = getDb();
   db.prepare('UPDATE api_providers SET is_active = 0').run();
 }
+
+// ==========================================
+// Graceful Shutdown
+// ==========================================
+
+/**
+ * Close the database connection gracefully.
+ * In WAL mode, this ensures the WAL is checkpointed and the
+ * -wal/-shm files are cleaned up properly.
+ */
+export function closeDb(): void {
+  if (db) {
+    try {
+      db.close();
+      console.log('[db] Database closed gracefully');
+    } catch (err) {
+      console.warn('[db] Error closing database:', err);
+    }
+    db = null;
+  }
+}
+
+// Register shutdown handlers to close the database when the process exits.
+// This prevents WAL file accumulation and potential data loss.
+function registerShutdownHandlers(): void {
+  let shuttingDown = false;
+
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[db] Received ${signal}, closing database...`);
+    closeDb();
+  };
+
+  // 'exit' fires synchronously when the process is about to exit
+  process.on('exit', () => shutdown('exit'));
+
+  // Handle termination signals (Docker stop, systemd, Ctrl+C, etc.)
+  process.on('SIGTERM', () => {
+    shutdown('SIGTERM');
+    process.exit(0);
+  });
+  process.on('SIGINT', () => {
+    shutdown('SIGINT');
+    process.exit(0);
+  });
+
+  // Handle Windows-specific close events
+  if (process.platform === 'win32') {
+    process.on('SIGHUP', () => {
+      shutdown('SIGHUP');
+      process.exit(0);
+    });
+  }
+}
+
+registerShutdownHandlers();
