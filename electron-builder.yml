@@ -12,6 +12,7 @@ files:
   - "!scripts"
   - "!docs"
   - "!release"
+  - "!data"
 extraResources:
   - from: .next/standalone/
     to: standalone/

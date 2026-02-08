@@ -282,6 +282,13 @@ export function ChatListPanel({ open }: ChatListPanelProps) {
           )}
         </div>
       </ScrollArea>
+
+      {/* Version */}
+      <div className="shrink-0 px-3 py-2 text-center">
+        <span className="text-[10px] text-muted-foreground/40">
+          v{process.env.NEXT_PUBLIC_APP_VERSION}
+        </span>
+      </div>
     </aside>
   );
 }
