@@ -48,9 +48,17 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   }, [id, setWorkingDirectory, setSessionId, setPanelSessionTitle, setPanelOpen]);
 
   useEffect(() => {
+    // Reset state when switching sessions
+    setLoading(true);
+    setError(null);
+    setMessages([]);
+
+    let cancelled = false;
+
     async function loadMessages() {
       try {
         const res = await fetch(`/api/chat/sessions/${id}/messages`);
+        if (cancelled) return;
         if (!res.ok) {
           if (res.status === 404) {
             setError('Session not found');
@@ -59,15 +67,19 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           throw new Error('Failed to load messages');
         }
         const data: MessagesResponse = await res.json();
+        if (cancelled) return;
         setMessages(data.messages);
       } catch (err) {
+        if (cancelled) return;
         setError(err instanceof Error ? err.message : 'Failed to load messages');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
     loadMessages();
+
+    return () => { cancelled = true; };
   }, [id]);
 
   if (loading) {
@@ -104,7 +116,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           </h2>
         </div>
       )}
-      <ChatView sessionId={id} initialMessages={messages} modelName={sessionModel} initialMode={sessionMode} />
+      <ChatView key={id} sessionId={id} initialMessages={messages} modelName={sessionModel} initialMode={sessionMode} />
     </div>
   );
 }
