@@ -5,7 +5,6 @@ import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { IconSvgElement } from "@hugeicons/react";
 import {
   Message02Icon,
   PlusSignIcon,
