@@ -418,20 +418,28 @@ app.whenReady().then(async () => {
     return { hasNode, nodeVersion, hasClaude, claudeVersion };
   });
 
-  ipcMain.handle('install:start', () => {
+  ipcMain.handle('install:start', (_event: Electron.IpcMainInvokeEvent, options?: { includeNode?: boolean }) => {
     if (installState.status === 'running') {
-      return { error: 'Installation is already running' };
+      throw new Error('Installation is already running');
     }
 
+    const needsNode = options?.includeNode === true;
+
     // Reset state
+    const steps: InstallStep[] = [];
+    if (needsNode) {
+      steps.push({ id: 'install-node', label: 'Installing Node.js', status: 'pending' });
+    }
+    steps.push(
+      { id: 'check-node', label: 'Checking Node.js', status: 'pending' },
+      { id: 'install-claude', label: 'Installing Claude Code', status: 'pending' },
+      { id: 'verify', label: 'Verifying installation', status: 'pending' },
+    );
+
     installState = {
       status: 'running',
       currentStep: null,
-      steps: [
-        { id: 'check-node', label: 'Checking Node.js', status: 'pending' },
-        { id: 'install-claude', label: 'Installing Claude Code', status: 'pending' },
-        { id: 'verify', label: 'Verifying installation', status: 'pending' },
-      ],
+      steps,
       logs: [],
     };
 
@@ -465,6 +473,83 @@ app.whenReady().then(async () => {
     // Run the installation sequence asynchronously
     (async () => {
       try {
+        // Step 0 (optional): Install Node.js via package manager
+        if (needsNode) {
+          setStep('install-node', 'running');
+
+          const nodeInstalled = await new Promise<boolean>((resolve) => {
+            const isWin = process.platform === 'win32';
+            const isMac = process.platform === 'darwin';
+            let cmd: string;
+            let args: string[];
+
+            if (isMac) {
+              // Try Homebrew
+              const brewPaths = ['/opt/homebrew/bin/brew', '/usr/local/bin/brew'];
+              const brewPath = brewPaths.find(p => fs.existsSync(p));
+              if (!brewPath) {
+                addLog('Homebrew not found. Cannot auto-install Node.js on macOS without Homebrew.');
+                resolve(false);
+                return;
+              }
+              cmd = brewPath;
+              args = ['install', 'node'];
+              addLog(`Running: ${brewPath} install node`);
+            } else if (isWin) {
+              cmd = 'winget';
+              args = ['install', '-e', '--id', 'OpenJS.NodeJS.LTS', '--accept-source-agreements', '--accept-package-agreements'];
+              addLog('Running: winget install -e --id OpenJS.NodeJS.LTS');
+            } else {
+              // Linux — no universal package manager
+              addLog('Auto-install of Node.js is not supported on this platform.');
+              resolve(false);
+              return;
+            }
+
+            const child = spawn(cmd, args, {
+              env: execEnv,
+              shell: isWin,
+              stdio: ['ignore', 'pipe', 'pipe'],
+            });
+
+            installProcess = child;
+
+            child.stdout?.on('data', (data: Buffer) => {
+              for (const line of data.toString().split('\n').filter(Boolean)) {
+                addLog(line);
+              }
+            });
+            child.stderr?.on('data', (data: Buffer) => {
+              for (const line of data.toString().split('\n').filter(Boolean)) {
+                addLog(line);
+              }
+            });
+            child.on('error', (err) => {
+              addLog(`Error: ${err.message}`);
+              resolve(false);
+            });
+            child.on('close', (code) => {
+              installProcess = null;
+              resolve(code === 0);
+            });
+          });
+
+          if (installState.status === 'cancelled') {
+            setStep('install-node', 'failed', 'Cancelled');
+            return;
+          }
+
+          if (!nodeInstalled) {
+            setStep('install-node', 'failed', 'Could not auto-install Node.js.');
+            installState.status = 'failed';
+            sendProgress();
+            return;
+          }
+
+          setStep('install-node', 'success');
+          addLog('Node.js installation completed.');
+        }
+
         // Step 1: Check node
         setStep('check-node', 'running');
         try {
@@ -576,13 +661,11 @@ app.whenReady().then(async () => {
         sendProgress();
       }
     })();
-
-    return { ok: true };
   });
 
   ipcMain.handle('install:cancel', () => {
     if (installState.status !== 'running') {
-      return { error: 'No installation is running' };
+      return;
     }
 
     installState.status = 'cancelled';
@@ -597,7 +680,6 @@ app.whenReady().then(async () => {
     }
 
     mainWindow?.webContents.send('install:progress', installState);
-    return { ok: true };
   });
 
   ipcMain.handle('install:get-logs', () => {

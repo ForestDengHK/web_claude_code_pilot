@@ -40,7 +40,6 @@ interface InstallWizardProps {
 
 type WizardPhase =
   | "checking"
-  | "node-missing"
   | "already-installed"
   | "installing"
   | "success"
@@ -57,7 +56,7 @@ function getInstallAPI() {
             hasClaude: boolean;
             claudeVersion?: string;
           }>;
-          start: () => Promise<void>;
+          start: (options?: { includeNode?: boolean }) => Promise<void>;
           cancel: () => Promise<void>;
           getLogs: () => Promise<string[]>;
           onProgress: (
@@ -104,7 +103,7 @@ export function InstallWizard({
     scrollToBottom();
   }, [logs, scrollToBottom]);
 
-  const startInstall = useCallback(async () => {
+  const startInstall = useCallback(async (options?: { includeNode?: boolean }) => {
     const api = getInstallAPI();
     if (!api) return;
 
@@ -124,7 +123,7 @@ export function InstallWizard({
     });
 
     try {
-      await api.start();
+      await api.start(options);
     } catch (err: unknown) {
       setPhase("failed");
       const msg = err instanceof Error ? err.message : String(err);
@@ -143,31 +142,30 @@ export function InstallWizard({
     try {
       const result = await api.checkPrerequisites();
 
-      if (!result.hasNode) {
-        setPhase("node-missing");
-        setLogs((prev) => [
-          ...prev,
-          "Node.js not found.",
-        ]);
-        return;
-      }
-
-      setLogs((prev) => [
-        ...prev,
-        `Node.js ${result.nodeVersion} found.`,
-      ]);
-
       if (result.hasClaude) {
-        setPhase("already-installed");
         setLogs((prev) => [
           ...prev,
+          `Node.js ${result.nodeVersion} found.`,
           `Claude Code ${result.claudeVersion} already installed.`,
         ]);
+        setPhase("already-installed");
         return;
       }
 
-      setLogs((prev) => [...prev, "Claude Code not found. Starting installation..."]);
-      startInstall();
+      if (!result.hasNode) {
+        setLogs((prev) => [
+          ...prev,
+          "Node.js not found. Will attempt to install Node.js and Claude Code...",
+        ]);
+        startInstall({ includeNode: true });
+      } else {
+        setLogs((prev) => [
+          ...prev,
+          `Node.js ${result.nodeVersion} found.`,
+          "Claude Code not found. Starting installation...",
+        ]);
+        startInstall();
+      }
     } catch (err: unknown) {
       setPhase("failed");
       const msg = err instanceof Error ? err.message : String(err);
@@ -268,26 +266,6 @@ export function InstallWizard({
             </div>
           )}
 
-          {phase === "node-missing" && (
-            <div className="rounded-lg bg-red-500/10 px-4 py-3 text-sm space-y-2">
-              <p className="font-medium text-red-700 dark:text-red-400">
-                Node.js 18+ is required
-              </p>
-              <p className="text-muted-foreground">
-                Please install it from{" "}
-                <a
-                  href="https://nodejs.org"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline text-blue-600 dark:text-blue-400"
-                >
-                  https://nodejs.org
-                </a>{" "}
-                and try again.
-              </p>
-            </div>
-          )}
-
           {phase === "already-installed" && (
             <div className="flex items-center gap-3 rounded-lg bg-emerald-500/10 px-4 py-3">
               <CheckIcon className="size-5 text-emerald-500 shrink-0" />
@@ -341,12 +319,6 @@ export function InstallWizard({
             <CopyIcon />
             {copied ? "Copied" : "Copy Logs"}
           </Button>
-
-          {phase === "node-missing" && (
-            <Button size="sm" onClick={checkPrereqs}>
-              Retry
-            </Button>
-          )}
 
           {phase === "installing" && (
             <Button variant="destructive" size="sm" onClick={handleCancel}>
