@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
     let savedContent = content;
     let fileMeta: Array<{ id: string; name: string; type: string; size: number; filePath: string }> | undefined;
     if (files && files.length > 0) {
-      const workDir = session.working_directory || process.cwd();
+      const workDir = session.working_directory;
       const uploadDir = path.join(workDir, '.codepilot-uploads');
       if (!fs.existsSync(uploadDir)) {
         fs.mkdirSync(uploadDir, { recursive: true });

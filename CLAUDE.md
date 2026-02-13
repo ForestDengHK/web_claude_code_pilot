@@ -21,6 +21,10 @@ CodePilot — Claude Code 的桌面 GUI 客户端，基于 Electron + Next.js。
 
 **重要：不要手动创建 GitHub Release**，否则会与 CI 自动创建的 Release 冲突。如果需要本地打包测试，使用 `npm run electron:pack:mac` 但不要手动上传到 Release。
 
+## 发版纪律
+
+**禁止自动发版**：不要在完成代码修改后自动执行 `git push` + `git tag` + `git push origin tag` 发版流程。必须等待用户明确指示"发版"、"发布"或类似确认后才能执行。代码提交（commit）可以正常进行，但推送和打 tag 必须由用户确认。
+
 ## Development Rules
 
 **提交前必须详尽测试：**

@@ -316,7 +316,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         const skipPermissions = getSetting('dangerously_skip_permissions') === 'true';
 
         const queryOptions: Options = {
-          cwd: workingDirectory || process.cwd(),
+          cwd: workingDirectory || os.homedir(),
           abortController,
           includePartialMessages: true,
           permissionMode: skipPermissions
