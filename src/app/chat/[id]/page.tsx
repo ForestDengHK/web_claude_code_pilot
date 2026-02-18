@@ -163,7 +163,6 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
       {sessionTitle && (
         <div
           className="flex items-center justify-center px-4 pb-2 gap-1"
-          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         >
           {projectName && (
             <>
@@ -172,7 +171,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
             </>
           )}
           {isEditingTitle ? (
-            <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+            <div>
               <Input
                 ref={titleInputRef}
                 value={editTitle}
@@ -185,7 +184,6 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           ) : (
             <div
               className="flex items-center gap-1 group cursor-default max-w-md"
-              style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
             >
               <h2 className="text-sm font-medium text-foreground/80 truncate">
                 {sessionTitle}

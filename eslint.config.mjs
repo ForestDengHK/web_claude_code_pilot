@@ -12,7 +12,6 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "release/**",
-    "dist-electron/**",
     "next-env.d.ts",
   ]),
 ]);

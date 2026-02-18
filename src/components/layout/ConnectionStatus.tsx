@@ -11,7 +11,6 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { InstallWizard } from "@/components/layout/InstallWizard";
 
 interface ClaudeStatus {
   connected: boolean;
@@ -25,16 +24,10 @@ const STABLE_THRESHOLD = 3;
 export function ConnectionStatus() {
   const [status, setStatus] = useState<ClaudeStatus | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [wizardOpen, setWizardOpen] = useState(false);
 
-  const isElectron =
-    typeof window !== "undefined" &&
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    !!(window as any).electronAPI?.install;
   const stableCountRef = useRef(0);
   const lastConnectedRef = useRef<boolean | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const autoPromptedRef = useRef(false);
 
   // Use a ref-based approach to avoid circular deps between check and schedule
   const checkRef = useRef<() => void>(() => {});
@@ -87,32 +80,6 @@ export function ConnectionStatus() {
     stableCountRef.current = 0;
     checkStatus();
   }, [checkStatus]);
-
-  // Auto-prompt install wizard on first disconnect detection (Electron only)
-  useEffect(() => {
-    if (
-      status !== null &&
-      !status.connected &&
-      isElectron &&
-      !autoPromptedRef.current &&
-      !dialogOpen &&
-      !wizardOpen
-    ) {
-      const dismissed = localStorage.getItem("codepilot:install-wizard-dismissed");
-      if (!dismissed) {
-        autoPromptedRef.current = true;
-        setWizardOpen(true); // eslint-disable-line react-hooks/set-state-in-effect -- intentional: auto-prompt on first disconnect
-      }
-    }
-  }, [status, isElectron, dialogOpen, wizardOpen]);
-
-  const handleWizardOpenChange = useCallback((open: boolean) => {
-    setWizardOpen(open);
-    if (!open) {
-      // Remember that user dismissed the wizard so we don't auto-prompt again
-      localStorage.setItem("codepilot:install-wizard-dismissed", "1");
-    }
-  }, []);
 
   const connected = status?.connected ?? false;
 
@@ -196,20 +163,6 @@ export function ConnectionStatus() {
                   claude --version
                 </code>
               </div>
-
-              {isElectron && (
-                <div className="pt-2 border-t">
-                  <Button
-                    onClick={() => {
-                      setDialogOpen(false);
-                      setWizardOpen(true);
-                    }}
-                    className="w-full"
-                  >
-                    Install Claude Code Automatically
-                  </Button>
-                </div>
-              )}
             </div>
           )}
 
@@ -223,12 +176,6 @@ export function ConnectionStatus() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <InstallWizard
-        open={wizardOpen}
-        onOpenChange={handleWizardOpenChange}
-        onInstallComplete={handleManualRefresh}
-      />
     </>
   );
 }

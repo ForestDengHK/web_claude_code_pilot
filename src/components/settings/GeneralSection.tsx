@@ -13,12 +13,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { HugeiconsIcon } from "@hugeicons/react";
-import { ReloadIcon, Loading02Icon } from "@hugeicons/core-free-icons";
-import { useUpdate } from "@/hooks/useUpdate";
 
-function UpdateCard() {
-  const { updateInfo, checking, checkForUpdates } = useUpdate();
+function VersionCard() {
   const currentVersion = process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0";
 
   return (
@@ -28,44 +24,7 @@ function UpdateCard() {
           <h2 className="text-sm font-medium">CodePilot</h2>
           <p className="text-xs text-muted-foreground">Version {currentVersion}</p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={checkForUpdates}
-          disabled={checking}
-          className="gap-2"
-        >
-          {checking ? (
-            <HugeiconsIcon icon={Loading02Icon} className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <HugeiconsIcon icon={ReloadIcon} className="h-3.5 w-3.5" />
-          )}
-          {checking ? "Checking..." : "Check for Updates"}
-        </Button>
       </div>
-
-      {updateInfo && !checking && (
-        <div className="mt-3">
-          {updateInfo.updateAvailable ? (
-            <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-blue-500" />
-              <span className="text-sm">
-                Update available: <span className="font-medium">v{updateInfo.latestVersion}</span>
-              </span>
-              <Button
-                variant="link"
-                size="sm"
-                className="h-auto p-0 text-sm"
-                onClick={() => window.open(updateInfo.releaseUrl, "_blank")}
-              >
-                View Release
-              </Button>
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">You&apos;re on the latest version.</p>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -123,7 +82,7 @@ export function GeneralSection() {
 
   return (
     <div className="max-w-3xl space-y-6">
-      <UpdateCard />
+      <VersionCard />
 
       {/* Auto-approve toggle */}
       <div className={`rounded-lg border p-4 transition-shadow hover:shadow-sm ${skipPermissions ? "border-orange-500/50 bg-orange-500/5" : "border-border/50"}`}>

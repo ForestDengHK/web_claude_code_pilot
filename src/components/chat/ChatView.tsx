@@ -64,7 +64,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   // Ref for sendMessage to allow self-referencing in timeout auto-retry without circular deps
   const sendMessageRef = useRef<(content: string, files?: FileAttachment[]) => Promise<void>>(undefined);
 
-  // Re-sync streaming content when the window regains visibility (Electron/browser tab switch)
+  // Re-sync streaming content when the window regains visibility (browser tab switch)
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && accumulatedRef.current) {
@@ -72,7 +72,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    // Also handle Electron-specific focus events
+    // Also handle focus events
     window.addEventListener('focus', handleVisibilityChange);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
