@@ -19,17 +19,17 @@ function loadUserShellEnv() {
 
   try {
     const shell = process.env.SHELL || '/bin/zsh';
-    const result = execFileSync(shell, ['-ilc', 'env'], {
+    const result = execFileSync(shell, ['-lc', 'env -0'], {
       timeout: 5000,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
     const env = {};
-    for (const line of result.split('\n')) {
-      const idx = line.indexOf('=');
+    for (const entry of result.split('\0')) {
+      const idx = entry.indexOf('=');
       if (idx > 0) {
-        env[line.slice(0, idx)] = line.slice(idx + 1);
+        env[entry.slice(0, idx)] = entry.slice(idx + 1);
       }
     }
 
@@ -48,9 +48,19 @@ function loadUserShellEnv() {
 
 // --- Load shell environment ---
 const shellEnv = loadUserShellEnv();
-Object.assign(process.env, shellEnv);
 
-// --- Set defaults (after shell env so user overrides take precedence) ---
+// Exclude HOSTNAME — macOS sets this to the machine name (e.g. "Macs-Mac-Mini.local"),
+// which would prevent the server from binding to 0.0.0.0
+delete shellEnv.HOSTNAME;
+
+// Only set vars not already present, so CLI overrides (PORT=8080 node ...) take precedence
+for (const [key, value] of Object.entries(shellEnv)) {
+  if (!(key in process.env)) {
+    process.env[key] = value;
+  }
+}
+
+// --- Set defaults ---
 process.env.HOSTNAME = process.env.HOSTNAME || '0.0.0.0';
 process.env.PORT = process.env.PORT || '3000';
 process.env.CLAUDE_GUI_DATA_DIR =
