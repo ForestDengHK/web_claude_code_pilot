@@ -150,6 +150,9 @@ function migrateDb(db: Database.Database): void {
   if (!colNames.includes('mode')) {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'code'");
   }
+  if (!colNames.includes('skip_permissions')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN skip_permissions INTEGER NOT NULL DEFAULT 0");
+  }
 
   const msgColumns = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[];
   const msgColNames = msgColumns.map(c => c.name);
@@ -270,6 +273,11 @@ export function updateSessionWorkingDirectory(id: string, workingDirectory: stri
 export function updateSessionMode(id: string, mode: string): void {
   const db = getDb();
   db.prepare('UPDATE chat_sessions SET mode = ? WHERE id = ?').run(mode, id);
+}
+
+export function updateSessionSkipPermissions(id: string, skip: boolean): void {
+  const db = getDb();
+  db.prepare('UPDATE chat_sessions SET skip_permissions = ? WHERE id = ?').run(skip ? 1 : 0, id);
 }
 
 // ==========================================

@@ -20,6 +20,7 @@ import {
   SearchList01Icon,
   BrainIcon,
   GlobalIcon,
+  Shield01Icon,
 } from "@hugeicons/core-free-icons";
 import { cn } from '@/lib/utils';
 import {
@@ -32,6 +33,11 @@ import {
   usePromptInputAttachments,
 } from '@/components/ai-elements/prompt-input';
 import { SquareIcon } from 'lucide-react';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import type { ChatStatus } from 'ai';
 import type { FileAttachment } from '@/types';
 import { nanoid } from 'nanoid';
@@ -360,6 +366,20 @@ export function MessageInput({
   const [badge, setBadge] = useState<CommandBadge | null>(null);
   const [activeProviderBaseUrl, setActiveProviderBaseUrl] = useState<string | null>(null);
   const [activeProviderName, setActiveProviderName] = useState<string | null>(null);
+  const [skipPermissions, setSkipPermissions] = useState(false);
+
+  // Fetch per-session skip_permissions on mount / sessionId change
+  useEffect(() => {
+    if (!sessionId) return;
+    fetch(`/api/chat/sessions/${sessionId}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.session) {
+          setSkipPermissions(data.session.skip_permissions === 1);
+        }
+      })
+      .catch(() => {});
+  }, [sessionId]);
 
   // Fetch active provider to adapt model labels
   useEffect(() => {
@@ -386,6 +406,23 @@ export function MessageInput({
     }
     return opt;
   });
+
+  // Toggle per-session skip permissions
+  const toggleSkipPermissions = useCallback(async () => {
+    if (!sessionId) return;
+    const newValue = !skipPermissions;
+    setSkipPermissions(newValue);
+    try {
+      await fetch(`/api/chat/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skip_permissions: newValue ? 1 : 0 }),
+      });
+    } catch {
+      // Revert on failure
+      setSkipPermissions(!newValue);
+    }
+  }, [sessionId, skipPermissions]);
 
   // Fetch files for @ mention
   const fetchFiles = useCallback(async (filter: string) => {
@@ -988,6 +1025,31 @@ export function MessageInput({
                     </div>
                   )}
                 </div>
+
+                {/* Per-session skip permissions toggle */}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <PromptInputButton
+                      onClick={toggleSkipPermissions}
+                    >
+                      <div className="relative flex items-center">
+                        <HugeiconsIcon
+                          icon={Shield01Icon}
+                          className={cn("h-3.5 w-3.5", skipPermissions ? "text-orange-500" : "")}
+                        />
+                        {skipPermissions && (
+                          <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-orange-400 opacity-75" />
+                            <span className="relative inline-flex h-2 w-2 rounded-full bg-orange-500" />
+                          </span>
+                        )}
+                      </div>
+                    </PromptInputButton>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    {skipPermissions ? 'Auto-approve ON (click to disable)' : 'Auto-approve OFF (click to enable)'}
+                  </TooltipContent>
+                </Tooltip>
               </PromptInputTools>
 
               <FileAwareSubmitButton

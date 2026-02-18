@@ -14,6 +14,7 @@ export interface ChatSession {
   project_name: string;
   status: 'active' | 'archived';
   mode?: 'code' | 'plan' | 'ask';
+  skip_permissions?: number;
   needs_approval?: boolean;
 }
 
@@ -435,4 +436,5 @@ export interface ClaudeStreamOptions {
   permissionMode?: string;
   files?: FileAttachment[];
   toolTimeoutSeconds?: number;
+  skipPermissions?: boolean; // Per-session override for dangerously_skip_permissions
 }

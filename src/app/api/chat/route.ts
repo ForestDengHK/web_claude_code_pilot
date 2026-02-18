@@ -111,6 +111,7 @@ export async function POST(request: NextRequest) {
       permissionMode,
       files: fileAttachments,
       toolTimeoutSeconds: toolTimeout || 120,
+      skipPermissions: session.skip_permissions === 1,
     });
 
     // Tee the stream: one for client, one for collecting the response

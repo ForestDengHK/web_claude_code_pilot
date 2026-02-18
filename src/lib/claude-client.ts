@@ -235,6 +235,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
     permissionMode,
     files,
     toolTimeoutSeconds = 0,
+    skipPermissions: skipPermissionsOption,
   } = options;
 
   return new ReadableStream<string>({
@@ -312,8 +313,8 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           }
         }
 
-        // Check if dangerously_skip_permissions is enabled in app settings
-        const skipPermissions = getSetting('dangerously_skip_permissions') === 'true';
+        // Check if dangerously_skip_permissions is enabled (per-session override or global setting)
+        const skipPermissions = skipPermissionsOption ?? (getSetting('dangerously_skip_permissions') === 'true');
 
         const queryOptions: Options = {
           cwd: workingDirectory || os.homedir(),
