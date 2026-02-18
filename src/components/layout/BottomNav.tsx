@@ -11,8 +11,10 @@ import {
   Settings02Icon,
   Moon02Icon,
   Sun02Icon,
+  StructureFolderIcon,
 } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
+import { usePanel } from "@/hooks/usePanel";
 
 interface BottomNavProps {
   onToggleChatList: () => void;
@@ -29,9 +31,11 @@ export function BottomNav({ onToggleChatList, skipPermissionsActive }: BottomNav
   const pathname = usePathname();
   const router = useRouter();
   const { theme, setTheme } = useTheme();
+  const { panelOpen, setPanelOpen } = usePanel();
   const emptySubscribe = useCallback(() => () => {}, []);
   const mounted = useSyncExternalStore(emptySubscribe, () => true, () => false);
   const isChatRoute = pathname === "/chat" || pathname.startsWith("/chat/");
+  const isChatDetailRoute = pathname.startsWith("/chat/");
 
   return (
     <nav className="fixed inset-x-0 bottom-0 z-50 flex h-14 items-center justify-around border-t border-border bg-sidebar md:hidden">
@@ -89,6 +93,23 @@ export function BottomNav({ onToggleChatList, skipPermissionsActive }: BottomNav
           </Link>
         );
       })}
+
+      {/* Files toggle (only on chat detail routes) */}
+      {isChatDetailRoute && (
+        <button
+          type="button"
+          className={cn(
+            "flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg text-muted-foreground transition-colors",
+            panelOpen && "text-foreground"
+          )}
+          onClick={() => setPanelOpen(!panelOpen)}
+        >
+          <div className="flex flex-col items-center gap-0.5">
+            <HugeiconsIcon icon={StructureFolderIcon} className="h-5 w-5" />
+            <span className="text-[10px] leading-tight">Files</span>
+          </div>
+        </button>
+      )}
 
       {/* Theme toggle */}
       {mounted && (

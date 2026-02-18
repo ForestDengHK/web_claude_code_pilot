@@ -18,7 +18,7 @@ interface RightPanelProps {
 }
 
 export function RightPanel({ width }: RightPanelProps) {
-  const { panelOpen, setPanelOpen, workingDirectory, previewFile, setPreviewFile } = usePanel();
+  const { panelOpen, setPanelOpen, workingDirectory, previewFile, setPreviewFile, setPreviewViewMode } = usePanel();
 
   const handleFileAdd = useCallback((path: string) => {
     window.dispatchEvent(new CustomEvent('attach-file-to-chat', { detail: { path } }));
@@ -28,7 +28,7 @@ export function RightPanel({ width }: RightPanelProps) {
     // Only open preview for text-based files, skip images/videos/binaries
     const ext = path.split(".").pop()?.toLowerCase() || "";
     const NON_PREVIEWABLE = new Set([
-      "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "svg", "avif",
+      "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "avif",
       "mp4", "mov", "avi", "mkv", "webm", "flv", "wmv",
       "mp3", "wav", "ogg", "flac", "aac", "wma",
       "zip", "tar", "gz", "rar", "7z", "bz2",
@@ -43,8 +43,16 @@ export function RightPanel({ width }: RightPanelProps) {
       setPreviewFile(null);
     } else {
       setPreviewFile(path);
+      // On mobile, close the file panel so the preview is visible
+      if (window.innerWidth < 768) setPanelOpen(false);
     }
-  }, [previewFile, setPreviewFile]);
+  }, [previewFile, setPreviewFile, setPanelOpen]);
+
+  const handleFilePreview = useCallback((path: string) => {
+    setPreviewFile(path);
+    setPreviewViewMode("rendered");
+    if (window.innerWidth < 768) setPanelOpen(false);
+  }, [setPreviewFile, setPreviewViewMode, setPanelOpen]);
 
   if (!panelOpen) {
     return (
@@ -112,6 +120,7 @@ export function RightPanel({ width }: RightPanelProps) {
           workingDirectory={workingDirectory}
           onFileSelect={handleFileSelect}
           onFileAdd={handleFileAdd}
+          onFilePreview={handleFilePreview}
         />
       </div>
     </aside>

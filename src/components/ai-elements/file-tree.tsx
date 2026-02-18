@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   ChevronRightIcon,
+  EyeIcon,
   FileIcon,
   FolderIcon,
   FolderOpenIcon,
@@ -29,6 +30,7 @@ interface FileTreeContextType {
   selectedPath?: string;
   onSelect?: (path: string) => void;
   onAdd?: (path: string) => void;
+  onPreview?: (path: string) => void;
 }
 
 // Default noop for context default value
@@ -47,6 +49,7 @@ export type FileTreeProps = HTMLAttributes<HTMLDivElement> & {
   selectedPath?: string;
   onSelect?: (path: string) => void;
   onAdd?: (path: string) => void;
+  onPreview?: (path: string) => void;
   onExpandedChange?: (expanded: Set<string>) => void;
 };
 
@@ -56,6 +59,7 @@ export const FileTree = ({
   selectedPath,
   onSelect,
   onAdd,
+  onPreview,
   onExpandedChange,
   className,
   children,
@@ -79,8 +83,8 @@ export const FileTree = ({
   );
 
   const contextValue = useMemo(
-    () => ({ expandedPaths, onAdd, onSelect, selectedPath, togglePath }),
-    [expandedPaths, onAdd, onSelect, selectedPath, togglePath]
+    () => ({ expandedPaths, onAdd, onPreview, onSelect, selectedPath, togglePath }),
+    [expandedPaths, onAdd, onPreview, onSelect, selectedPath, togglePath]
   );
 
   return (
@@ -204,7 +208,7 @@ export const FileTreeFile = ({
   children,
   ...props
 }: FileTreeFileProps) => {
-  const { selectedPath, onSelect, onAdd } = useContext(FileTreeContext);
+  const { selectedPath, onSelect, onAdd, onPreview } = useContext(FileTreeContext);
   const isSelected = selectedPath === path;
 
   const handleClick = useCallback(() => {
@@ -218,6 +222,14 @@ export const FileTreeFile = ({
       }
     },
     [onSelect, path]
+  );
+
+  const handlePreview = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onPreview?.(path);
+    },
+    [onPreview, path]
   );
 
   const handleAdd = useCallback(
@@ -252,15 +264,29 @@ export const FileTreeFile = ({
               {icon ?? <FileIcon className="size-4 text-muted-foreground" />}
             </FileTreeIcon>
             <FileTreeName>{name}</FileTreeName>
-            {onAdd && (
-              <button
-                type="button"
-                className="ml-auto flex size-5 shrink-0 items-center justify-center rounded opacity-0 transition-opacity hover:bg-muted group-hover/file:opacity-100"
-                onClick={handleAdd}
-                title="Add to chat"
-              >
-                <PlusIcon className="size-3 text-muted-foreground" />
-              </button>
+            {(onPreview || onAdd) && (
+              <span className="ml-auto flex shrink-0 items-center">
+                {onPreview && (
+                  <button
+                    type="button"
+                    className="flex size-8 items-center justify-center rounded transition-opacity hover:bg-muted md:size-5 md:opacity-0 md:group-hover/file:opacity-100"
+                    onClick={handlePreview}
+                    title="Preview file"
+                  >
+                    <EyeIcon className="size-4 text-muted-foreground md:size-3" />
+                  </button>
+                )}
+                {onAdd && (
+                  <button
+                    type="button"
+                    className="flex size-8 items-center justify-center rounded transition-opacity hover:bg-muted md:size-5 md:opacity-0 md:group-hover/file:opacity-100"
+                    onClick={handleAdd}
+                    title="Add to chat"
+                  >
+                    <PlusIcon className="size-4 text-muted-foreground md:size-3" />
+                  </button>
+                )}
+              </span>
             )}
           </>
         )}

@@ -19,7 +19,10 @@ const DOCPREVIEW_MIN = 320;
 const DOCPREVIEW_MAX = 800;
 
 /** Extensions that default to "rendered" view mode */
-const RENDERED_EXTENSIONS = new Set([".md", ".mdx", ".html", ".htm"]);
+const RENDERED_EXTENSIONS = new Set([
+  ".md", ".mdx", ".html", ".htm",
+  ".json", ".csv", ".tsv", ".svg", ".xml", ".yaml", ".yml",
+]);
 
 function defaultViewMode(filePath: string): PreviewViewMode {
   const dot = filePath.lastIndexOf(".");
