@@ -3,11 +3,30 @@
 
 **Claude Code の Web GUI** -- ターミナルではなく、洗練されたビジュアルインターフェースを通じてチャット、コーディング、プロジェクト管理を行えます。自分のマシンでセルフホスティングし、任意のブラウザからアクセス可能（Tailscale 経由でモバイルからも利用可能）。
 
-[![GitHub release](https://img.shields.io/github/v/release/op7418/CodePilot)](https://github.com/op7418/CodePilot/releases)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](https://github.com/op7418/CodePilot/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](#)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [English](./README.md) | [中文文档](./README_CN.md)
+
+> **Fork について：** このプロジェクトは [op7418/CodePilot](https://github.com/op7418/CodePilot)（MIT ライセンス）からフォークされています。元のプロジェクトは Electron デスクトップアプリです。このフォークでは Electron を削除し、スタンドアロンの Next.js Web サーバーとして再構築し、以下の大幅な変更を加えています。
+
+---
+
+## 上流からの主な変更点
+
+このフォークにおける主な変更：
+
+- **Electron 削除** -- デスクトップアプリからスタンドアロン Next.js Web サーバー（`codepilot-server.js`）に変換。任意のマシンにデプロイ可能、ブラウザからアクセス。
+- **モバイルファースト UI** -- レスポンシブレイアウト、ボトムナビゲーション、タッチフレンドリーなコントロール、フルスクリーンパネルオーバーレイ、スマートフォン画面向けの入力最適化。
+- **ストリーミング復旧** -- ブラウザタブがサスペンドされた場合（モバイルで一般的）、ネットワークエラーを表示する代わりにデータベースからレスポンスを自動復旧。
+- **macOS launchd サービス** -- ログイン時の自動起動をサポートする永続バックグラウンドサービスとしての実行ドキュメントとビルドスクリプト。
+- **インラインスキル展開** -- `/skill` コマンドはバッジ UI ではなくインラインで挿入（Claude Code CLI と同様）。スキルコンテンツはキャッシュされ送信時に展開。
+- **プロジェクトレベル MCP 設定** -- グローバル設定だけでなく、作業ディレクトリから `.mcp.json` を読み込み。MCP サーバーはプロジェクトごとにエクステンションページに表示。
+- **ファイルツリー強化** -- ファイルプレビュー（目のアイコン）、ダウンロードボタン、ファイル名コピー、チャット添付の +/- トグル、AI レスポンス後の自動更新。
+- **動的モデルリスト** -- ハードコードではなく SDK からランタイムでモデルを取得。選択はメッセージ間で保持。
+- **セッションごとの権限トグル** -- 入力バーのシールドアイコンでセッション単位のツール使用自動承認。
+- **フォルダーお気に入り** -- よく使うプロジェクトディレクトリをお気に入り登録して素早くアクセス。
+- **本番ビルド修正** -- ビルド後スクリプトが `.next/static` を standalone 出力にシンボリックリンク（CSS/JS の読み込みに必要）。
 
 ---
 

@@ -3,11 +3,30 @@
 
 **A web GUI for Claude Code** -- chat, code, and manage projects through a polished visual interface instead of the terminal. Self-hosted on your own machine, accessible from any browser (including mobile via Tailscale).
 
-[![GitHub release](https://img.shields.io/github/v/release/op7418/CodePilot)](https://github.com/op7418/CodePilot/releases)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](https://github.com/op7418/CodePilot/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](#)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [中文文档](./README_CN.md) | [日本語](./README_JA.md)
+
+> **Fork notice:** This project is forked from [op7418/CodePilot](https://github.com/op7418/CodePilot) (MIT License). The original project is a desktop Electron app. This fork removes Electron and rebuilds it as a standalone Next.js web server, with significant changes listed below.
+
+---
+
+## Changes from upstream
+
+This fork diverges from the original CodePilot with the following major changes:
+
+- **Removed Electron** -- Converted from a desktop app to a standalone Next.js web server (`codepilot-server.js`), deployable on any machine and accessible from any browser.
+- **Mobile-first UI** -- Responsive layout with bottom navigation, touch-friendly controls, full-screen panel overlays, and optimized input targets for phone-sized screens.
+- **Stream recovery** -- When the browser tab is suspended (common on mobile), the app automatically recovers the response from the database instead of showing a network error.
+- **macOS launchd service** -- Documentation and build scripts for running as a persistent background service with auto-start on login.
+- **Inline skill expansion** -- `/skill` commands insert inline (like Claude Code CLI) instead of using a badge UI. Skill content is cached and expanded at submit time.
+- **Project-level MCP config** -- Reads `.mcp.json` from the working directory, not just global settings. MCP servers appear on the Extensions page per-project.
+- **File tree enhancements** -- File preview (eye icon), download button, copy filename, +/- toggle for chat attachments, and auto-refresh after AI responses.
+- **Dynamic model list** -- Models fetched from the SDK at runtime instead of hardcoded. Selection persists across messages.
+- **Per-session permission toggle** -- Auto-approve tool use on a per-session basis with a shield icon in the input bar.
+- **Folder favorites** -- Star frequently used project directories for quick access.
+- **Production build fix** -- Post-build script symlinks `.next/static` into standalone output (required for CSS/JS to load).
 
 ---
 

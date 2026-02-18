@@ -5,9 +5,28 @@
 
 [English](./README.md) | [日本語](./README_JA.md)
 
-[![GitHub release](https://img.shields.io/github/v/release/op7418/CodePilot)](https://github.com/op7418/CodePilot/releases)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](https://github.com/op7418/CodePilot/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](#)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+> **Fork 声明：** 本项目 fork 自 [op7418/CodePilot](https://github.com/op7418/CodePilot)（MIT 许可证）。原项目是 Electron 桌面应用。本 fork 移除了 Electron，重构为独立的 Next.js Web 服务器，并进行了以下重大改动。
+
+---
+
+## 与上游的主要差异
+
+本 fork 与原版 CodePilot 的主要变更：
+
+- **移除 Electron** -- 从桌面应用转换为独立 Next.js Web 服务器（`codepilot-server.js`），可部署在任何机器上，通过浏览器访问。
+- **移动端优先 UI** -- 响应式布局，底部导航栏，触控友好的控件，全屏面板覆盖层，针对手机屏幕优化的输入区域。
+- **流式恢复** -- 当浏览器标签页被挂起（手机上常见），应用会自动从数据库恢复响应，而不是显示网络错误。
+- **macOS launchd 服务** -- 提供作为持久后台服务运行的文档和构建脚本，支持登录时自动启动。
+- **内联技能展开** -- `/skill` 命令以内联方式插入（与 Claude Code CLI 一致），而非使用徽章 UI。技能内容被缓存并在提交时展开。
+- **项目级 MCP 配置** -- 从工作目录读取 `.mcp.json`，而不仅是全局设置。MCP 服务器按项目显示在扩展页面。
+- **文件树增强** -- 文件预览（眼睛图标）、下载按钮、复制文件名、聊天附件的 +/- 切换、AI 响应后自动刷新。
+- **动态模型列表** -- 运行时从 SDK 获取模型，而非硬编码。选择在消息间持久化。
+- **会话级权限切换** -- 在输入栏通过盾牌图标按会话自动批准工具使用。
+- **文件夹收藏** -- 收藏常用项目目录以快速访问。
+- **生产构建修复** -- 构建后脚本将 `.next/static` 符号链接到 standalone 输出（CSS/JS 加载所必需）。
 
 ---
 
