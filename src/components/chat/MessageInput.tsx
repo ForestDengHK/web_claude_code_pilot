@@ -713,10 +713,7 @@ export function MessageInput({
   );
 
   const currentModelValue = modelName || 'sonnet';
-  // Match either exact value or alias within the model ID (e.g. 'sonnet' matches 'claude-sonnet-4-5-...')
-  const currentModelOption = MODEL_OPTIONS.find((m) => m.value === currentModelValue)
-    || MODEL_OPTIONS.find((m) => m.value.includes(currentModelValue) || currentModelValue.includes(m.value))
-    || MODEL_OPTIONS[0];
+  const currentModelOption = MODEL_OPTIONS.find((m) => m.value === currentModelValue) || MODEL_OPTIONS[0];
   const currentMode = MODE_OPTIONS.find((m) => m.value === mode) || MODE_OPTIONS[0];
 
   // Map isStreaming to ChatStatus for PromptInputSubmit
@@ -949,7 +946,7 @@ export function MessageInput({
                     <div className="absolute bottom-full left-0 mb-1.5 w-48 rounded-lg border bg-popover shadow-lg overflow-hidden z-50">
                       <div className="py-1">
                         {MODEL_OPTIONS.map((opt) => {
-                          const isActive = opt.value === currentModelOption.value;
+                          const isActive = opt.value === currentModelValue;
                           return (
                             <button
                               key={opt.value}
