@@ -8,9 +8,13 @@ import { PlusSignIcon, ListViewIcon, CodeIcon, Loading02Icon } from "@hugeicons/
 import { McpServerList } from "@/components/plugins/McpServerList";
 import { McpServerEditor } from "@/components/plugins/McpServerEditor";
 import { ConfigEditor } from "@/components/plugins/ConfigEditor";
+import { usePanel } from "@/hooks/usePanel";
 import type { MCPServer } from "@/types";
 
-export function McpManager() {
+export function McpManager({ workingDir: workingDirProp }: { workingDir?: string } = {}) {
+  // Use prop if provided, otherwise read from app-wide panel context
+  const { workingDirectory: contextWorkingDir } = usePanel();
+  const workingDir = workingDirProp || contextWorkingDir || undefined;
   const [servers, setServers] = useState<Record<string, MCPServer>>({});
   const [loading, setLoading] = useState(true);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -22,7 +26,8 @@ export function McpManager() {
   const fetchServers = useCallback(async () => {
     try {
       setError(null);
-      const res = await fetch("/api/plugins/mcp");
+      const params = workingDir ? `?dir=${encodeURIComponent(workingDir)}` : '';
+      const res = await fetch(`/api/plugins/mcp${params}`);
       const data = await res.json();
       if (data.mcpServers) {
         setServers(data.mcpServers);
@@ -35,7 +40,7 @@ export function McpManager() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [workingDir]);
 
   useEffect(() => {
     fetchServers();

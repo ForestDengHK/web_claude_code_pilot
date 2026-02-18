@@ -40,15 +40,41 @@ function writeSettings(settings: Record<string, unknown>): void {
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
 }
 
-export async function GET(): Promise<NextResponse<MCPConfigResponse | ErrorResponse>> {
+export async function GET(request: NextRequest): Promise<NextResponse<MCPConfigResponse | ErrorResponse>> {
   try {
-    const settings = readSettings();
     const userConfig = readJsonFile(getUserConfigPath());
-    // Merge: ~/.claude/settings.json takes precedence over ~/.claude.json
-    const mcpServers = {
+    const settings = readSettings();
+
+    // Merge order (later overrides earlier):
+    // 1. ~/.claude.json
+    // 2. ~/.claude/settings.json
+    // 3. {dir}/.mcp.json (project MCP config)
+    // 4. {dir}/.claude/settings.json (project settings)
+    // 5. {dir}/.claude/settings.local.json (project local settings)
+    const mcpServers: Record<string, MCPServerConfig> = {
       ...((userConfig.mcpServers || {}) as Record<string, MCPServerConfig>),
       ...((settings.mcpServers || {}) as Record<string, MCPServerConfig>),
     };
+
+    const dir = request.nextUrl.searchParams.get('dir');
+    if (dir) {
+      // Project-level .mcp.json
+      const projectMcpJson = readJsonFile(path.join(dir, '.mcp.json'));
+      if (projectMcpJson.mcpServers) {
+        Object.assign(mcpServers, projectMcpJson.mcpServers as Record<string, MCPServerConfig>);
+      }
+      // Project-level .claude/settings.json
+      const projectSettings = readJsonFile(path.join(dir, '.claude', 'settings.json'));
+      if (projectSettings.mcpServers) {
+        Object.assign(mcpServers, projectSettings.mcpServers as Record<string, MCPServerConfig>);
+      }
+      // Project-level .claude/settings.local.json
+      const projectLocalSettings = readJsonFile(path.join(dir, '.claude', 'settings.local.json'));
+      if (projectLocalSettings.mcpServers) {
+        Object.assign(mcpServers, projectLocalSettings.mcpServers as Record<string, MCPServerConfig>);
+      }
+    }
+
     return NextResponse.json({ mcpServers });
   } catch (error) {
     return NextResponse.json(

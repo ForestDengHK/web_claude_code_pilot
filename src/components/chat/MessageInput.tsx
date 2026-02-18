@@ -79,14 +79,6 @@ interface PopoverItem {
   icon?: typeof CommandLineIcon;
 }
 
-interface CommandBadge {
-  command: string;
-  label: string;
-  description: string;
-  isSkill: boolean;
-  installedSource?: "agents" | "claude";
-}
-
 type PopoverMode = 'file' | 'skill' | null;
 
 // Expansion prompts for CLI-only commands (not natively supported by SDK).
@@ -159,13 +151,11 @@ function FileAwareSubmitButton({
   onStop,
   disabled,
   inputValue,
-  hasBadge,
 }: {
   status: ChatStatus;
   onStop?: () => void;
   disabled?: boolean;
   inputValue: string;
-  hasBadge: boolean;
 }) {
   const attachments = usePromptInputAttachments();
   const hasFiles = attachments.files.length > 0;
@@ -175,7 +165,7 @@ function FileAwareSubmitButton({
     <PromptInputSubmit
       status={status}
       onStop={onStop}
-      disabled={disabled || (!isStreaming && !inputValue.trim() && !hasBadge && !hasFiles)}
+      disabled={disabled || (!isStreaming && !inputValue.trim() && !hasFiles)}
       className="rounded-full"
     >
       {isStreaming ? (
@@ -313,8 +303,8 @@ export function MessageInput({
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [inputValue, setInputValue] = useState('');
-  const [badge, setBadge] = useState<CommandBadge | null>(null);
   const [dynamicModels, setDynamicModels] = useState<Array<{ value: string; label: string }> | null>(null);
+  const skillsCacheRef = useRef<Map<string, string>>(new Map());
   const [skipPermissions, setSkipPermissions] = useState(false);
 
   // Fetch per-session skip_permissions on mount / sessionId change
@@ -395,6 +385,7 @@ export function MessageInput({
 
   // Fetch skills for / command (built-in + API)
   // Returns all items unfiltered — filtering is done by filteredItems
+  // Also caches skill content for expansion at submit time
   const fetchSkills = useCallback(async () => {
     let apiSkills: PopoverItem[] = [];
     try {
@@ -402,14 +393,19 @@ export function MessageInput({
       if (res.ok) {
         const data = await res.json();
         const skills = data.skills || [];
+        const cache = new Map<string, string>();
         apiSkills = skills
-          .map((s: { name: string; description: string; source?: string; installedSource?: "agents" | "claude" }) => ({
-            label: s.name,
-            value: `/${s.name}`,
-            description: s.description || "",
-            builtIn: false,
-            installedSource: s.installedSource,
-          }));
+          .map((s: { name: string; description: string; content?: string; source?: string; installedSource?: "agents" | "claude" }) => {
+            if (s.content) cache.set(s.name, s.content);
+            return {
+              label: s.name,
+              value: `/${s.name}`,
+              description: s.description || "",
+              builtIn: false,
+              installedSource: s.installedSource,
+            };
+          });
+        skillsCacheRef.current = cache;
       }
     } catch {
       // API not available - just use built-in commands
@@ -431,12 +427,6 @@ export function MessageInput({
     setTriggerPos(null);
   }, []);
 
-  // Remove active badge
-  const removeBadge = useCallback(() => {
-    setBadge(null);
-    setTimeout(() => textareaRef.current?.focus(), 0);
-  }, []);
-
   // Insert selected item
   const insertItem = useCallback((item: PopoverItem) => {
     if (triggerPos === null) return;
@@ -449,16 +439,15 @@ export function MessageInput({
       return;
     }
 
-    // Non-immediate commands (prompt-based built-ins and skills): show as badge
+    // Non-immediate commands and skills: insert /name inline
     if (popoverMode === 'skill') {
-      setBadge({
-        command: item.value,
-        label: item.label,
-        description: item.description || '',
-        isSkill: !item.builtIn,
-        installedSource: item.installedSource,
-      });
-      setInputValue('');
+      const currentVal = inputValue;
+      const before = currentVal.slice(0, triggerPos);
+      const cursorEnd = triggerPos + popoverFilter.length + 1; // +1 for the /
+      const after = currentVal.slice(cursorEnd);
+      const insertText = `/${item.label} `;
+
+      setInputValue(before + insertText + after);
       closePopover();
       setTimeout(() => textareaRef.current?.focus(), 0);
       return;
@@ -551,84 +540,53 @@ export function MessageInput({
       return attachments;
     };
 
-    // If badge is active, expand the command/skill and send
-    if (badge && !isStreaming) {
-      let expandedPrompt = '';
-
-      if (badge.isSkill) {
-        // Fetch skill content from API
-        try {
-          const sourceParam = badge.installedSource
-            ? `?source=${badge.installedSource}`
-            : "";
-          const res = await fetch(
-            `/api/skills/${encodeURIComponent(badge.label)}${sourceParam}`
-          );
-          if (res.ok) {
-            const data = await res.json();
-            expandedPrompt = data.skill?.content || '';
-          }
-        } catch {
-          // Fallback: use command name
-        }
-      } else {
-        // Built-in prompt command expansion
-        expandedPrompt = COMMAND_PROMPTS[badge.command] || '';
-      }
-
-      const finalPrompt = content
-        ? `${expandedPrompt}\n\nUser context: ${content}`
-        : expandedPrompt || badge.command;
-
-      const files = await convertFiles();
-      setBadge(null);
-      setInputValue('');
-      onSend(finalPrompt, files.length > 0 ? files : undefined);
-      return;
-    }
-
     const files = await convertFiles();
     const hasFiles = files.length > 0;
 
     if ((!content && !hasFiles) || disabled || isStreaming) return;
 
-    // Check if it's a direct slash command typed in the input
-    if (content.startsWith('/') && !hasFiles) {
-      const cmd = BUILT_IN_COMMANDS.find(c => c.value === content);
-      if (cmd) {
-        if (cmd.immediate && onCommand) {
+    // Check for /command or /skill prefix and expand inline
+    if (content.startsWith('/')) {
+      const match = content.match(/^\/(\S+)(?:\s+([\s\S]*))?$/);
+      if (match) {
+        const commandName = match[1];
+        const userInput = match[2]?.trim() || '';
+
+        // Check built-in commands
+        const cmd = BUILT_IN_COMMANDS.find(c => c.label === commandName);
+        if (cmd) {
+          if (cmd.immediate && onCommand && !userInput && !hasFiles) {
+            setInputValue('');
+            onCommand(cmd.value);
+            return;
+          }
+          // Non-immediate built-in: expand with COMMAND_PROMPTS
+          const promptTemplate = COMMAND_PROMPTS[cmd.value] || '';
+          const finalPrompt = userInput
+            ? `${promptTemplate}\n\nUser context: ${userInput}`
+            : promptTemplate || cmd.value;
           setInputValue('');
-          onCommand(content);
+          onSend(finalPrompt, hasFiles ? files : undefined);
           return;
         }
-        // Non-immediate: show as badge for user to add context
-        setBadge({
-          command: cmd.value,
-          label: cmd.label,
-          description: cmd.description || '',
-          isSkill: false,
-        });
-        setInputValue('');
-        return;
-      }
 
-      // Not a built-in command — treat as a skill
-      const skillName = content.slice(1);
-      if (skillName) {
-        setBadge({
-          command: content,
-          label: skillName,
-          description: '',
-          isSkill: true,
-        });
-        setInputValue('');
-        return;
+        // Check skills cache
+        const skillContent = skillsCacheRef.current.get(commandName);
+        if (skillContent) {
+          const finalPrompt = userInput
+            ? `${skillContent}\n\nUser context: ${userInput}`
+            : skillContent;
+          setInputValue('');
+          onSend(finalPrompt, hasFiles ? files : undefined);
+          return;
+        }
       }
+      // Unknown /command — send as-is
     }
 
     onSend(content || 'Please review the attached file(s).', hasFiles ? files : undefined);
     setInputValue('');
-  }, [inputValue, onSend, onCommand, disabled, isStreaming, closePopover, badge]);
+  }, [inputValue, onSend, onCommand, disabled, isStreaming, closePopover]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -658,21 +616,8 @@ export function MessageInput({
         }
       }
 
-      // Backspace removes badge when input is empty
-      if (e.key === 'Backspace' && badge && !inputValue) {
-        e.preventDefault();
-        removeBadge();
-        return;
-      }
-
-      // Escape removes badge
-      if (e.key === 'Escape' && badge) {
-        e.preventDefault();
-        removeBadge();
-        return;
-      }
     },
-    [popoverMode, popoverItems, popoverFilter, selectedIndex, insertItem, closePopover, badge, inputValue, removeBadge]
+    [popoverMode, popoverItems, popoverFilter, selectedIndex, insertItem, closePopover]
   );
 
   // Click outside to close popover
@@ -858,31 +803,11 @@ export function MessageInput({
           >
             {/* Bridge: listens for file tree "+" button events */}
             <FileTreeAttachmentBridge />
-            {/* Command badge */}
-            {badge && (
-              <div className="flex w-full items-center gap-1.5 px-3 pt-2.5 pb-0 order-first">
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 pl-2.5 pr-1.5 py-1 text-xs font-medium border border-blue-500/20">
-                  <span className="font-mono">{badge.command}</span>
-                  {badge.description && (
-                    <span className="text-blue-500/60 dark:text-blue-400/60 text-[10px]">{badge.description}</span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={removeBadge}
-                    className="ml-0.5 rounded-full p-0.5 hover:bg-blue-500/20 transition-colors"
-                  >
-                    <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M3 3l6 6M9 3l-6 6" />
-                    </svg>
-                  </button>
-                </span>
-              </div>
-            )}
             {/* File attachment capsules */}
             <FileAttachmentsCapsules />
             <PromptInputTextarea
               ref={textareaRef}
-              placeholder={badge ? "Add details (optional), then press Enter..." : "Message Claude..."}
+              placeholder="Message Claude..."
               value={inputValue}
               onChange={(e) => handleInputChange(e.currentTarget.value)}
               onKeyDown={handleKeyDown}
@@ -1002,7 +927,6 @@ export function MessageInput({
                 onStop={onStop}
                 disabled={disabled}
                 inputValue={inputValue}
-                hasBadge={!!badge}
               />
             </PromptInputFooter>
           </PromptInput>

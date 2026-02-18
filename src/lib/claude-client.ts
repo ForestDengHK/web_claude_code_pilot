@@ -367,6 +367,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         }
 
         // Load MCP servers: use passed-in config, or auto-read from config files
+        // Merge order: ~/.claude.json → ~/.claude/settings.json → {cwd}/.mcp.json → {cwd}/.claude/settings.json → {cwd}/.claude/settings.local.json
         let effectiveMcpServers = mcpServers;
         if (!effectiveMcpServers || Object.keys(effectiveMcpServers).length === 0) {
           try {
@@ -380,6 +381,31 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             if (fs.existsSync(settingsPath)) {
               const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
               if (settings.mcpServers) merged = { ...merged, ...settings.mcpServers };
+            }
+            // Project-level MCP configs from working directory
+            const cwd = workingDirectory || '';
+            if (cwd) {
+              const projectMcpPath = path.join(cwd, '.mcp.json');
+              if (fs.existsSync(projectMcpPath)) {
+                try {
+                  const projectMcp = JSON.parse(fs.readFileSync(projectMcpPath, 'utf-8'));
+                  if (projectMcp.mcpServers) merged = { ...merged, ...projectMcp.mcpServers };
+                } catch { /* ignore */ }
+              }
+              const projectSettingsPath = path.join(cwd, '.claude', 'settings.json');
+              if (fs.existsSync(projectSettingsPath)) {
+                try {
+                  const projectSettings = JSON.parse(fs.readFileSync(projectSettingsPath, 'utf-8'));
+                  if (projectSettings.mcpServers) merged = { ...merged, ...projectSettings.mcpServers };
+                } catch { /* ignore */ }
+              }
+              const projectLocalSettingsPath = path.join(cwd, '.claude', 'settings.local.json');
+              if (fs.existsSync(projectLocalSettingsPath)) {
+                try {
+                  const projectLocalSettings = JSON.parse(fs.readFileSync(projectLocalSettingsPath, 'utf-8'));
+                  if (projectLocalSettings.mcpServers) merged = { ...merged, ...projectLocalSettings.mcpServers };
+                } catch { /* ignore */ }
+              }
             }
             if (Object.keys(merged).length > 0) effectiveMcpServers = merged;
           } catch {
