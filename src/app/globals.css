@@ -115,6 +115,21 @@
   --sidebar-ring: oklch(0.623 0.214 259.815);
 }
 
+/* Dynamic viewport height for mobile keyboards */
+@supports (height: 100dvh) {
+  .h-screen {
+    height: 100dvh !important;
+  }
+}
+
+/* Larger touch targets on mobile for prompt input toolbar buttons */
+@media (max-width: 767px) {
+  [data-prompt-input-tools] button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
