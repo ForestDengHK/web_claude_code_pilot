@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   ChevronRightIcon,
+  CopyIcon,
   DownloadIcon,
   EyeIcon,
   FileIcon,
@@ -290,6 +291,17 @@ export const FileTreeFile = ({
             })()}
             {(onPreview || onDownload || onAdd) && (
               <span className="ml-auto flex shrink-0 items-center">
+                <button
+                  type="button"
+                  className="flex size-8 items-center justify-center rounded transition-opacity hover:bg-muted md:size-5 md:opacity-0 md:group-hover/file:opacity-100"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigator.clipboard.writeText(name);
+                  }}
+                  title="Copy file name"
+                >
+                  <CopyIcon className="size-4 text-muted-foreground md:size-3" />
+                </button>
                 {onPreview && (
                   <button
                     type="button"

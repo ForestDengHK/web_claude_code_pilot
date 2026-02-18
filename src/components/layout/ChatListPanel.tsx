@@ -25,7 +25,6 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { usePanel } from "@/hooks/usePanel";
-import { ConnectionStatus } from "./ConnectionStatus";
 import { ImportSessionDialog } from "./ImportSessionDialog";
 import { FolderPicker } from "@/components/chat/FolderPicker";
 import type { ChatSession } from "@/types";
@@ -108,10 +107,6 @@ function groupSessionsByProject(sessions: ChatSession[]): ProjectGroup[] {
   return groups;
 }
 
-const MODE_BADGE_CONFIG: Record<string, { label: string; className: string }> = {
-  code: { label: "Code", className: "bg-blue-500/10 text-blue-500" },
-  plan: { label: "Plan", className: "bg-sky-500/10 text-sky-500" },
-};
 
 export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
   const pathname = usePathname();
@@ -316,14 +311,12 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
         <span className="text-[13px] font-semibold tracking-tight text-sidebar-foreground">
           Threads
         </span>
-        <ConnectionStatus />
       </div>
       {/* Desktop header */}
       <div className="hidden h-12 shrink-0 items-center justify-between px-3 pl-6 md:flex">
         <span className="text-[13px] font-semibold tracking-tight text-sidebar-foreground">
           Threads
         </span>
-        <ConnectionStatus />
       </div>
 
       {/* New Chat + New Project */}
@@ -468,8 +461,6 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                           streamingSessionId === session.id;
                         const needsApproval =
                           pendingApprovalSessionId === session.id;
-                        const mode = session.mode || "code";
-                        const badgeCfg = MODE_BADGE_CONFIG[mode] || MODE_BADGE_CONFIG.code;
 
                         return (
                           <div
@@ -512,15 +503,6 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                                 </span>
                               </div>
                               <div className="flex items-center gap-1 shrink-0">
-                                {/* Mode badge */}
-                                <span
-                                  className={cn(
-                                    "text-[9px] px-1 py-0.5 rounded font-medium leading-none",
-                                    badgeCfg.className
-                                  )}
-                                >
-                                  {badgeCfg.label}
-                                </span>
                                 <span className="text-[10px] text-muted-foreground/40">
                                   {formatRelativeTime(session.updated_at)}
                                 </span>

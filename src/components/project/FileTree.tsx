@@ -166,9 +166,9 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFilePrev
           size="icon-sm"
           onClick={fetchTree}
           disabled={loading}
-          className="h-6 w-6 shrink-0"
+          className="h-8 w-8 shrink-0"
         >
-          <HugeiconsIcon icon={RefreshIcon} className={cn("h-3 w-3", loading && "animate-spin")} />
+          <HugeiconsIcon icon={RefreshIcon} className={cn("h-4 w-4", loading && "animate-spin")} />
           <span className="sr-only">Refresh</span>
         </Button>
       </div>

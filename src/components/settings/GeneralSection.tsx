@@ -21,7 +21,7 @@ function VersionCard() {
     <div className="rounded-lg border border-border/50 p-4 transition-shadow hover:shadow-sm">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-sm font-medium">CodePilot</h2>
+          <h2 className="text-sm font-medium">Web Claude Code Pilot</h2>
           <p className="text-xs text-muted-foreground">Version {currentVersion}</p>
         </div>
       </div>

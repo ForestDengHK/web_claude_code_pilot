@@ -193,7 +193,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
               </h2>
               <button
                 onClick={handleStartEditTitle}
-                className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 p-0.5 rounded hover:bg-muted"
+                className="md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0 p-0.5 rounded hover:bg-muted"
               >
                 <HugeiconsIcon icon={PencilEdit01Icon} className="h-3 w-3 text-muted-foreground" />
               </button>

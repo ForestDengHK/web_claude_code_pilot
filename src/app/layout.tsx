@@ -22,7 +22,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "CodePilot",
+  title: "Web Claude Code Pilot",
   description: "A web GUI for Claude Code",
 };
 

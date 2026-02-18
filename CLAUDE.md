@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-CodePilot -- Claude Code's web GUI, built with Next.js (standalone mode). Deployed as a self-hosted web app.
+Web Claude Code Pilot -- Claude Code's web GUI, built with Next.js (standalone mode). Deployed as a self-hosted web app.
 
 ## Release Checklist
 
@@ -37,7 +37,7 @@ CodePilot -- Claude Code's web GUI, built with Next.js (standalone mode). Deploy
 
 ## Release Notes Template
 
-**Title**: `CodePilot v{version}`
+**Title**: `Web Claude Code Pilot v{version}`
 
 ```markdown
 ## New Features / Bug Fixes

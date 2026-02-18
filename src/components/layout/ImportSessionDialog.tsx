@@ -158,7 +158,7 @@ export function ImportSessionDialog({
           </DialogTitle>
           <DialogDescription>
             Browse and import conversations from Claude Code CLI. Imported
-            sessions can be resumed in CodePilot.
+            sessions can be resumed in Web Claude Code Pilot.
           </DialogDescription>
         </DialogHeader>
 

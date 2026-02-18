@@ -85,6 +85,6 @@ jobs:
           fi
 
           gh release create "${GITHUB_REF_NAME}" \
-            --title "CodePilot v${VERSION}" \
+            --title "Web Claude Code Pilot v${VERSION}" \
             --notes-file release-notes.md \
             --latest

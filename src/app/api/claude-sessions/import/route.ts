@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
       ? firstUserMsg.content.slice(0, 50) + (firstUserMsg.content.length > 50 ? '...' : '')
       : `Imported: ${info.projectName}`;
 
-    // Create a new CodePilot session
+    // Create a new Web Claude Code Pilot session
     const session = createSession(
       title,
       undefined, // model — will use default
@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
     // Import all messages
     for (const msg of messages) {
       // For assistant messages with tool blocks, store as structured JSON
-      // For text-only messages, store as plain text (consistent with CodePilot's convention)
+      // For text-only messages, store as plain text (consistent with Web Claude Code Pilot's convention)
       const content = msg.hasToolBlocks
         ? JSON.stringify(msg.contentBlocks)
         : msg.content;

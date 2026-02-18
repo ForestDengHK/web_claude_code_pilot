@@ -62,7 +62,7 @@ export function SettingsLayout() {
       <div className="border-b border-border/50 px-4 md:px-6 pt-4 pb-4">
         <h1 className="text-xl font-semibold">Settings</h1>
         <p className="text-sm text-muted-foreground">
-          Manage CodePilot and Claude CLI settings
+          Manage Web Claude Code Pilot and Claude CLI settings
         </p>
       </div>
 
