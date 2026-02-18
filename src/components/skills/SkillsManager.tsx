@@ -10,8 +10,10 @@ import { SkillListItem } from "./SkillListItem";
 import { SkillEditor } from "./SkillEditor";
 import { CreateSkillDialog } from "./CreateSkillDialog";
 import type { SkillItem } from "./SkillListItem";
+import { usePanel } from "@/hooks/usePanel";
 
 export function SkillsManager() {
+  const { workingDirectory } = usePanel();
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [selected, setSelected] = useState<SkillItem | null>(null);
   const [loading, setLoading] = useState(true);
@@ -20,7 +22,8 @@ export function SkillsManager() {
 
   const fetchSkills = useCallback(async () => {
     try {
-      const res = await fetch("/api/skills");
+      const params = workingDirectory ? `?cwd=${encodeURIComponent(workingDirectory)}` : "";
+      const res = await fetch(`/api/skills${params}`);
       if (res.ok) {
         const data = await res.json();
         setSkills(data.skills || []);
@@ -30,7 +33,7 @@ export function SkillsManager() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [workingDirectory]);
 
   useEffect(() => {
     fetchSkills();
@@ -41,7 +44,7 @@ export function SkillsManager() {
       const res = await fetch("/api/skills", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, content, scope }),
+        body: JSON.stringify({ name, content, scope, cwd: workingDirectory || undefined }),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -51,16 +54,21 @@ export function SkillsManager() {
       setSkills((prev) => [...prev, data.skill]);
       setSelected(data.skill);
     },
-    []
+    [workingDirectory]
   );
 
   const buildSkillUrl = useCallback((skill: SkillItem) => {
     const base = `/api/skills/${encodeURIComponent(skill.name)}`;
+    const params = new URLSearchParams();
     if (skill.source === "installed" && skill.installedSource) {
-      return `${base}?source=${skill.installedSource}`;
+      params.set("source", skill.installedSource);
     }
-    return base;
-  }, []);
+    if (workingDirectory) {
+      params.set("cwd", workingDirectory);
+    }
+    const qs = params.toString();
+    return qs ? `${base}?${qs}` : base;
+  }, [workingDirectory]);
 
   const handleSave = useCallback(
     async (skill: SkillItem, content: string) => {
@@ -305,6 +313,7 @@ export function SkillsManager() {
         open={showCreate}
         onOpenChange={setShowCreate}
         onCreate={handleCreate}
+        workingDirectory={workingDirectory}
       />
     </div>
   );

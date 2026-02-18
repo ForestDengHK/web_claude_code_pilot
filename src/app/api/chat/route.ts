@@ -10,8 +10,8 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
-    const body: SendMessageRequest & { files?: FileAttachment[]; toolTimeout?: number } = await request.json();
-    const { session_id, content, model, mode, files, toolTimeout } = body;
+    const body: SendMessageRequest & { files?: FileAttachment[]; toolTimeout?: number; skillPrompt?: string } = await request.json();
+    const { session_id, content, model, mode, files, toolTimeout, skillPrompt } = body;
 
     if (!session_id || !content) {
       return new Response(JSON.stringify({ error: 'session_id and content are required' }), {
@@ -60,7 +60,6 @@ export async function POST(request: NextRequest) {
     // Determine permission mode from chat mode: code → acceptEdits, plan → plan
     const effectiveMode = mode || session.mode || 'code';
     let permissionMode: string;
-    let systemPromptOverride: string | undefined;
     switch (effectiveMode) {
       case 'plan':
         permissionMode = 'plan';
@@ -69,6 +68,9 @@ export async function POST(request: NextRequest) {
         permissionMode = 'acceptEdits';
         break;
     }
+
+    // Skill content goes into system prompt (not user message), matching Claude Code CLI behavior
+    const systemPromptOverride = skillPrompt || session.system_prompt || undefined;
 
     const abortController = new AbortController();
 
@@ -100,7 +102,7 @@ export async function POST(request: NextRequest) {
       sessionId: session_id,
       sdkSessionId: session.sdk_session_id || undefined,
       model: effectiveModel,
-      systemPrompt: systemPromptOverride || session.system_prompt || undefined,
+      systemPrompt: systemPromptOverride,
       workingDirectory: session.working_directory || undefined,
       abortController,
       permissionMode,

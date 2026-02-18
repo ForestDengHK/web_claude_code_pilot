@@ -74,7 +74,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   // Ref to keep accumulated streaming content in sync regardless of React batching
   const accumulatedRef = useRef('');
   // Ref for sendMessage to allow self-referencing in timeout auto-retry without circular deps
-  const sendMessageRef = useRef<(content: string, files?: FileAttachment[]) => Promise<void>>(undefined);
+  const sendMessageRef = useRef<(content: string, files?: FileAttachment[], skillPrompt?: string) => Promise<void>>(undefined);
 
   // Re-sync streaming content when the window regains visibility (browser tab switch)
   useEffect(() => {
@@ -176,7 +176,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   }, [pendingPermission, setPendingApprovalSessionId]);
 
   const sendMessage = useCallback(
-    async (content: string, files?: FileAttachment[]) => {
+    async (content: string, files?: FileAttachment[], skillPrompt?: string) => {
       if (isStreaming) return;
 
       // Build display content: embed file metadata as HTML comment for MessageItem to parse
@@ -219,6 +219,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             mode,
             model: currentModel,
             ...(files && files.length > 0 ? { files } : {}),
+            ...(skillPrompt ? { skillPrompt } : {}),
           }),
           signal: controller.signal,
         });

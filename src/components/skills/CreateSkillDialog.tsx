@@ -20,6 +20,7 @@ interface CreateSkillDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreate: (name: string, scope: "global" | "project", content: string) => Promise<void>;
+  workingDirectory?: string;
 }
 
 const TEMPLATES: { label: string; content: string }[] = [
@@ -57,6 +58,7 @@ export function CreateSkillDialog({
   open,
   onOpenChange,
   onCreate,
+  workingDirectory,
 }: CreateSkillDialogProps) {
   const [name, setName] = useState("");
   const [scope, setScope] = useState<"global" | "project">("project");
@@ -153,10 +155,14 @@ export function CreateSkillDialog({
                 Global
               </button>
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground truncate" title={
+              scope === "project"
+                ? `${workingDirectory || "."}/.claude/skills/`
+                : "~/.claude/skills/"
+            }>
               {scope === "project"
-                ? "Saved in .claude/commands/ (this project only)"
-                : "Saved in ~/.claude/commands/ (available everywhere)"}
+                ? `Saved in ${workingDirectory ? workingDirectory + "/" : ""}.claude/skills/ (this project only)`
+                : "Saved in ~/.claude/skills/ (available everywhere)"}
             </p>
           </div>
 

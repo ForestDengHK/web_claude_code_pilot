@@ -16,12 +16,12 @@ interface SkillFile {
 type InstalledSource = "agents" | "claude";
 type InstalledSkill = SkillFile & { installedSource: InstalledSource; contentHash: string };
 
-function getGlobalCommandsDir(): string {
-  return path.join(os.homedir(), ".claude", "commands");
+function getGlobalSkillsDir(): string {
+  return path.join(os.homedir(), ".claude", "skills");
 }
 
-function getProjectCommandsDir(cwd?: string): string {
-  return path.join(cwd || process.cwd(), ".claude", "commands");
+function getProjectSkillsDir(cwd?: string): string {
+  return path.join(cwd || process.cwd(), ".claude", "skills");
 }
 
 interface PluginCommandDir {
@@ -375,8 +375,8 @@ export async function GET(request: NextRequest) {
   try {
     // Accept optional cwd query param for project-level skills
     const cwd = request.nextUrl.searchParams.get("cwd") || undefined;
-    const globalDir = getGlobalCommandsDir();
-    const projectDir = getProjectCommandsDir(cwd);
+    const globalDir = getGlobalSkillsDir();
+    const projectDir = getProjectSkillsDir(cwd);
 
     console.log(`[skills] Scanning global: ${globalDir} (exists: ${fs.existsSync(globalDir)})`);
     console.log(`[skills] Scanning project: ${projectDir} (exists: ${fs.existsSync(projectDir)})`);
@@ -447,10 +447,11 @@ export async function GET(request: NextRequest) {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { name, content, scope } = body as {
+    const { name, content, scope, cwd } = body as {
       name: string;
       content: string;
       scope: "global" | "project";
+      cwd?: string;
     };
 
     if (!name || typeof name !== "string") {
@@ -470,7 +471,7 @@ export async function POST(request: Request) {
     }
 
     const dir =
-      scope === "project" ? getProjectCommandsDir() : getGlobalCommandsDir();
+      scope === "project" ? getProjectSkillsDir(cwd) : getGlobalSkillsDir();
 
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });

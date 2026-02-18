@@ -56,7 +56,7 @@ const MAX_DOC_SIZE = 10 * 1024 * 1024;   // 10MB
 const MAX_FILE_SIZE = MAX_DOC_SIZE;       // Use larger limit; we validate per-type in conversion
 
 interface MessageInputProps {
-  onSend: (content: string, files?: FileAttachment[]) => void;
+  onSend: (content: string, files?: FileAttachment[], skillPrompt?: string) => void;
   onCommand?: (command: string) => void;
   onStop?: () => void;
   disabled?: boolean;
@@ -389,7 +389,8 @@ export function MessageInput({
   const fetchSkills = useCallback(async () => {
     let apiSkills: PopoverItem[] = [];
     try {
-      const res = await fetch('/api/skills');
+      const cwdParam = workingDirectory ? `?cwd=${encodeURIComponent(workingDirectory)}` : "";
+      const res = await fetch(`/api/skills${cwdParam}`);
       if (res.ok) {
         const data = await res.json();
         const skills = data.skills || [];
@@ -416,7 +417,7 @@ export function MessageInput({
     const uniqueSkills = apiSkills.filter(s => !builtInNames.has(s.label));
 
     return [...BUILT_IN_COMMANDS, ...uniqueSkills];
-  }, []);
+  }, [workingDirectory]);
 
   // Close popover
   const closePopover = useCallback(() => {
@@ -570,14 +571,12 @@ export function MessageInput({
           return;
         }
 
-        // Check skills cache
+        // Check skills cache — pass skill content as system prompt, not user message
         const skillContent = skillsCacheRef.current.get(commandName);
         if (skillContent) {
-          const finalPrompt = userInput
-            ? `${skillContent}\n\nUser context: ${userInput}`
-            : skillContent;
+          const displayText = userInput || `/${commandName}`;
           setInputValue('');
-          onSend(finalPrompt, hasFiles ? files : undefined);
+          onSend(displayText, hasFiles ? files : undefined, skillContent);
           return;
         }
       }

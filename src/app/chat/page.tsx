@@ -120,7 +120,7 @@ export default function NewChatPage() {
   }, [pendingPermission, setPendingApprovalSessionId]);
 
   const sendFirstMessage = useCallback(
-    async (content: string) => {
+    async (content: string, _files?: unknown, skillPrompt?: string) => {
       if (isStreaming) return;
 
       // Require a project directory before sending
@@ -188,7 +188,7 @@ export default function NewChatPage() {
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: session.id, content, mode, model: currentModel }),
+          body: JSON.stringify({ session_id: session.id, content, mode, model: currentModel, ...(skillPrompt ? { skillPrompt } : {}) }),
           signal: controller.signal,
         });
 

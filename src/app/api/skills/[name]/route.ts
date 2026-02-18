@@ -4,12 +4,12 @@ import path from "path";
 import os from "os";
 import crypto from "crypto";
 
-function getGlobalCommandsDir(): string {
-  return path.join(os.homedir(), ".claude", "commands");
+function getGlobalSkillsDir(): string {
+  return path.join(os.homedir(), ".claude", "skills");
 }
 
-function getProjectCommandsDir(): string {
-  return path.join(process.cwd(), ".claude", "commands");
+function getProjectSkillsDir(cwd?: string): string {
+  return path.join(cwd || process.cwd(), ".claude", "skills");
 }
 
 function getInstalledSkillsDir(): string {
@@ -149,7 +149,7 @@ function findInstalledSkillMatches(
 
 function findSkillFile(
   name: string,
-  options?: { installedSource?: InstalledSource; installedOnly?: boolean }
+  options?: { installedSource?: InstalledSource; installedOnly?: boolean; cwd?: string }
 ):
   | SkillMatch
   | { conflict: true; sources: InstalledSource[] }
@@ -158,11 +158,11 @@ function findSkillFile(
 
   if (!options?.installedOnly) {
     // Check project first, then global, then installed (~/.agents/skills/ and ~/.claude/skills/)
-    const projectPath = path.join(getProjectCommandsDir(), `${name}.md`);
+    const projectPath = path.join(getProjectSkillsDir(options?.cwd), `${name}.md`);
     if (fs.existsSync(projectPath)) {
       return { filePath: projectPath, source: "project" };
     }
-    const globalPath = path.join(getGlobalCommandsDir(), `${name}.md`);
+    const globalPath = path.join(getGlobalSkillsDir(), `${name}.md`);
     if (fs.existsSync(globalPath)) {
       return { filePath: globalPath, source: "global" };
     }
@@ -222,9 +222,10 @@ export async function GET(
       );
     }
 
+    const cwd = url.searchParams.get("cwd") || undefined;
     const found = installedSource
-      ? findSkillFile(name, { installedSource, installedOnly: true })
-      : findSkillFile(name);
+      ? findSkillFile(name, { installedSource, installedOnly: true, cwd })
+      : findSkillFile(name, { cwd });
     if (found && "conflict" in found) {
       return NextResponse.json(
         { error: "Multiple skills with different content", sources: found.sources },
@@ -281,9 +282,10 @@ export async function PUT(
       );
     }
 
+    const cwd = url.searchParams.get("cwd") || undefined;
     const found = installedSource
-      ? findSkillFile(name, { installedSource, installedOnly: true })
-      : findSkillFile(name);
+      ? findSkillFile(name, { installedSource, installedOnly: true, cwd })
+      : findSkillFile(name, { cwd });
     if (found && "conflict" in found) {
       return NextResponse.json(
         { error: "Multiple skills with different content", sources: found.sources },
@@ -338,9 +340,10 @@ export async function DELETE(
       );
     }
 
+    const cwd = url.searchParams.get("cwd") || undefined;
     const found = installedSource
-      ? findSkillFile(name, { installedSource, installedOnly: true })
-      : findSkillFile(name);
+      ? findSkillFile(name, { installedSource, installedOnly: true, cwd })
+      : findSkillFile(name, { cwd });
     if (found && "conflict" in found) {
       return NextResponse.json(
         { error: "Multiple skills with different content", sources: found.sources },
