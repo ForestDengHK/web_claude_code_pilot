@@ -135,6 +135,10 @@ function getShortModelName(label: string): string {
   if (label.length <= 8) return label;
 
   const lower = label.toLowerCase();
+
+  // "Default (recommended)" → "Default" so user knows it's not a specific model
+  if (lower.startsWith('default')) return 'Default';
+
   const numericSegments = label.match(/\d+/g) ?? [];
 
   if (lower.includes('opus')) {
@@ -433,9 +437,15 @@ export function MessageInput({
             label: m.displayName,
           }));
           setDynamicModels(models);
-          // Auto-select the first model (recommended) if no explicit model set
-          if (!modelName && models[0]) {
-            onModelChange?.(models[0].value);
+          // Auto-select default model if no explicit model set.
+          // Prefer "sonnet" over "default" to avoid accidentally using the most
+          // expensive model (the SDK's "default" maps to Opus).
+          if (!modelName) {
+            const preferred =
+              models.find((m: { value: string }) => m.value === 'sonnet') ??
+              models.find((m: { value: string }) => m.value !== 'default') ??
+              models[0];
+            if (preferred) onModelChange?.(preferred.value);
           }
         }
       })
