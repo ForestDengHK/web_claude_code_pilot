@@ -50,12 +50,6 @@
 
 ---
 
-## スクリーンショット
-
-![Web Claude Code Pilot](docs/screenshot.png)
-
----
-
 ## 前提条件
 
 > **重要**: Web Claude Code Pilot は Claude Code Agent SDK を内部で呼び出します。サーバーを起動する前に、`claude` が `PATH` で利用可能であること、認証済み (`claude login`) であることを確認してください。

@@ -50,12 +50,6 @@ This fork diverges from the original CodePilot with the following major changes:
 
 ---
 
-## Screenshots
-
-![Web Claude Code Pilot](docs/screenshot.png)
-
----
-
 ## Prerequisites
 
 > **Important**: Web Claude Code Pilot calls the Claude Code Agent SDK under the hood. Make sure `claude` is available on your `PATH` and that you have authenticated (`claude login`) before starting the server.

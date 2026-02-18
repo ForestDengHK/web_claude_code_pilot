@@ -50,12 +50,6 @@
 
 ---
 
-## 截图
-
-![Web Claude Code Pilot](docs/screenshot.png)
-
----
-
 ## 环境要求
 
 | 要求 | 最低版本 |
