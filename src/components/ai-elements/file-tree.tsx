@@ -16,6 +16,7 @@ import {
   FileIcon,
   FolderIcon,
   FolderOpenIcon,
+  MinusIcon,
   PlusIcon,
 } from "lucide-react";
 import {
@@ -32,8 +33,10 @@ interface FileTreeContextType {
   selectedPath?: string;
   onSelect?: (path: string) => void;
   onAdd?: (path: string) => void;
+  onRemove?: (path: string) => void;
   onPreview?: (path: string) => void;
   onDownload?: (path: string) => void;
+  attachedPaths?: Set<string>;
 }
 
 // Default noop for context default value
@@ -52,9 +55,11 @@ export type FileTreeProps = HTMLAttributes<HTMLDivElement> & {
   selectedPath?: string;
   onSelect?: (path: string) => void;
   onAdd?: (path: string) => void;
+  onRemove?: (path: string) => void;
   onPreview?: (path: string) => void;
   onDownload?: (path: string) => void;
   onExpandedChange?: (expanded: Set<string>) => void;
+  attachedPaths?: Set<string>;
 };
 
 export const FileTree = ({
@@ -63,9 +68,11 @@ export const FileTree = ({
   selectedPath,
   onSelect,
   onAdd,
+  onRemove,
   onPreview,
   onDownload,
   onExpandedChange,
+  attachedPaths,
   className,
   children,
   ...props
@@ -88,8 +95,8 @@ export const FileTree = ({
   );
 
   const contextValue = useMemo(
-    () => ({ expandedPaths, onAdd, onDownload, onPreview, onSelect, selectedPath, togglePath }),
-    [expandedPaths, onAdd, onDownload, onPreview, onSelect, selectedPath, togglePath]
+    () => ({ attachedPaths, expandedPaths, onAdd, onDownload, onPreview, onRemove, onSelect, selectedPath, togglePath }),
+    [attachedPaths, expandedPaths, onAdd, onDownload, onPreview, onRemove, onSelect, selectedPath, togglePath]
   );
 
   return (
@@ -213,8 +220,9 @@ export const FileTreeFile = ({
   children,
   ...props
 }: FileTreeFileProps) => {
-  const { selectedPath, onSelect, onAdd, onPreview, onDownload } = useContext(FileTreeContext);
+  const { selectedPath, onSelect, onAdd, onRemove, onPreview, onDownload, attachedPaths } = useContext(FileTreeContext);
   const isSelected = selectedPath === path;
+  const isAttached = attachedPaths?.has(path) ?? false;
 
   const handleClick = useCallback(() => {
     onSelect?.(path);
@@ -240,9 +248,13 @@ export const FileTreeFile = ({
   const handleAdd = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      onAdd?.(path);
+      if (isAttached) {
+        onRemove?.(path);
+      } else {
+        onAdd?.(path);
+      }
     },
-    [onAdd, path]
+    [onAdd, onRemove, path, isAttached]
   );
 
   const handleDownload = useCallback(
@@ -325,11 +337,18 @@ export const FileTreeFile = ({
                 {onAdd && (
                   <button
                     type="button"
-                    className="flex size-8 items-center justify-center rounded transition-opacity hover:bg-muted md:size-5 md:opacity-0 md:group-hover/file:opacity-100"
+                    className={cn(
+                      "flex size-8 items-center justify-center rounded transition-opacity hover:bg-muted md:size-5",
+                      isAttached ? "opacity-100" : "md:opacity-0 md:group-hover/file:opacity-100"
+                    )}
                     onClick={handleAdd}
-                    title="Add to chat"
+                    title={isAttached ? "Remove from chat" : "Add to chat"}
                   >
-                    <PlusIcon className="size-4 text-muted-foreground md:size-3" />
+                    {isAttached ? (
+                      <MinusIcon className="size-4 text-orange-500 md:size-3" />
+                    ) : (
+                      <PlusIcon className="size-4 text-muted-foreground md:size-3" />
+                    )}
                   </button>
                 )}
               </span>

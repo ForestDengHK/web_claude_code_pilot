@@ -22,6 +22,7 @@ interface FileTreeProps {
   workingDirectory: string;
   onFileSelect: (path: string) => void;
   onFileAdd?: (path: string) => void;
+  onFileRemove?: (path: string) => void;
   onFilePreview?: (path: string) => void;
 }
 
@@ -110,10 +111,11 @@ function RenderTreeNodes({ nodes, searchQuery }: { nodes: FileTreeNode[]; search
   );
 }
 
-export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFilePreview }: FileTreeProps) {
+export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemove, onFilePreview }: FileTreeProps) {
   const [tree, setTree] = useState<FileTreeNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [attachedPaths, setAttachedPaths] = useState<Set<string>>(new Set());
 
   const fetchTree = useCallback(async () => {
     if (!workingDirectory) {
@@ -148,6 +150,16 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFilePrev
     window.addEventListener('refresh-file-tree', handler);
     return () => window.removeEventListener('refresh-file-tree', handler);
   }, [fetchTree]);
+
+  // Track attached file paths from chat input
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const paths = (e as CustomEvent<Set<string>>).detail;
+      setAttachedPaths(paths);
+    };
+    window.addEventListener('attached-files-changed', handler);
+    return () => window.removeEventListener('attached-files-changed', handler);
+  }, []);
 
   // Build default expanded set from first-level directories
   const defaultExpanded = new Set(
@@ -202,6 +214,8 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFilePrev
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI Elements FileTree onSelect type conflicts with HTMLAttributes.onSelect
             onSelect={onFileSelect as any}
             onAdd={onFileAdd}
+            onRemove={onFileRemove}
+            attachedPaths={attachedPaths}
             onPreview={onFilePreview ? (path: string) => {
               const ext = path.split(".").pop()?.toLowerCase() || "";
               if (PREVIEWABLE_EXTENSIONS.has(ext)) onFilePreview(path);

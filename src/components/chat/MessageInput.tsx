@@ -194,22 +194,45 @@ function AttachFileButton() {
 }
 
 /**
- * Bridge component that listens for 'attach-file-to-chat' custom events
- * from the file tree and adds files as attachments. Must be rendered inside PromptInput.
+ * Bridge component that listens for 'attach-file-to-chat' / 'detach-file-from-chat'
+ * custom events from the file tree and manages file attachments.
+ * Broadcasts 'attached-files-changed' so the file tree can show +/- toggle state.
+ * Must be rendered inside PromptInput.
  */
 function FileTreeAttachmentBridge() {
   const attachments = usePromptInputAttachments();
   const attachmentsRef = useRef(attachments);
+  // Map: file path → attachment id (for removal by path)
+  const pathToIdRef = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     attachmentsRef.current = attachments;
   }, [attachments]);
 
+  // Broadcast current attached paths whenever attachments change
+  useEffect(() => {
+    // Clean up stale path mappings (attachment was removed via capsule X button)
+    const currentIds = new Set(attachments.files.map(f => f.id));
+    const pathMap = pathToIdRef.current;
+    for (const [path, id] of pathMap) {
+      if (!currentIds.has(id)) {
+        pathMap.delete(path);
+      }
+    }
+    // Broadcast the current set of paths
+    const paths = new Set(pathMap.keys());
+    window.dispatchEvent(new CustomEvent('attached-files-changed', { detail: paths }));
+  }, [attachments.files]);
+
+  // Listen for attach events
   useEffect(() => {
     const handler = async (e: Event) => {
       const customEvent = e as CustomEvent<{ path: string }>;
       const filePath = customEvent.detail?.path;
       if (!filePath) return;
+
+      // Already attached — ignore duplicate
+      if (pathToIdRef.current.has(filePath)) return;
 
       try {
         const res = await fetch(`/api/files/raw?path=${encodeURIComponent(filePath)}`);
@@ -218,10 +241,20 @@ function FileTreeAttachmentBridge() {
           return;
         }
         const blob = await res.blob();
-        // Handle both Unix (/) and Windows (\) path separators
         const filename = filePath.split(/[/\\]/).pop() || 'file';
         const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
         attachmentsRef.current.add([file]);
+        // After add, find the new attachment by matching the latest entry
+        // The add is async-ish (setState), so we defer the id lookup
+        setTimeout(() => {
+          const files = attachmentsRef.current.files;
+          const match = files.find(f => f.filename === filename && !pathToIdRef.current.has(filePath));
+          if (match) {
+            pathToIdRef.current.set(filePath, match.id);
+            const paths = new Set(pathToIdRef.current.keys());
+            window.dispatchEvent(new CustomEvent('attached-files-changed', { detail: paths }));
+          }
+        }, 100);
       } catch (err) {
         console.warn('[FileTreeAttachment] Error attaching file:', filePath, err);
       }
@@ -229,6 +262,26 @@ function FileTreeAttachmentBridge() {
 
     window.addEventListener('attach-file-to-chat', handler);
     return () => window.removeEventListener('attach-file-to-chat', handler);
+  }, []);
+
+  // Listen for detach events
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const customEvent = e as CustomEvent<{ path: string }>;
+      const filePath = customEvent.detail?.path;
+      if (!filePath) return;
+
+      const id = pathToIdRef.current.get(filePath);
+      if (id) {
+        attachmentsRef.current.remove(id);
+        pathToIdRef.current.delete(filePath);
+        const paths = new Set(pathToIdRef.current.keys());
+        window.dispatchEvent(new CustomEvent('attached-files-changed', { detail: paths }));
+      }
+    };
+
+    window.addEventListener('detach-file-from-chat', handler);
+    return () => window.removeEventListener('detach-file-from-chat', handler);
   }, []);
 
   return null;

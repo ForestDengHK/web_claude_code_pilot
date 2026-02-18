@@ -44,6 +44,10 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [streamingToolOutput, setStreamingToolOutput] = useState('');
   const toolTimeoutRef = useRef<{ toolName: string; elapsedSeconds: number } | null>(null);
 
+  // Stream recovery: when SSE disconnects (mobile tab suspension), poll DB for the response
+  const recoveryActiveRef = useRef(false);
+  const recoveryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const setCurrentModel = useCallback((newModel: string) => {
     setCurrentModelRaw(newModel);
     // Persist model to database
@@ -76,11 +80,69 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   // Ref for sendMessage to allow self-referencing in timeout auto-retry without circular deps
   const sendMessageRef = useRef<(content: string, files?: FileAttachment[], skillPrompt?: string) => Promise<void>>(undefined);
 
+  // Fetch messages from DB and check if the backend has finished
+  const recoverMessages = useCallback(async (): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/chat/sessions/${sessionId}/messages?limit=100`);
+      if (!res.ok) return false;
+      const data: MessagesResponse = await res.json();
+      setMessages(data.messages);
+      setHasMore(data.hasMore ?? false);
+      // Backend is done if the last message is from the assistant
+      const lastMsg = data.messages[data.messages.length - 1];
+      return lastMsg?.role === 'assistant';
+    } catch {
+      return false;
+    }
+  }, [sessionId]);
+
+  const stopRecovery = useCallback(() => {
+    if (recoveryTimerRef.current) {
+      clearInterval(recoveryTimerRef.current);
+      recoveryTimerRef.current = null;
+    }
+    recoveryActiveRef.current = false;
+    setStatusText(undefined);
+    window.dispatchEvent(new CustomEvent('refresh-file-tree'));
+  }, []);
+
+  const startRecovery = useCallback(() => {
+    recoveryActiveRef.current = true;
+    setStatusText('Reconnecting...');
+    let attempts = 0;
+    const maxAttempts = 20; // 20 * 3s = 60s
+
+    const poll = async () => {
+      attempts++;
+      const done = await recoverMessages();
+      if (done || attempts >= maxAttempts) {
+        stopRecovery();
+        if (!done) {
+          // Last attempt — fetch whatever we have
+          recoverMessages();
+        }
+      }
+    };
+
+    // Immediate first poll
+    poll();
+    recoveryTimerRef.current = setInterval(poll, 3000);
+  }, [recoverMessages, stopRecovery]);
+
   // Re-sync streaming content when the window regains visibility (browser tab switch)
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && accumulatedRef.current) {
-        setStreamingContent(accumulatedRef.current);
+      if (document.visibilityState === 'visible') {
+        // Re-sync streaming buffer
+        if (accumulatedRef.current) {
+          setStreamingContent(accumulatedRef.current);
+        }
+        // Trigger immediate recovery poll if recovering
+        if (recoveryActiveRef.current) {
+          recoverMessages().then(done => {
+            if (done) stopRecovery();
+          });
+        }
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -89,6 +151,15 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleVisibilityChange);
+    };
+  }, [recoverMessages, stopRecovery]);
+
+  // Cleanup recovery timer on unmount
+  useEffect(() => {
+    return () => {
+      if (recoveryTimerRef.current) {
+        clearInterval(recoveryTimerRef.current);
+      }
     };
   }, []);
 
@@ -178,6 +249,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const sendMessage = useCallback(
     async (content: string, files?: FileAttachment[], skillPrompt?: string) => {
       if (isStreaming) return;
+
+      // Cancel any ongoing recovery from a previous disconnection
+      if (recoveryActiveRef.current) {
+        stopRecovery();
+      }
 
       // Build display content: embed file metadata as HTML comment for MessageItem to parse
       let displayContent = content;
@@ -347,16 +423,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             setMessages((prev) => [...prev, partialMessage]);
           }
         } else {
-          const errMsg = error instanceof Error ? error.message : 'Unknown error';
-          const errorMessage: Message = {
-            id: 'temp-error-' + Date.now(),
-            session_id: sessionId,
-            role: 'assistant',
-            content: `**Error:** ${errMsg}`,
-            created_at: new Date().toISOString(),
-            token_usage: null,
-          };
-          setMessages((prev) => [...prev, errorMessage]);
+          // Network error (likely mobile tab suspension or connection drop).
+          // Don't show error — start recovery polling to fetch the response from DB.
+          startRecovery();
         }
       } finally {
         toolTimeoutRef.current = null;
@@ -367,16 +436,18 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         setToolUses([]);
         setToolResults([]);
         setStreamingToolOutput('');
-        setStatusText(undefined);
         setPendingPermission(null);
         setPermissionResolved(null);
         setPendingApprovalSessionId('');
         abortControllerRef.current = null;
-        // Notify file tree to refresh after AI finishes
-        window.dispatchEvent(new CustomEvent('refresh-file-tree'));
+        // Don't clear statusText or fire refresh if recovery is active — recovery handles that
+        if (!recoveryActiveRef.current) {
+          setStatusText(undefined);
+          window.dispatchEvent(new CustomEvent('refresh-file-tree'));
+        }
       }
     },
-    [sessionId, isStreaming, setStreamingSessionId, setPendingApprovalSessionId, mode, currentModel]
+    [sessionId, isStreaming, setStreamingSessionId, setPendingApprovalSessionId, mode, currentModel, stopRecovery, startRecovery]
   );
 
   // Keep sendMessageRef in sync so timeout auto-retry can call it
