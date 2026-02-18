@@ -24,8 +24,13 @@ function getProjectCommandsDir(cwd?: string): string {
   return path.join(cwd || process.cwd(), ".claude", "commands");
 }
 
-function getPluginCommandsDirs(): string[] {
-  const dirs: string[] = [];
+interface PluginCommandDir {
+  dir: string;
+  pluginName: string;
+}
+
+function getPluginCommandsDirs(): PluginCommandDir[] {
+  const dirs: PluginCommandDir[] = [];
   const marketplacesDir = path.join(os.homedir(), ".claude", "plugins", "marketplaces");
   if (!fs.existsSync(marketplacesDir)) return dirs;
 
@@ -39,7 +44,7 @@ function getPluginCommandsDirs(): string[] {
       for (const plugin of plugins) {
         const commandsDir = path.join(pluginsDir, plugin, "commands");
         if (fs.existsSync(commandsDir)) {
-          dirs.push(commandsDir);
+          dirs.push({ dir: commandsDir, pluginName: plugin });
         }
       }
     }
@@ -47,6 +52,146 @@ function getPluginCommandsDirs(): string[] {
     // ignore
   }
   return dirs;
+}
+
+/**
+ * Scan the plugins cache directory for skills (SKILL.md) and commands (*.md).
+ * Structure: cache/<marketplace>/<plugin>/<version>/skills/<name>/SKILL.md
+ * Structure: cache/<marketplace>/<plugin>/<version>/commands/*.md
+ * Names are prefixed with plugin name: <plugin>:<skill-name>
+ */
+function scanCachedPlugins(): SkillFile[] {
+  const skills: SkillFile[] = [];
+  const cacheDir = path.join(os.homedir(), ".claude", "plugins", "cache");
+  if (!fs.existsSync(cacheDir)) return skills;
+
+  try {
+    const marketplaces = fs.readdirSync(cacheDir, { withFileTypes: true });
+    for (const mp of marketplaces) {
+      if (!mp.isDirectory() || mp.name.startsWith(".")) continue;
+      const mpDir = path.join(cacheDir, mp.name);
+
+      let pluginEntries;
+      try {
+        pluginEntries = fs.readdirSync(mpDir, { withFileTypes: true });
+      } catch { continue; }
+
+      for (const plugin of pluginEntries) {
+        if (!plugin.isDirectory() || plugin.name.startsWith(".")) continue;
+        const pluginDir = path.join(mpDir, plugin.name);
+
+        // Find latest version directory (sort alphabetically, take last)
+        let versions;
+        try {
+          versions = fs.readdirSync(pluginDir, { withFileTypes: true })
+            .filter(v => v.isDirectory() && !v.name.startsWith("."))
+            .map(v => v.name)
+            .sort();
+        } catch { continue; }
+        if (versions.length === 0) continue;
+
+        const latestVersionDir = path.join(pluginDir, versions[versions.length - 1]);
+
+        // Scan skills/ subdirectory (SKILL.md format)
+        const skillsDir = path.join(latestVersionDir, "skills");
+        if (fs.existsSync(skillsDir)) {
+          try {
+            const skillEntries = fs.readdirSync(skillsDir, { withFileTypes: true });
+            for (const entry of skillEntries) {
+              if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+              const skillMdPath = path.join(skillsDir, entry.name, "SKILL.md");
+              if (!fs.existsSync(skillMdPath)) continue;
+
+              const content = fs.readFileSync(skillMdPath, "utf-8");
+              const meta = parseSkillFrontMatter(content);
+              const skillName = meta.name || entry.name;
+              const fullName = `${plugin.name}:${skillName}`;
+              const description = meta.description || `Plugin skill: /${fullName}`;
+
+              skills.push({
+                name: fullName,
+                description,
+                content,
+                source: "plugin",
+                filePath: skillMdPath,
+              });
+            }
+          } catch {
+            // ignore individual skill read errors
+          }
+        }
+
+        // Scan commands/ subdirectory (*.md format)
+        const commandsDir = path.join(latestVersionDir, "commands");
+        if (fs.existsSync(commandsDir)) {
+          skills.push(...scanDirectory(commandsDir, "plugin", plugin.name));
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return skills;
+}
+
+/**
+ * Scan marketplace directories for plugin-level skills (SKILL.md).
+ * Structure: marketplaces/<mp>/plugins/<plugin>/skills/<name>/SKILL.md
+ */
+function scanMarketplacePluginSkills(): SkillFile[] {
+  const skills: SkillFile[] = [];
+  const marketplacesDir = path.join(os.homedir(), ".claude", "plugins", "marketplaces");
+  if (!fs.existsSync(marketplacesDir)) return skills;
+
+  try {
+    const marketplaces = fs.readdirSync(marketplacesDir, { withFileTypes: true });
+    for (const mp of marketplaces) {
+      if (!mp.isDirectory() || mp.name.startsWith(".")) continue;
+      const pluginsDir = path.join(marketplacesDir, mp.name, "plugins");
+      if (!fs.existsSync(pluginsDir)) continue;
+
+      let plugins;
+      try {
+        plugins = fs.readdirSync(pluginsDir, { withFileTypes: true });
+      } catch { continue; }
+
+      for (const plugin of plugins) {
+        if (!plugin.isDirectory() || plugin.name.startsWith(".")) continue;
+        const pluginSkillsDir = path.join(pluginsDir, plugin.name, "skills");
+        if (!fs.existsSync(pluginSkillsDir)) continue;
+
+        try {
+          const skillEntries = fs.readdirSync(pluginSkillsDir, { withFileTypes: true });
+          for (const entry of skillEntries) {
+            if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+            const skillMdPath = path.join(pluginSkillsDir, entry.name, "SKILL.md");
+            if (!fs.existsSync(skillMdPath)) continue;
+
+            const content = fs.readFileSync(skillMdPath, "utf-8");
+            const meta = parseSkillFrontMatter(content);
+            const skillName = meta.name || entry.name;
+            const fullName = `${plugin.name}:${skillName}`;
+            const description = meta.description || `Plugin skill: /${fullName}`;
+
+            skills.push({
+              name: fullName,
+              description,
+              content,
+              source: "plugin",
+              filePath: skillMdPath,
+            });
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return skills;
 }
 
 function getInstalledSkillsDir(): string {
@@ -261,14 +406,33 @@ export async function GET(request: NextRequest) {
       preferredInstalledSource
     );
 
-    // Scan installed plugin skills
+    // Scan plugin skills from multiple sources
     const pluginSkills: SkillFile[] = [];
-    for (const dir of getPluginCommandsDirs()) {
-      pluginSkills.push(...scanDirectory(dir, "plugin"));
+
+    // 1. Cached plugins (authoritative installed versions with correct prefixes)
+    const cachedSkills = scanCachedPlugins();
+    pluginSkills.push(...cachedSkills);
+
+    // 2. Marketplace plugin commands (commands/*.md in marketplace plugins dir)
+    for (const { dir, pluginName } of getPluginCommandsDirs()) {
+      pluginSkills.push(...scanDirectory(dir, "plugin", pluginName));
     }
 
-    const all = [...globalSkills, ...projectSkills, ...installedSkills, ...pluginSkills];
-    console.log(`[skills] Found: global=${globalSkills.length}, project=${projectSkills.length}, installed=${installedSkills.length}, plugin=${pluginSkills.length}`);
+    // 3. Marketplace plugin-level skills (skills/<name>/SKILL.md in marketplace plugins dir)
+    pluginSkills.push(...scanMarketplacePluginSkills());
+
+    // De-duplicate by skill name (cache versions take priority since they're added first)
+    const seen = new Set<string>();
+    const dedupedPluginSkills: SkillFile[] = [];
+    for (const skill of pluginSkills) {
+      if (!seen.has(skill.name)) {
+        seen.add(skill.name);
+        dedupedPluginSkills.push(skill);
+      }
+    }
+
+    const all = [...globalSkills, ...projectSkills, ...installedSkills, ...dedupedPluginSkills];
+    console.log(`[skills] Found: global=${globalSkills.length}, project=${projectSkills.length}, installed=${installedSkills.length}, plugin=${dedupedPluginSkills.length} (cache=${cachedSkills.length})`);
 
     return NextResponse.json({ skills: all });
   } catch (error) {

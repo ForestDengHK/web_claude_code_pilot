@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { deleteSession, getSession, updateSessionWorkingDirectory, updateSessionTitle, updateSessionMode, updateSessionSkipPermissions, clearSessionMessages } from '@/lib/db';
+import { deleteSession, getSession, updateSessionWorkingDirectory, updateSessionTitle, updateSessionModel, updateSessionMode, updateSessionSkipPermissions, clearSessionMessages } from '@/lib/db';
 
 export async function GET(
   _request: NextRequest,
@@ -36,6 +36,9 @@ export async function PATCH(
     }
     if (body.title) {
       updateSessionTitle(id, body.title);
+    }
+    if (body.model) {
+      updateSessionModel(id, body.model);
     }
     if (body.mode) {
       updateSessionMode(id, body.mode);

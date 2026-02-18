@@ -270,6 +270,11 @@ export function updateSessionWorkingDirectory(id: string, workingDirectory: stri
   db.prepare('UPDATE chat_sessions SET working_directory = ?, project_name = ? WHERE id = ?').run(workingDirectory, projectName, id);
 }
 
+export function updateSessionModel(id: string, model: string): void {
+  const db = getDb();
+  db.prepare('UPDATE chat_sessions SET model = ? WHERE id = ?').run(model, id);
+}
+
 export function updateSessionMode(id: string, mode: string): void {
   const db = getDb();
   db.prepare('UPDATE chat_sessions SET mode = ? WHERE id = ?').run(mode, id);

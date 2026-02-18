@@ -715,7 +715,7 @@ export function MessageInput({
     item.label.toLowerCase().includes(popoverFilter.toLowerCase())
   );
 
-  const currentModelValue = modelName || 'sonnet';
+  const currentModelValue = modelName || MODEL_OPTIONS[0]?.value || 'sonnet';
   const currentModelOption = MODEL_OPTIONS.find((m) => m.value === currentModelValue) || MODEL_OPTIONS[0];
   const currentMode = MODE_OPTIONS.find((m) => m.value === mode) || MODE_OPTIONS[0];
 

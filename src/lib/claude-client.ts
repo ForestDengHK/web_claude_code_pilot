@@ -181,12 +181,15 @@ function extractTextFromMessage(msg: SDKAssistantMessage): string {
  */
 function extractTokenUsage(msg: SDKResultMessage): TokenUsage | null {
   if (!msg.usage) return null;
+  // Extract model name from modelUsage keys (e.g. "claude-opus-4-6")
+  const model = msg.modelUsage ? Object.keys(msg.modelUsage)[0] : undefined;
   return {
     input_tokens: msg.usage.input_tokens,
     output_tokens: msg.usage.output_tokens,
     cache_read_input_tokens: msg.usage.cache_read_input_tokens ?? 0,
     cache_creation_input_tokens: msg.usage.cache_creation_input_tokens ?? 0,
     cost_usd: 'total_cost_usd' in msg ? msg.total_cost_usd : undefined,
+    model,
   };
 }
 

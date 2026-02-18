@@ -38,11 +38,23 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [toolResults, setToolResults] = useState<ToolResultInfo[]>([]);
   const [statusText, setStatusText] = useState<string | undefined>();
   const [mode, setMode] = useState(initialMode || 'code');
-  const [currentModel, setCurrentModel] = useState(modelName || 'sonnet');
+  const [currentModel, setCurrentModelRaw] = useState(modelName || '');
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
   const [streamingToolOutput, setStreamingToolOutput] = useState('');
   const toolTimeoutRef = useRef<{ toolName: string; elapsedSeconds: number } | null>(null);
+
+  const setCurrentModel = useCallback((newModel: string) => {
+    setCurrentModelRaw(newModel);
+    // Persist model to database
+    if (sessionId) {
+      fetch(`/api/chat/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: newModel }),
+      }).catch(() => { /* silent */ });
+    }
+  }, [sessionId]);
 
   const handleModeChange = useCallback((newMode: string) => {
     setMode(newMode);

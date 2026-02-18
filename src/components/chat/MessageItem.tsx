@@ -190,13 +190,9 @@ function TokenUsageDisplay({ usage }: { usage: TokenUsage }) {
     : '';
 
   return (
-    <span className="group/tokens relative cursor-default text-xs text-muted-foreground/50">
-      <span>{totalTokens.toLocaleString()} tokens{costStr}</span>
-      <span className="pointer-events-none absolute bottom-full left-0 mb-1.5 whitespace-nowrap rounded-md bg-popover px-2.5 py-1.5 text-[11px] text-popover-foreground shadow-md border border-border/50 opacity-0 group-hover/tokens:opacity-100 transition-opacity duration-150 z-50">
-        In: {usage.input_tokens.toLocaleString()} · Out: {usage.output_tokens.toLocaleString()}
-        {usage.cache_read_input_tokens ? ` · Cache: ${usage.cache_read_input_tokens.toLocaleString()}` : ''}
-        {costStr}
-      </span>
+    <span className="text-xs text-muted-foreground/50">
+      {usage.model && <>{usage.model} · </>}
+      {totalTokens.toLocaleString()} tokens{costStr}
     </span>
   );
 }
@@ -306,7 +302,7 @@ export function MessageItem({ message }: MessageItemProps) {
       </MessageContent>
 
       {/* Footer with copy, timestamp and token usage */}
-      <div className={`flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 ${isUser ? 'justify-end' : ''}`}>
+      <div className={`flex items-center gap-2 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200 ${isUser ? 'justify-end' : ''}`}>
         {!isUser && <span className="text-xs text-muted-foreground/50">{timestamp}</span>}
         {!isUser && tokenUsage && <TokenUsageDisplay usage={tokenUsage} />}
         {displayText && <CopyButton text={displayText} />}
