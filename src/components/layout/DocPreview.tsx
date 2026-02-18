@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useTheme } from "next-themes";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Cancel01Icon, Copy01Icon, Tick01Icon, Loading02Icon } from "@hugeicons/core-free-icons";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
 import { atomOneDark } from "react-syntax-highlighter/dist/esm/styles/hljs";
@@ -116,7 +117,11 @@ export function DocPreview({
 
   return (
     <div
-      className="hidden h-full shrink-0 flex-col overflow-hidden border-l border-border/40 bg-background lg:flex"
+      className={cn(
+        "flex flex-col overflow-hidden bg-background",
+        "fixed inset-0 z-50",
+        "md:static md:inset-auto md:z-auto md:h-full md:shrink-0 md:border-l md:border-border/40"
+      )}
       style={{ width }}
     >
       {/* Header */}

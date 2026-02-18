@@ -33,6 +33,7 @@ import type { ChatSession } from "@/types";
 interface ChatListPanelProps {
   open: boolean;
   width?: number;
+  onClose?: () => void;
 }
 
 function formatRelativeTime(dateStr: string): string {
@@ -113,7 +114,7 @@ const MODE_BADGE_CONFIG = {
   ask: { label: "Ask", className: "bg-green-500/10 text-green-500" },
 } as const;
 
-export function ChatListPanel({ open, width }: ChatListPanelProps) {
+export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { streamingSessionId, pendingApprovalSessionId } = usePanel();
@@ -299,11 +300,26 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
 
   return (
     <aside
-      className="hidden h-full shrink-0 flex-col overflow-hidden bg-sidebar lg:flex"
+      className={cn(
+        "flex flex-col overflow-hidden bg-sidebar",
+        "fixed inset-0 z-50",
+        "md:static md:inset-auto md:z-auto md:h-full md:shrink-0"
+      )}
       style={{ width: width ?? 240 }}
     >
-      {/* Header - extra top padding for macOS traffic lights */}
-      <div className="flex h-12 shrink-0 items-center justify-between px-3 mt-5 pl-6">
+      {/* Mobile header with close button */}
+      <div className="flex h-12 shrink-0 items-center justify-between px-3 md:hidden">
+        <Button variant="ghost" size="sm" className="gap-1 text-xs" onClick={onClose}>
+          <HugeiconsIcon icon={ArrowRight01Icon} className="h-4 w-4 rotate-180" />
+          Back
+        </Button>
+        <span className="text-[13px] font-semibold tracking-tight text-sidebar-foreground">
+          Threads
+        </span>
+        <ConnectionStatus />
+      </div>
+      {/* Desktop header */}
+      <div className="hidden h-12 shrink-0 items-center justify-between px-3 pl-6 md:flex">
         <span className="text-[13px] font-semibold tracking-tight text-sidebar-foreground">
           Threads
         </span>
@@ -466,6 +482,7 @@ export function ChatListPanel({ open, width }: ChatListPanelProps) {
                           >
                             <Link
                               href={`/chat/${session.id}`}
+                              onClick={() => onClose?.()}
                               className={cn(
                                 "flex items-center gap-1.5 rounded-md pl-7 pr-2 py-1.5 transition-all duration-150 min-w-0",
                                 isActive

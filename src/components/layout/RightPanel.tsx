@@ -2,7 +2,8 @@
 
 import { useCallback } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { StructureFolderIcon, PanelRightCloseIcon } from "@hugeicons/core-free-icons";
+import { StructureFolderIcon, PanelRightCloseIcon, Cancel01Icon } from "@hugeicons/core-free-icons";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -47,7 +48,7 @@ export function RightPanel({ width }: RightPanelProps) {
 
   if (!panelOpen) {
     return (
-      <div className="flex flex-col items-center gap-2 bg-background p-2">
+      <div className="hidden flex-col items-center gap-2 bg-background p-2 md:flex">
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -66,9 +67,28 @@ export function RightPanel({ width }: RightPanelProps) {
   }
 
   return (
-    <aside className="hidden h-full shrink-0 flex-col overflow-hidden bg-background lg:flex" style={{ width: width ?? 288 }}>
-      {/* Header */}
-      <div className="flex h-12 mt-5 shrink-0 items-center justify-between px-4">
+    <aside
+      className={cn(
+        "flex flex-col overflow-hidden bg-background",
+        "fixed inset-0 z-50",
+        "md:static md:inset-auto md:z-auto md:h-full md:shrink-0"
+      )}
+      style={{ width: width ?? 288 }}
+    >
+      {/* Mobile header with close */}
+      <div className="flex h-12 shrink-0 items-center justify-between px-4 md:hidden">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Files</span>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => setPanelOpen(false)}
+        >
+          <HugeiconsIcon icon={Cancel01Icon} className="h-4 w-4" />
+          <span className="sr-only">Close panel</span>
+        </Button>
+      </div>
+      {/* Desktop header */}
+      <div className="hidden h-12 shrink-0 items-center justify-between px-4 md:flex">
         <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Files</span>
         <Tooltip>
           <TooltipTrigger asChild>

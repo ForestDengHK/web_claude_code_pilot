@@ -195,15 +195,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             onToggleChatList={() => setChatListOpen(!chatListOpen)}
             skipPermissionsActive={skipPermissionsActive}
           />
-          <ChatListPanel open={chatListOpen} width={chatListWidth} />
+          <ChatListPanel open={chatListOpen} width={chatListWidth} onClose={() => setChatListOpen(false)} />
           {chatListOpen && (
-            <ResizeHandle side="left" onResize={handleChatListResize} onResizeEnd={handleChatListResizeEnd} />
+            <div className="hidden md:block">
+              <ResizeHandle side="left" onResize={handleChatListResize} onResizeEnd={handleChatListResizeEnd} />
+            </div>
           )}
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
             <main className="relative flex-1 overflow-hidden">{children}</main>
           </div>
           {isChatDetailRoute && previewFile && (
-            <ResizeHandle side="right" onResize={handleDocPreviewResize} onResizeEnd={handleDocPreviewResizeEnd} />
+            <div className="hidden md:block">
+              <ResizeHandle side="right" onResize={handleDocPreviewResize} onResizeEnd={handleDocPreviewResizeEnd} />
+            </div>
           )}
           {isChatDetailRoute && previewFile && (
             <DocPreview
@@ -215,7 +219,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             />
           )}
           {isChatDetailRoute && panelOpen && (
-            <ResizeHandle side="right" onResize={handleRightPanelResize} onResizeEnd={handleRightPanelResizeEnd} />
+            <div className="hidden md:block">
+              <ResizeHandle side="right" onResize={handleRightPanelResize} onResizeEnd={handleRightPanelResizeEnd} />
+            </div>
           )}
           {isChatDetailRoute && <RightPanel width={rightPanelWidth} />}
         </div>
