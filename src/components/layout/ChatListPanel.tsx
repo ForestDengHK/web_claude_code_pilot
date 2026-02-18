@@ -300,6 +300,7 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
 
   return (
     <aside
+      data-mobile-overlay=""
       className={cn(
         "flex flex-col overflow-hidden bg-sidebar",
         "fixed inset-0 z-50",

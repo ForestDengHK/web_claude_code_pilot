@@ -117,6 +117,7 @@ export function DocPreview({
 
   return (
     <div
+      data-mobile-overlay=""
       className={cn(
         "flex flex-col overflow-hidden bg-background",
         "fixed inset-0 z-50",

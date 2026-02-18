@@ -122,6 +122,13 @@
   }
 }
 
+/* Mobile overlay panels: inline width must yield to full-screen overlay */
+@media (max-width: 767px) {
+  [data-mobile-overlay] {
+    width: 100% !important;
+  }
+}
+
 /* Larger touch targets on mobile for prompt input toolbar buttons */
 @media (max-width: 767px) {
   [data-prompt-input-tools] button {

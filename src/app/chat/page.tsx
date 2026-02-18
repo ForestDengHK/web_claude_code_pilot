@@ -431,14 +431,17 @@ export default function NewChatPage() {
                 </div>
                 <div className="space-y-1">
                   {favorites.map((fav) => (
-                    <button
+                    <div
                       key={fav.path}
-                      className={`flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-colors hover:bg-accent min-h-[48px] ${
+                      role="button"
+                      tabIndex={0}
+                      className={`flex w-full cursor-pointer items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-colors hover:bg-accent min-h-[48px] ${
                         workingDir === fav.path
                           ? 'border-blue-500/50 bg-blue-500/5'
                           : 'border-border'
                       }`}
                       onClick={() => selectDirectory(fav.path)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') selectDirectory(fav.path); }}
                     >
                       <HugeiconsIcon icon={Folder01Icon} className="h-4 w-4 shrink-0 text-blue-500" />
                       <div className="min-w-0 flex-1">
@@ -455,7 +458,7 @@ export default function NewChatPage() {
                       >
                         <HugeiconsIcon icon={StarIcon} className="h-4 w-4" />
                       </button>
-                    </button>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -472,14 +475,17 @@ export default function NewChatPage() {
                   {filteredRecent.map((dirPath) => {
                     const dirName = dirPath.split('/').pop() || dirPath;
                     return (
-                      <button
+                      <div
                         key={dirPath}
-                        className={`flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-colors hover:bg-accent min-h-[48px] ${
+                        role="button"
+                        tabIndex={0}
+                        className={`flex w-full cursor-pointer items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-colors hover:bg-accent min-h-[48px] ${
                           workingDir === dirPath
                             ? 'border-blue-500/50 bg-blue-500/5'
                             : 'border-border'
                         }`}
                         onClick={() => selectDirectory(dirPath)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') selectDirectory(dirPath); }}
                       >
                         <HugeiconsIcon icon={Folder01Icon} className="h-4 w-4 shrink-0 text-muted-foreground" />
                         <div className="min-w-0 flex-1">
@@ -496,7 +502,7 @@ export default function NewChatPage() {
                         >
                           <HugeiconsIcon icon={StarOffIcon} className="h-4 w-4" />
                         </button>
-                      </button>
+                      </div>
                     );
                   })}
                 </div>

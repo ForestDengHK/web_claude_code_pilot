@@ -111,10 +111,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  // Auto-open panel on chat detail routes, close on others
+  // Auto-open panel on chat detail routes (desktop only), close on others
   // Also close doc preview when navigating away or switching sessions
   useEffect(() => {
-    setPanelOpenRaw(isChatDetailRoute);
+    const isDesktop = window.matchMedia(`(min-width: ${MD_BREAKPOINT}px)`).matches;
+    setPanelOpenRaw(isChatDetailRoute && isDesktop);
     setPreviewFileRaw(null);
   }, [isChatDetailRoute, pathname]);
 

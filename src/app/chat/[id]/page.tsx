@@ -83,7 +83,10 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
             localStorage.setItem("codepilot:last-working-directory", data.session.working_directory);
           }
           setSessionId(id);
-          setPanelOpen(true);
+          // Only auto-open the files panel on desktop (md+ breakpoint)
+          if (window.matchMedia('(min-width: 768px)').matches) {
+            setPanelOpen(true);
+          }
           const title = data.session.title || 'New Conversation';
           setSessionTitle(title);
           setPanelSessionTitle(title);

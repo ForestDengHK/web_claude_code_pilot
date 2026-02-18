@@ -68,6 +68,7 @@ export function RightPanel({ width }: RightPanelProps) {
 
   return (
     <aside
+      data-mobile-overlay=""
       className={cn(
         "flex flex-col overflow-hidden bg-background",
         "fixed inset-0 z-50",
