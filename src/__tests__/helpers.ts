@@ -16,11 +16,14 @@ export async function goToConversation(page: Page, id: string) {
   await waitForPageReady(page);
 }
 
-/** Navigate to the plugins / skills page. */
-export async function goToPlugins(page: Page) {
-  await page.goto('/plugins');
+/** Navigate to the extensions page (formerly "plugins"). */
+export async function goToExtensions(page: Page) {
+  await page.goto('/extensions');
   await waitForPageReady(page);
 }
+
+/** @deprecated Use goToExtensions instead. */
+export const goToPlugins = goToExtensions;
 
 /** Navigate to the MCP management page. */
 export async function goToMCP(page: Page) {
@@ -97,37 +100,133 @@ export function stopButton(page: Page): Locator {
   return page.locator('button[title="Stop generating"]');
 }
 
-/** The "New Chat" link in the sidebar. */
-export function newChatButton(page: Page): Locator {
-  return page.locator('aside a:has-text("New Chat")');
+// ---------------------------------------------------------------------------
+// NavRail locators (desktop left icon bar)
+// ---------------------------------------------------------------------------
+
+/**
+ * The desktop NavRail aside element (hidden on mobile, flex on md+).
+ * Selector: `aside.hidden.md\:flex` — matches the NavRail root element.
+ */
+export function navRail(page: Page): Locator {
+  return page.locator('aside.hidden.md\\:flex');
 }
 
-/** The sidebar <aside> element. */
-export function sidebar(page: Page): Locator {
-  return page.locator('aside');
+/**
+ * A NavRail navigation item (button or link) by its sr-only label text.
+ * NavRail items have labels: "Chats", "Extensions", "Settings".
+ */
+export function navRailItem(page: Page, label: string): Locator {
+  return navRail(page).locator(`button:has(.sr-only:text("${label}")), a:has(.sr-only:text("${label}"))`);
 }
 
-/** The sidebar toggle button in the header (sr-only text "Toggle sidebar"). */
+/**
+ * The Chats button in NavRail — toggles the ChatListPanel.
+ * Replaces the old sidebarToggle.
+ */
+export function chatsToggle(page: Page): Locator {
+  return navRail(page).locator('button:has(.sr-only:text("Chats"))');
+}
+
+/** @deprecated Use chatsToggle instead — sidebar toggle no longer exists. */
 export function sidebarToggle(page: Page): Locator {
-  return page.locator('header button:has(.sr-only:text("Toggle sidebar"))');
+  return chatsToggle(page);
 }
 
-/** The theme toggle button in the header (sr-only text "Toggle theme"). */
+/**
+ * The theme toggle button in the NavRail (desktop).
+ * On mobile the theme toggle is in BottomNav — see bottomNavThemeToggle.
+ */
 export function themeToggle(page: Page): Locator {
-  return page.locator('header button:has(.sr-only:text("Toggle theme"))');
+  return navRail(page).locator('button:has(.sr-only:text("Toggle theme"))');
 }
 
-/** A sidebar nav link by its exact label text. */
+// ---------------------------------------------------------------------------
+// BottomNav locators (mobile bottom tab bar)
+// ---------------------------------------------------------------------------
+
+/**
+ * The mobile bottom navigation bar.
+ * Selector: `nav.fixed.inset-x-0.bottom-0` — visible on mobile (md:hidden).
+ */
+export function bottomNav(page: Page): Locator {
+  return page.locator('nav.fixed.bottom-0');
+}
+
+/**
+ * A BottomNav item by visible text label.
+ * BottomNav items show text labels: "Chats", "Extensions", "Settings", "Theme".
+ */
+export function bottomNavItem(page: Page, label: string): Locator {
+  return bottomNav(page).locator(`button:has-text("${label}"), a:has-text("${label}")`);
+}
+
+/** The theme toggle in the BottomNav (mobile). */
+export function bottomNavThemeToggle(page: Page): Locator {
+  return bottomNav(page).locator('button:has-text("Theme")');
+}
+
+// ---------------------------------------------------------------------------
+// ChatListPanel locators (session list — replaces old "sidebar")
+// ---------------------------------------------------------------------------
+
+/**
+ * The ChatListPanel aside element.
+ * This panel contains the "Threads" heading and session list.
+ * On mobile it appears as a full-screen overlay; on desktop as a side panel.
+ */
+export function chatListPanel(page: Page): Locator {
+  return page.locator('aside').filter({ hasText: 'Threads' });
+}
+
+/** @deprecated Use chatListPanel instead — the concept of "sidebar" is replaced by NavRail + ChatListPanel. */
+export function sidebar(page: Page): Locator {
+  return chatListPanel(page);
+}
+
+/** The "New Chat" button inside the ChatListPanel. */
+export function newChatButton(page: Page): Locator {
+  return page.locator('button:has-text("New Chat")');
+}
+
+/** @deprecated Use navRailItem(page, label) instead. Old sidebar nav links no longer exist. */
 export function navLink(page: Page, label: string): Locator {
-  return page.locator('aside nav a').filter({ hasText: new RegExp(`^\\s*${label}\\s*$`) });
+  return navRailItem(page, label);
 }
 
-/** Chat session links in the sidebar (links to /chat/[id]). */
+/** Chat session links in the ChatListPanel (links to /chat/[id]). */
 export function sessionLinks(page: Page): Locator {
   return page.locator('aside a[href^="/chat/"]');
 }
 
-/** The search input on the plugins page. */
+// ---------------------------------------------------------------------------
+// Right Panel locators (V2 — file tree panel)
+// ---------------------------------------------------------------------------
+
+/**
+ * The right panel aside element (Files panel).
+ * No longer uses `.w-80` — width is set inline via style attribute.
+ */
+export function rightPanel(page: Page): Locator {
+  return page.locator('aside').filter({ hasText: 'Files' }).filter({ has: page.locator('button:has(.sr-only:text("Close panel"))') });
+}
+
+/** The collapsed right panel button (when panel is closed). */
+export function rightPanelCollapsed(page: Page): Locator {
+  return page.locator('button:has(.sr-only:text("Open panel"))');
+}
+
+/** The close panel button (sr-only "Close panel"). */
+export function panelCloseButton(page: Page): Locator {
+  return page.locator('button:has(.sr-only:text("Close panel"))');
+}
+
+/** The open panel button (sr-only "Open panel"). */
+export function panelOpenButton(page: Page): Locator {
+  return page.locator('button:has(.sr-only:text("Open panel"))');
+}
+
+/** The search input on the extensions page. */
 export function pluginSearchInput(page: Page): Locator {
   return page.locator('input[placeholder*="Search skills"]');
 }
@@ -158,40 +257,6 @@ export function settingsJsonTab(page: Page): Locator {
 }
 
 // ---------------------------------------------------------------------------
-// Right Panel locators (V2)
-// ---------------------------------------------------------------------------
-
-/** The right panel <aside> element (w-80, border-l). Distinct from sidebar. */
-export function rightPanel(page: Page): Locator {
-  return page.locator('aside.w-80');
-}
-
-/** The collapsed right panel icon strip (when panel is closed). */
-export function rightPanelCollapsed(page: Page): Locator {
-  return page.locator('div.border-l button:has(.sr-only:text("Open panel"))');
-}
-
-/** The "Files" tab button in the right panel header. */
-export function panelFilesTab(page: Page): Locator {
-  return page.locator('aside.w-80 button:has-text("Files")');
-}
-
-/** The "Tasks" tab button in the right panel header. */
-export function panelTasksTab(page: Page): Locator {
-  return page.locator('aside.w-80 button:has-text("Tasks")');
-}
-
-/** The close panel button (PanelRightClose icon with sr-only "Close panel"). */
-export function panelCloseButton(page: Page): Locator {
-  return page.locator('button:has(.sr-only:text("Close panel"))');
-}
-
-/** The open panel button (FolderTree icon with sr-only "Open panel"). */
-export function panelOpenButton(page: Page): Locator {
-  return page.locator('button:has(.sr-only:text("Open panel"))');
-}
-
-// ---------------------------------------------------------------------------
 // File Tree helpers (V2)
 // ---------------------------------------------------------------------------
 
@@ -207,22 +272,22 @@ export function fileTreeRefreshButton(page: Page): Locator {
 
 /** All directory nodes in the file tree (buttons containing folder icons). */
 export function fileTreeDirectories(page: Page): Locator {
-  return page.locator('aside.w-80 button:has(svg.text-blue-500)');
+  return rightPanel(page).locator('button:has(svg.text-blue-500)');
 }
 
 /** All file nodes in the file tree (buttons containing file icons). */
 export function fileTreeFiles(page: Page): Locator {
-  return page.locator('aside.w-80 button:has(svg.text-muted-foreground)');
+  return rightPanel(page).locator('button:has(svg.text-muted-foreground)');
 }
 
 /** Click a file tree node by name. */
 export async function clickFileTreeNode(page: Page, name: string) {
-  await page.locator(`aside.w-80 button:has-text("${name}")`).click();
+  await rightPanel(page).locator(`button:has-text("${name}")`).click();
 }
 
 /** Expand or collapse a directory node by name. */
 export async function toggleDirectory(page: Page, dirName: string) {
-  await page.locator(`aside.w-80 button:has-text("${dirName}")`).first().click();
+  await rightPanel(page).locator(`button:has-text("${dirName}")`).first().click();
 }
 
 // ---------------------------------------------------------------------------
@@ -241,22 +306,32 @@ export function filePreviewCopyButton(page: Page): Locator {
 
 /** The language badge in file preview. */
 export function filePreviewLanguageBadge(page: Page): Locator {
-  return page.locator('aside.w-80 .text-\\[10px\\]').first();
+  return rightPanel(page).locator('.text-\\[10px\\]').first();
 }
 
 /** The line count text in file preview. */
 export function filePreviewLineCount(page: Page): Locator {
-  return page.locator('aside.w-80 span:has-text("lines")');
+  return rightPanel(page).locator('span:has-text("lines")');
 }
 
 /** The syntax highlighter container in file preview. */
 export function filePreviewCode(page: Page): Locator {
-  return page.locator('aside.w-80 code, aside.w-80 pre');
+  return rightPanel(page).locator('code, pre');
 }
 
 // ---------------------------------------------------------------------------
 // Task panel helpers (V2)
 // ---------------------------------------------------------------------------
+
+/** The "Files" tab button in the right panel header. */
+export function panelFilesTab(page: Page): Locator {
+  return rightPanel(page).locator('button:has-text("Files")');
+}
+
+/** The "Tasks" tab button in the right panel header. */
+export function panelTasksTab(page: Page): Locator {
+  return rightPanel(page).locator('button:has-text("Tasks")');
+}
 
 /** Switch the right panel to the Tasks tab. */
 export async function switchToTasksTab(page: Page) {

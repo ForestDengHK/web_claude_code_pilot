@@ -1,90 +1,121 @@
 import { test, expect } from '@playwright/test';
 import {
   goToChat,
-  goToPlugins,
+  goToExtensions,
   goToSettings,
-  sidebar,
-  sidebarToggle,
+  navRail,
+  navRailItem,
+  chatsToggle,
   themeToggle,
-  navLink,
+  chatListPanel,
   newChatButton,
   chatInput,
   rightPanel,
   panelCloseButton,
+  bottomNav,
+  bottomNavThemeToggle,
   collectConsoleErrors,
   filterCriticalErrors,
   waitForPageReady,
 } from '../helpers';
 
 test.describe('Layout', () => {
-  test.describe('Sidebar', () => {
-    test('sidebar is visible on desktop', async ({ page }) => {
+  test.describe('NavRail', () => {
+    test('NavRail is visible on desktop', async ({ page }) => {
       await goToChat(page);
-      await expect(sidebar(page)).toBeVisible();
-      const box = await sidebar(page).boundingBox();
+      await expect(navRail(page)).toBeVisible();
+      const box = await navRail(page).boundingBox();
       expect(box).not.toBeNull();
-      expect(box!.width).toBe(256);
+      // NavRail is 56px (w-14) wide
+      expect(box!.width).toBe(56);
     });
 
-    test('sidebar has navigation items', async ({ page }) => {
+    test('NavRail has navigation items', async ({ page }) => {
       await goToChat(page);
-      await expect(navLink(page, 'Chat')).toBeVisible();
-      await expect(navLink(page, 'Plugins')).toBeVisible();
-      await expect(navLink(page, 'MCP Servers')).toBeVisible();
-      await expect(navLink(page, 'Settings')).toBeVisible();
+      await expect(navRailItem(page, 'Chats')).toBeVisible();
+      await expect(navRailItem(page, 'Extensions')).toBeVisible();
+      await expect(navRailItem(page, 'Settings')).toBeVisible();
     });
 
-    test('sidebar has New Chat button', async ({ page }) => {
+    test('NavRail has theme toggle', async ({ page }) => {
       await goToChat(page);
-      await expect(newChatButton(page)).toBeVisible();
-    });
-
-    test('sidebar has Recent Chats section', async ({ page }) => {
-      await goToChat(page);
-      await expect(page.locator('aside:has-text("Recent Chats")')).toBeVisible();
+      await expect(themeToggle(page)).toBeVisible();
     });
   });
 
-  test.describe('Sidebar Collapse/Expand', () => {
-    test('toggle button is in the header', async ({ page }) => {
+  test.describe('ChatListPanel', () => {
+    test('ChatListPanel opens when Chats button is clicked', async ({ page }) => {
       await goToChat(page);
-      await expect(sidebarToggle(page)).toBeVisible();
-    });
 
-    test('clicking toggle collapses sidebar', async ({ page }) => {
-      await goToChat(page);
-      await expect(sidebar(page)).toBeVisible();
+      // On desktop at default viewport, ChatListPanel may auto-open
+      // Ensure it's closed first by toggling if needed
+      const panelVisible = await chatListPanel(page).isVisible().catch(() => false);
+      if (panelVisible) {
+        await chatsToggle(page).click();
+        await page.waitForTimeout(300);
+      }
 
-      await sidebarToggle(page).click();
+      // Now open it
+      await chatsToggle(page).click();
       await page.waitForTimeout(300);
 
-      const box = await sidebar(page).boundingBox();
-      expect(box).toBeNull();
+      await expect(chatListPanel(page)).toBeVisible();
     });
 
-    test('clicking toggle again expands sidebar', async ({ page }) => {
+    test('ChatListPanel has New Chat button', async ({ page }) => {
       await goToChat(page);
 
-      // Collapse
-      await sidebarToggle(page).click();
-      await page.waitForTimeout(300);
+      // Ensure ChatListPanel is open
+      if (!(await chatListPanel(page).isVisible().catch(() => false))) {
+        await chatsToggle(page).click();
+        await page.waitForTimeout(300);
+      }
 
-      // Expand
-      await sidebarToggle(page).click();
-      await page.waitForTimeout(300);
-
-      await expect(sidebar(page)).toBeVisible();
-      const box = await sidebar(page).boundingBox();
-      expect(box).not.toBeNull();
-      expect(box!.width).toBe(256);
+      await expect(newChatButton(page)).toBeVisible();
     });
 
-    test('main content expands when sidebar collapses', async ({ page }) => {
+    test('ChatListPanel has Threads heading', async ({ page }) => {
       await goToChat(page);
+
+      // Ensure ChatListPanel is open
+      if (!(await chatListPanel(page).isVisible().catch(() => false))) {
+        await chatsToggle(page).click();
+        await page.waitForTimeout(300);
+      }
+
+      await expect(chatListPanel(page).locator('text=Threads')).toBeVisible();
+    });
+
+    test('clicking Chats toggle closes ChatListPanel', async ({ page }) => {
+      await goToChat(page);
+
+      // Ensure ChatListPanel is open
+      if (!(await chatListPanel(page).isVisible().catch(() => false))) {
+        await chatsToggle(page).click();
+        await page.waitForTimeout(300);
+      }
+      await expect(chatListPanel(page)).toBeVisible();
+
+      // Close it
+      await chatsToggle(page).click();
+      await page.waitForTimeout(300);
+
+      await expect(chatListPanel(page)).toBeHidden();
+    });
+
+    test('main content adjusts when ChatListPanel toggles', async ({ page }) => {
+      await goToChat(page);
+
+      // Ensure ChatListPanel is open
+      if (!(await chatListPanel(page).isVisible().catch(() => false))) {
+        await chatsToggle(page).click();
+        await page.waitForTimeout(300);
+      }
 
       const mainBefore = await page.locator('main').boundingBox();
 
-      await sidebarToggle(page).click();
+      // Close ChatListPanel
+      await chatsToggle(page).click();
       await page.waitForTimeout(300);
 
       const mainAfter = await page.locator('main').boundingBox();
@@ -93,7 +124,7 @@ test.describe('Layout', () => {
   });
 
   test.describe('Theme Switch', () => {
-    test('theme toggle button is in the header', async ({ page }) => {
+    test('theme toggle is in the NavRail', async ({ page }) => {
       await goToChat(page);
       await expect(themeToggle(page)).toBeVisible();
     });
@@ -133,176 +164,125 @@ test.describe('Layout', () => {
     });
   });
 
-  test.describe('Navigation Menu Highlight', () => {
-    test('Chat nav is highlighted on /chat', async ({ page }) => {
+  test.describe('Navigation Highlight', () => {
+    test('Chats nav is highlighted on /chat', async ({ page }) => {
       await goToChat(page);
-      const chatNav = navLink(page, 'Chat');
-      const classes = await chatNav.getAttribute('class');
+      const chatsNav = navRailItem(page, 'Chats');
+      // The active item (button or its parent) has bg-sidebar-accent
+      const classes = await chatsNav.getAttribute('class');
       expect(classes).toContain('bg-sidebar-accent');
     });
 
-    test('Plugins nav is highlighted on /plugins', async ({ page }) => {
-      await goToPlugins(page);
-      const pluginsNav = navLink(page, 'Plugins');
-      const classes = await pluginsNav.getAttribute('class');
+    test('Extensions nav is highlighted on /extensions', async ({ page }) => {
+      await goToExtensions(page);
+      const extensionsNav = navRailItem(page, 'Extensions');
+      const classes = await extensionsNav.getAttribute('class');
       expect(classes).toContain('bg-sidebar-accent');
     });
 
     test('Settings nav is highlighted on /settings', async ({ page }) => {
       await goToSettings(page);
-      const settingsNav = navLink(page, 'Settings');
+      const settingsNav = navRailItem(page, 'Settings');
       const classes = await settingsNav.getAttribute('class');
       expect(classes).toContain('bg-sidebar-accent');
-    });
-
-    test('navigating via sidebar updates highlight', async ({ page }) => {
-      await goToChat(page);
-
-      // Navigate to Plugins via sidebar nav
-      await page.locator('aside nav a').filter({ hasText: /^Plugins$/ }).click();
-      await waitForPageReady(page);
-
-      // Plugins should have the active accent class (not just hover:)
-      const pluginsLink = page.locator('aside nav a').filter({ hasText: /^Plugins$/ });
-      const pluginsClasses = await pluginsLink.getAttribute('class') || '';
-      // Active link has "bg-sidebar-accent text-sidebar-accent-foreground" (without hover: prefix)
-      expect(pluginsClasses).toContain('text-sidebar-accent-foreground');
-
-      // Chat should NOT have the active foreground class
-      const chatLink = page.locator('aside nav a').filter({ hasText: /^Chat$/ });
-      const chatClasses = await chatLink.getAttribute('class') || '';
-      expect(chatClasses).not.toContain('text-sidebar-accent-foreground');
-    });
-  });
-
-  test.describe('Header', () => {
-    test('header shows "Chat" title on /chat', async ({ page }) => {
-      await goToChat(page);
-      await expect(page.locator('header h1:has-text("Chat")')).toBeVisible();
-    });
-
-    test('header shows "Plugins" title on /plugins', async ({ page }) => {
-      await goToPlugins(page);
-      await expect(page.locator('header h1:has-text("Plugins")')).toBeVisible();
-    });
-
-    test('header shows "Settings" title on /settings', async ({ page }) => {
-      await goToSettings(page);
-      await expect(page.locator('header h1:has-text("Settings")')).toBeVisible();
-    });
-
-    test('header shows "MCP Servers" title on /plugins/mcp', async ({ page }) => {
-      await page.goto('/plugins/mcp');
-      await waitForPageReady(page);
-      await expect(
-        page.locator('header h1:has-text("MCP Servers")')
-      ).toBeVisible();
     });
   });
 
   test.describe('Mobile Responsive', () => {
     test.use({ viewport: { width: 375, height: 667 } });
 
-    test('sidebar toggle works as hamburger on mobile', async ({ page }) => {
+    test('BottomNav is visible on mobile', async ({ page }) => {
       await goToChat(page);
-
-      // On mobile, sidebar may default to closed or open
-      const initialBox = await sidebar(page).boundingBox();
-      const startsOpen = initialBox !== null && initialBox.x >= 0;
-
-      // Helper: close sidebar on mobile using the "Close sidebar" button inside the sidebar
-      const closeSidebar = async () => {
-        const closeBtn = page.locator('aside button:has-text("Close sidebar")');
-        if (await closeBtn.isVisible().catch(() => false)) {
-          await closeBtn.click();
-        } else {
-          // Fallback: click the backdrop overlay
-          const backdrop = page.locator('div.fixed.inset-0.bg-black\\/50');
-          if (await backdrop.isVisible().catch(() => false)) {
-            await backdrop.click({ force: true });
-          }
-        }
-        await page.waitForTimeout(500);
-      };
-
-      if (startsOpen) {
-        // Close it first
-        await closeSidebar();
-
-        const boxAfterClose = await sidebar(page).boundingBox();
-        expect(boxAfterClose === null || boxAfterClose.x < 0).toBeTruthy();
-
-        // Reopen it
-        await sidebarToggle(page).click();
-        await page.waitForTimeout(500);
-
-        const boxAfterOpen = await sidebar(page).boundingBox();
-        expect(boxAfterOpen!.x).toBeGreaterThanOrEqual(0);
-      } else {
-        // Starts closed -- open it
-        await sidebarToggle(page).click();
-        await page.waitForTimeout(500);
-
-        const boxAfterOpen = await sidebar(page).boundingBox();
-        expect(boxAfterOpen!.x).toBeGreaterThanOrEqual(0);
-
-        // Close it using close button (header toggle is behind the sidebar on mobile)
-        await closeSidebar();
-
-        const boxAfterClose = await sidebar(page).boundingBox();
-        expect(boxAfterClose === null || boxAfterClose.x < 0).toBeTruthy();
-      }
+      await expect(bottomNav(page)).toBeVisible();
     });
 
-    test('mobile overlay backdrop appears when sidebar is open', async ({ page }) => {
+    test('NavRail is hidden on mobile', async ({ page }) => {
+      await goToChat(page);
+      await expect(navRail(page)).toBeHidden();
+    });
+
+    test('BottomNav has navigation items', async ({ page }) => {
+      await goToChat(page);
+      await expect(bottomNav(page).locator('text=Chats')).toBeVisible();
+      await expect(bottomNav(page).locator('text=Extensions')).toBeVisible();
+      await expect(bottomNav(page).locator('text=Settings')).toBeVisible();
+      await expect(bottomNav(page).locator('text=Theme')).toBeVisible();
+    });
+
+    test('ChatListPanel opens as full-screen overlay on mobile', async ({ page }) => {
       await goToChat(page);
 
-      // Sidebar defaults to open, so overlay should be visible
-      // The overlay is a div with onClick={onClose} and class containing bg-black
-      const sidebarBox = await sidebar(page).boundingBox();
-      if (sidebarBox && sidebarBox.x >= 0) {
-        // Sidebar is open -- there should be a backdrop overlay
-        // Check that a fixed overlay div exists (sibling of aside in the sidebar component)
-        const overlayCount = await page.locator('div.fixed.inset-0').count();
-        expect(overlayCount).toBeGreaterThan(0);
+      // Close ChatListPanel if it's open
+      if (await chatListPanel(page).isVisible().catch(() => false)) {
+        // On mobile there's a "Back" button to close the panel
+        const backBtn = chatListPanel(page).locator('button:has-text("Back")');
+        if (await backBtn.isVisible().catch(() => false)) {
+          await backBtn.click();
+          await page.waitForTimeout(300);
+        }
       }
+
+      // Open ChatListPanel via BottomNav Chats button
+      await bottomNav(page).locator('button:has-text("Chats")').click();
+      await page.waitForTimeout(300);
+
+      // ChatListPanel should be visible as full-screen overlay (fixed inset-0)
+      await expect(chatListPanel(page)).toBeVisible();
+      const box = await chatListPanel(page).boundingBox();
+      expect(box).not.toBeNull();
+      // On mobile it's fixed inset-0, so it should cover the viewport
+      expect(box!.x).toBe(0);
+      expect(box!.y).toBe(0);
+    });
+
+    test('mobile theme toggle in BottomNav works', async ({ page }) => {
+      await goToChat(page);
+
+      await expect(page.locator('html')).toHaveClass(/light/);
+
+      await bottomNavThemeToggle(page).click();
+      await page.waitForTimeout(300);
+
+      await expect(page.locator('html')).toHaveClass(/dark/);
     });
 
     test('chat page renders correctly on mobile', async ({ page }) => {
       await goToChat(page);
 
-      // Close sidebar if open -- click the overlay backdrop
-      const backdrop = page.locator('div.fixed.inset-0.bg-black\\/50');
-      if (await backdrop.isVisible().catch(() => false)) {
-        await backdrop.click({ force: true });
-        await page.waitForTimeout(500);
+      // Close ChatListPanel if it's open (it may auto-open)
+      if (await chatListPanel(page).isVisible().catch(() => false)) {
+        const backBtn = chatListPanel(page).locator('button:has-text("Back")');
+        if (await backBtn.isVisible().catch(() => false)) {
+          await backBtn.click();
+          await page.waitForTimeout(300);
+        }
       }
 
       // Chat input should be visible
       await expect(chatInput(page)).toBeVisible();
 
-      // Header should be visible
-      await expect(page.locator('header')).toBeVisible();
+      // BottomNav should be visible
+      await expect(bottomNav(page)).toBeVisible();
     });
   });
 
-  test.describe('Three-Column Layout (V2)', () => {
+  test.describe('Three-Column Layout', () => {
     test('right panel is visible on /chat/[id]', async ({ page }) => {
       await page.goto('/chat/test-session');
       await waitForPageReady(page);
 
-      // Three columns: sidebar + main + right panel
-      await expect(sidebar(page).first()).toBeVisible();
+      // Three columns: NavRail + main + right panel
+      await expect(navRail(page)).toBeVisible();
       await expect(page.locator('main')).toBeVisible();
       await expect(rightPanel(page)).toBeVisible();
     });
 
     test('right panel is hidden on non-chat routes', async ({ page }) => {
       await goToSettings(page);
-      await expect(rightPanel(page)).toBeHidden();
+      await expect(rightPanel(page)).toHaveCount(0);
 
-      await goToPlugins(page);
-      await expect(rightPanel(page)).toBeHidden();
+      await goToExtensions(page);
+      await expect(rightPanel(page)).toHaveCount(0);
     });
 
     test('main content adjusts width when panel collapses', async ({ page }) => {
