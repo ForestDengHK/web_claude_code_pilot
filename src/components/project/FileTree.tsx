@@ -206,6 +206,15 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFilePrev
               const ext = path.split(".").pop()?.toLowerCase() || "";
               if (PREVIEWABLE_EXTENSIONS.has(ext)) onFilePreview(path);
             } : undefined}
+            onDownload={(filePath: string) => {
+              const url = `/api/files/raw?path=${encodeURIComponent(filePath)}&download=1`;
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = filePath.split("/").pop() || "file";
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+            }}
             className="border-0 rounded-none"
           >
             <RenderTreeNodes nodes={tree} searchQuery={searchQuery} />

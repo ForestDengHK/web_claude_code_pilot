@@ -7,6 +7,7 @@ const pkg = require("./package.json");
 const nextConfig: NextConfig = {
   output: 'standalone',
   serverExternalPackages: ['better-sqlite3'],
+  devIndicators: false,
   env: {
     NEXT_PUBLIC_APP_VERSION: pkg.version,
   },

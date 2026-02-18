@@ -114,11 +114,13 @@ export async function GET(request: NextRequest) {
   const buffer = await fs.readFile(resolved);
   const ext = path.extname(resolved).toLowerCase();
   const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+  const isDownload = request.nextUrl.searchParams.get('download') === '1';
+  const disposition = isDownload ? 'attachment' : 'inline';
 
   return new Response(buffer, {
     headers: {
       'Content-Type': contentType,
-      'Content-Disposition': `inline; filename="${path.basename(resolved)}"`,
+      'Content-Disposition': `${disposition}; filename="${path.basename(resolved)}"`,
     },
   });
 }

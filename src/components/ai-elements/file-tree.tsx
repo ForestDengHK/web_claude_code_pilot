@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   ChevronRightIcon,
+  DownloadIcon,
   EyeIcon,
   FileIcon,
   FolderIcon,
@@ -31,6 +32,7 @@ interface FileTreeContextType {
   onSelect?: (path: string) => void;
   onAdd?: (path: string) => void;
   onPreview?: (path: string) => void;
+  onDownload?: (path: string) => void;
 }
 
 // Default noop for context default value
@@ -50,6 +52,7 @@ export type FileTreeProps = HTMLAttributes<HTMLDivElement> & {
   onSelect?: (path: string) => void;
   onAdd?: (path: string) => void;
   onPreview?: (path: string) => void;
+  onDownload?: (path: string) => void;
   onExpandedChange?: (expanded: Set<string>) => void;
 };
 
@@ -60,6 +63,7 @@ export const FileTree = ({
   onSelect,
   onAdd,
   onPreview,
+  onDownload,
   onExpandedChange,
   className,
   children,
@@ -83,8 +87,8 @@ export const FileTree = ({
   );
 
   const contextValue = useMemo(
-    () => ({ expandedPaths, onAdd, onPreview, onSelect, selectedPath, togglePath }),
-    [expandedPaths, onAdd, onPreview, onSelect, selectedPath, togglePath]
+    () => ({ expandedPaths, onAdd, onDownload, onPreview, onSelect, selectedPath, togglePath }),
+    [expandedPaths, onAdd, onDownload, onPreview, onSelect, selectedPath, togglePath]
   );
 
   return (
@@ -208,7 +212,7 @@ export const FileTreeFile = ({
   children,
   ...props
 }: FileTreeFileProps) => {
-  const { selectedPath, onSelect, onAdd, onPreview } = useContext(FileTreeContext);
+  const { selectedPath, onSelect, onAdd, onPreview, onDownload } = useContext(FileTreeContext);
   const isSelected = selectedPath === path;
 
   const handleClick = useCallback(() => {
@@ -240,6 +244,14 @@ export const FileTreeFile = ({
     [onAdd, path]
   );
 
+  const handleDownload = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onDownload?.(path);
+    },
+    [onDownload, path]
+  );
+
   const fileContextValue = useMemo(() => ({ name, path }), [name, path]);
 
   return (
@@ -263,8 +275,20 @@ export const FileTreeFile = ({
             <FileTreeIcon>
               {icon ?? <FileIcon className="size-4 text-muted-foreground" />}
             </FileTreeIcon>
-            <FileTreeName>{name}</FileTreeName>
-            {(onPreview || onAdd) && (
+            {/* Split name into stem + extension so the extension is always visible */}
+            {(() => {
+              const dotIdx = name.lastIndexOf(".");
+              if (dotIdx <= 0) return <FileTreeName title={name}>{name}</FileTreeName>;
+              const stem = name.slice(0, dotIdx);
+              const ext = name.slice(dotIdx);
+              return (
+                <span className="flex min-w-0 items-baseline" title={name}>
+                  <span className="truncate">{stem}</span>
+                  <span className="shrink-0 text-muted-foreground">{ext}</span>
+                </span>
+              );
+            })()}
+            {(onPreview || onDownload || onAdd) && (
               <span className="ml-auto flex shrink-0 items-center">
                 {onPreview && (
                   <button
@@ -274,6 +298,16 @@ export const FileTreeFile = ({
                     title="Preview file"
                   >
                     <EyeIcon className="size-4 text-muted-foreground md:size-3" />
+                  </button>
+                )}
+                {onDownload && (
+                  <button
+                    type="button"
+                    className="flex size-8 items-center justify-center rounded transition-opacity hover:bg-muted md:size-5 md:opacity-0 md:group-hover/file:opacity-100"
+                    onClick={handleDownload}
+                    title="Download file"
+                  >
+                    <DownloadIcon className="size-4 text-muted-foreground md:size-3" />
                   </button>
                 )}
                 {onAdd && (
