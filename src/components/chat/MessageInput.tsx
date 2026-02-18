@@ -330,18 +330,21 @@ export function MessageInput({
       .catch(() => {});
   }, [sessionId]);
 
-  // Fetch supported models from SDK
+  // Fetch supported models from SDK and default to the first one
   useEffect(() => {
     fetch('/api/models')
       .then((r) => r.json())
       .then((data) => {
         if (data.models && data.models.length > 0) {
-          setDynamicModels(
-            data.models.map((m: { value: string; displayName: string }) => ({
-              value: m.value,
-              label: m.displayName,
-            }))
-          );
+          const models = data.models.map((m: { value: string; displayName: string }) => ({
+            value: m.value,
+            label: m.displayName,
+          }));
+          setDynamicModels(models);
+          // Auto-select the first model (recommended) if no explicit model set
+          if (!modelName && models[0]) {
+            onModelChange?.(models[0].value);
+          }
         }
       })
       .catch(() => {});
