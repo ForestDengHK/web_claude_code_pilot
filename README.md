@@ -74,12 +74,95 @@ npm run build
 # Start the production server
 npm run start
 # -- or directly --
-node .next/standalone/codepilot-server.js
+PORT=4000 node .next/standalone/codepilot-server.js
 ```
 
 The server binds to `0.0.0.0:3000` by default. Override with `PORT` and `HOSTNAME` environment variables.
 
 **Remote access (e.g. from phone):** Use [Tailscale](https://tailscale.com/) or a similar tool to access the server from other devices on your network.
+
+### Run as macOS Service (launchd)
+
+To run Web Claude Code Pilot as a persistent background service that auto-starts on login:
+
+**1. Create the plist file** at `~/Library/LaunchAgents/com.codepilot.web.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.codepilot.web</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/path/to/CodePilot/.next/standalone/codepilot-server.js</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/path/to/CodePilot</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PORT</key>
+    <string>4000</string>
+    <key>HOSTNAME</key>
+    <string>0.0.0.0</string>
+    <key>NODE_ENV</key>
+    <string>production</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/YOU/.codepilot/service.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/YOU/.codepilot/service.error.log</string>
+</dict>
+</plist>
+```
+
+> Replace `/path/to/CodePilot` and `/Users/YOU` with your actual paths. Adjust the `node` path if not using Homebrew (`which node`).
+
+**2. Service management commands:**
+
+```bash
+# Start the service
+launchctl load ~/Library/LaunchAgents/com.codepilot.web.plist
+
+# Stop the service
+launchctl unload ~/Library/LaunchAgents/com.codepilot.web.plist
+
+# Restart (stop + start)
+launchctl unload ~/Library/LaunchAgents/com.codepilot.web.plist
+launchctl load ~/Library/LaunchAgents/com.codepilot.web.plist
+
+# Check if running
+launchctl list | grep codepilot
+
+# View logs
+tail -f ~/.codepilot/service.log
+tail -f ~/.codepilot/service.error.log
+```
+
+**3. After code changes** (update & restart):
+
+```bash
+cd /path/to/CodePilot
+git pull                  # or make your changes
+npm install               # if dependencies changed
+npm run build             # rebuild production bundle
+launchctl unload ~/Library/LaunchAgents/com.codepilot.web.plist
+launchctl load ~/Library/LaunchAgents/com.codepilot.web.plist
+```
+
+**4. Remove the service:**
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.codepilot.web.plist
+rm ~/Library/LaunchAgents/com.codepilot.web.plist
+```
 
 ---
 
@@ -169,6 +252,18 @@ git push origin v0.8.1
 - The standalone server (`codepilot-server.js`) loads the user's shell environment to pick up `ANTHROPIC_API_KEY`, `PATH`, etc.
 - Chat data is stored in `~/.codepilot/codepilot.db` (or `./data/codepilot.db` in dev mode).
 - The app uses WAL mode for SQLite, so concurrent reads are fast.
+
+### Troubleshooting
+
+**Unstyled page / no CSS in production:**
+Next.js standalone mode does not bundle `.next/static` (CSS/JS assets) into the standalone output directory. The post-build script (`scripts/prepare-server.mjs`) creates symlinks automatically: `.next/static` → `.next/standalone/.next/static` and `public` → `.next/standalone/public`. If you see an unstyled page, verify the symlinks exist:
+
+```bash
+ls -la .next/standalone/.next/static   # should be a symlink
+ls -la .next/standalone/public         # should be a symlink
+```
+
+If missing, re-run the build: `npm run build`.
 
 ---
 

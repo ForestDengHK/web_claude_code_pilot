@@ -74,12 +74,95 @@ npm run build
 # 本番サーバーを起動
 npm run start
 # -- または直接 --
-node .next/standalone/codepilot-server.js
+PORT=4000 node .next/standalone/codepilot-server.js
 ```
 
 サーバーはデフォルトで `0.0.0.0:3000` にバインドします。`PORT` と `HOSTNAME` 環境変数で上書き可能。
 
 **リモートアクセス（例：スマートフォンから）：** [Tailscale](https://tailscale.com/) などのツールを使用して、ネットワーク上の他のデバイスからサーバーにアクセスできます。
+
+### macOS サービスとして実行（launchd）
+
+Web Claude Code Pilot をログイン時に自動起動する永続バックグラウンドサービスとして設定：
+
+**1. plist ファイルを作成**（`~/Library/LaunchAgents/com.codepilot.web.plist`）：
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.codepilot.web</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/path/to/CodePilot/.next/standalone/codepilot-server.js</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/path/to/CodePilot</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PORT</key>
+    <string>4000</string>
+    <key>HOSTNAME</key>
+    <string>0.0.0.0</string>
+    <key>NODE_ENV</key>
+    <string>production</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/YOU/.codepilot/service.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/YOU/.codepilot/service.error.log</string>
+</dict>
+</plist>
+```
+
+> `/path/to/CodePilot` と `/Users/YOU` を実際のパスに置き換えてください。Homebrew 以外で Node をインストールした場合は `node` パスを調整（`which node`）。
+
+**2. サービス管理コマンド：**
+
+```bash
+# サービスを起動
+launchctl load ~/Library/LaunchAgents/com.codepilot.web.plist
+
+# サービスを停止
+launchctl unload ~/Library/LaunchAgents/com.codepilot.web.plist
+
+# 再起動（停止して起動）
+launchctl unload ~/Library/LaunchAgents/com.codepilot.web.plist
+launchctl load ~/Library/LaunchAgents/com.codepilot.web.plist
+
+# 実行中か確認
+launchctl list | grep codepilot
+
+# ログを確認
+tail -f ~/.codepilot/service.log
+tail -f ~/.codepilot/service.error.log
+```
+
+**3. コード変更後**（更新して再起動）：
+
+```bash
+cd /path/to/CodePilot
+git pull                  # または変更を加える
+npm install               # 依存関係が変更された場合
+npm run build             # 本番バンドルを再ビルド
+launchctl unload ~/Library/LaunchAgents/com.codepilot.web.plist
+launchctl load ~/Library/LaunchAgents/com.codepilot.web.plist
+```
+
+**4. サービスを削除：**
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.codepilot.web.plist
+rm ~/Library/LaunchAgents/com.codepilot.web.plist
+```
 
 ---
 
@@ -169,6 +252,18 @@ git push origin v0.8.1
 - standalone サーバー（`codepilot-server.js`）はユーザーのシェル環境をロードして `ANTHROPIC_API_KEY`、`PATH` などを取得します。
 - チャットデータは `~/.codepilot/codepilot.db`（開発モードでは `./data/codepilot.db`）に保存されます。
 - アプリは SQLite の WAL モードを使用するため、同時読み込みは高速です。
+
+### トラブルシューティング
+
+**本番環境でページにスタイルが適用されない / CSS が欠落：**
+Next.js standalone モードでは `.next/static`（CSS/JS アセット）が standalone 出力ディレクトリにバンドルされません。ビルド後スクリプト（`scripts/prepare-server.mjs`）がシンボリックリンクを自動作成します：`.next/static` → `.next/standalone/.next/static` および `public` → `.next/standalone/public`。ページにスタイルがない場合、シンボリックリンクが存在するか確認してください：
+
+```bash
+ls -la .next/standalone/.next/static   # シンボリックリンクであるべき
+ls -la .next/standalone/public         # シンボリックリンクであるべき
+```
+
+不足している場合は、再ビルドしてください：`npm run build`。
 
 ---
 

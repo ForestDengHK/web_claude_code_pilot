@@ -74,12 +74,95 @@ npm run build
 # 启动生产服务器
 npm run start
 # -- 或者直接 --
-node .next/standalone/codepilot-server.js
+PORT=4000 node .next/standalone/codepilot-server.js
 ```
 
 服务器默认绑定 `0.0.0.0:3000`。可通过 `PORT` 和 `HOSTNAME` 环境变量覆盖。
 
 **远程访问（如从手机）：** 使用 [Tailscale](https://tailscale.com/) 或类似工具从其他设备访问服务器。
+
+### 以 macOS 服务运行（launchd）
+
+将 Web Claude Code Pilot 设置为持久后台服务，登录后自动启动：
+
+**1. 创建 plist 文件**，路径为 `~/Library/LaunchAgents/com.codepilot.web.plist`：
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.codepilot.web</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/path/to/CodePilot/.next/standalone/codepilot-server.js</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/path/to/CodePilot</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PORT</key>
+    <string>4000</string>
+    <key>HOSTNAME</key>
+    <string>0.0.0.0</string>
+    <key>NODE_ENV</key>
+    <string>production</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/YOU/.codepilot/service.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/YOU/.codepilot/service.error.log</string>
+</dict>
+</plist>
+```
+
+> 将 `/path/to/CodePilot` 和 `/Users/YOU` 替换为你的实际路径。如果不是使用 Homebrew 安装的 Node，请调整 `node` 路径（`which node`）。
+
+**2. 服务管理命令：**
+
+```bash
+# 启动服务
+launchctl load ~/Library/LaunchAgents/com.codepilot.web.plist
+
+# 停止服务
+launchctl unload ~/Library/LaunchAgents/com.codepilot.web.plist
+
+# 重启（先停止再启动）
+launchctl unload ~/Library/LaunchAgents/com.codepilot.web.plist
+launchctl load ~/Library/LaunchAgents/com.codepilot.web.plist
+
+# 检查是否运行中
+launchctl list | grep codepilot
+
+# 查看日志
+tail -f ~/.codepilot/service.log
+tail -f ~/.codepilot/service.error.log
+```
+
+**3. 代码变更后**（更新并重启）：
+
+```bash
+cd /path/to/CodePilot
+git pull                  # 或进行你的修改
+npm install               # 如果依赖有变化
+npm run build             # 重新构建生产包
+launchctl unload ~/Library/LaunchAgents/com.codepilot.web.plist
+launchctl load ~/Library/LaunchAgents/com.codepilot.web.plist
+```
+
+**4. 移除服务：**
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.codepilot.web.plist
+rm ~/Library/LaunchAgents/com.codepilot.web.plist
+```
 
 ---
 
@@ -169,6 +252,18 @@ git push origin v0.8.1
 - standalone 服务器（`codepilot-server.js`）会加载用户的 shell 环境以获取 `ANTHROPIC_API_KEY`、`PATH` 等
 - 聊天数据存储在 `~/.codepilot/codepilot.db`（开发模式下为 `./data/`）
 - 应用使用 SQLite WAL 模式，并发读取性能优秀
+
+### 故障排除
+
+**生产环境页面无样式 / CSS 丢失：**
+Next.js standalone 模式不会将 `.next/static`（CSS/JS 资源）打包到 standalone 输出目录中。构建后脚本（`scripts/prepare-server.mjs`）会自动创建符号链接：`.next/static` → `.next/standalone/.next/static` 和 `public` → `.next/standalone/public`。如果页面无样式，请检查符号链接是否存在：
+
+```bash
+ls -la .next/standalone/.next/static   # 应该是符号链接
+ls -la .next/standalone/public         # 应该是符号链接
+```
+
+如果缺失，重新构建即可：`npm run build`。
 
 ---
 
