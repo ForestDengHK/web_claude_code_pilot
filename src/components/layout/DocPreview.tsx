@@ -278,7 +278,7 @@ function RenderedView({
     return (
       <iframe
         srcDoc={content}
-        sandbox=""
+        sandbox="allow-scripts"
         className="h-full w-full border-0"
         title="HTML Preview"
       />
