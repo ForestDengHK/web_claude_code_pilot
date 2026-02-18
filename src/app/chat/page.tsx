@@ -7,7 +7,6 @@ import { StarIcon, StarOffIcon, Clock01Icon, Folder01Icon, FolderOpenIcon } from
 import type { Message, SSEEvent, SessionResponse, TokenUsage, PermissionRequestEvent } from '@/types';
 import { MessageList } from '@/components/chat/MessageList';
 import { MessageInput } from '@/components/chat/MessageInput';
-import { FolderPicker } from '@/components/chat/FolderPicker';
 import { usePanel } from '@/hooks/usePanel';
 
 interface ToolUseInfo {
@@ -46,8 +45,6 @@ export default function NewChatPage() {
   // Favorites & Recent
   const [favorites, setFavorites] = useState<FavoriteDir[]>([]);
   const [recentDirs, setRecentDirs] = useState<string[]>([]);
-  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
-
   // Fetch favorites and recent on mount
   useEffect(() => {
     fetch('/api/favorites')
@@ -82,11 +79,6 @@ export default function NewChatPage() {
       localStorage.setItem('codepilot:last-working-directory', dirPath);
     }
   }, []);
-
-  const handleFolderPickerSelect = useCallback((dirPath: string) => {
-    selectDirectory(dirPath);
-    setFolderPickerOpen(false);
-  }, [selectDirectory]);
 
   const stopStreaming = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -509,15 +501,6 @@ export default function NewChatPage() {
               </div>
             )}
 
-            {/* Browse button */}
-            <button
-              className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground transition-colors hover:border-foreground/30 hover:bg-accent hover:text-foreground min-h-[48px]"
-              onClick={() => setFolderPickerOpen(true)}
-            >
-              <HugeiconsIcon icon={FolderOpenIcon} className="h-4 w-4" />
-              Browse for folder...
-            </button>
-
             {!workingDir && (favorites.length > 0 || filteredRecent.length > 0) && (
               <p className="text-center text-xs text-muted-foreground">
                 Select a project directory to start chatting
@@ -552,12 +535,6 @@ export default function NewChatPage() {
         onModeChange={setMode}
       />
 
-      {/* Folder Picker Dialog */}
-      <FolderPicker
-        open={folderPickerOpen}
-        onOpenChange={setFolderPickerOpen}
-        onSelect={handleFolderPickerSelect}
-      />
     </div>
   );
 }

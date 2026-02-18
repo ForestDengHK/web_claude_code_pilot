@@ -118,65 +118,15 @@ interface ModeOption {
 
 const MODE_OPTIONS: ModeOption[] = [
   { value: 'code', label: 'Code', icon: Wrench01Icon, description: 'Read, write files & run commands' },
-  { value: 'plan', label: 'Plan', icon: ClipboardIcon, description: 'Analyze & plan without executing' },
-  { value: 'ask', label: 'Ask', icon: HelpCircleIcon, description: 'Answer questions only' },
+  { value: 'plan', label: 'Plan', icon: ClipboardIcon, description: 'Plan first, then confirm changes' },
 ];
 
-// Default Claude model options — labels are dynamically overridden by active provider
-const DEFAULT_MODEL_OPTIONS = [
-  { value: 'sonnet', label: 'Sonnet 4.5' },
-  { value: 'opus', label: 'Opus 4.6' },
-  { value: 'haiku', label: 'Haiku 4.5' },
+// Fallback model options used when the API is unavailable
+const FALLBACK_MODEL_OPTIONS = [
+  { value: 'sonnet', label: 'Sonnet' },
+  { value: 'opus', label: 'Opus' },
+  { value: 'haiku', label: 'Haiku' },
 ];
-
-// Provider-specific model label mappings (alias → display name)
-const PROVIDER_MODEL_LABELS: Record<string, Record<string, string>> = {
-  // GLM Coding Plan (Z.AI / 智谱)
-  'https://api.z.ai/api/anthropic': {
-    sonnet: 'GLM-4.7',
-    opus: 'GLM-4.7',
-    haiku: 'GLM-4.5-Air',
-  },
-  'https://open.bigmodel.cn/api/anthropic': {
-    sonnet: 'GLM-4.7',
-    opus: 'GLM-4.7',
-    haiku: 'GLM-4.5-Air',
-  },
-  // Kimi Coding Plan
-  'https://api.kimi.com/coding/': {
-    sonnet: 'Kimi K2.5',
-    opus: 'Kimi K2.5',
-    haiku: 'Kimi K2.5',
-  },
-  // Moonshot Open Platform
-  'https://api.moonshot.ai/anthropic': {
-    sonnet: 'Kimi K2.5',
-    opus: 'Kimi K2.5',
-    haiku: 'Kimi K2.5',
-  },
-  'https://api.moonshot.cn/anthropic': {
-    sonnet: 'Kimi K2.5',
-    opus: 'Kimi K2.5',
-    haiku: 'Kimi K2.5',
-  },
-  // MiniMax Coding Plan
-  'https://api.minimaxi.com/anthropic': {
-    sonnet: 'MiniMax-M2.1',
-    opus: 'MiniMax-M2.1',
-    haiku: 'MiniMax-M2.1',
-  },
-  'https://api.minimax.io/anthropic': {
-    sonnet: 'MiniMax-M2.1',
-    opus: 'MiniMax-M2.1',
-    haiku: 'MiniMax-M2.1',
-  },
-  // OpenRouter — keeps Claude names, provider handles routing
-  'https://openrouter.ai/api': {
-    sonnet: 'Sonnet 4.5',
-    opus: 'Opus 4.6',
-    haiku: 'Haiku 4.5',
-  },
-};
 
 /**
  * Convert a data URL to a FileAttachment object.
@@ -364,8 +314,7 @@ export function MessageInput({
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [badge, setBadge] = useState<CommandBadge | null>(null);
-  const [activeProviderBaseUrl, setActiveProviderBaseUrl] = useState<string | null>(null);
-  const [activeProviderName, setActiveProviderName] = useState<string | null>(null);
+  const [dynamicModels, setDynamicModels] = useState<Array<{ value: string; label: string }> | null>(null);
   const [skipPermissions, setSkipPermissions] = useState(false);
 
   // Fetch per-session skip_permissions on mount / sessionId change
@@ -381,31 +330,24 @@ export function MessageInput({
       .catch(() => {});
   }, [sessionId]);
 
-  // Fetch active provider to adapt model labels
+  // Fetch supported models from SDK
   useEffect(() => {
-    fetch('/api/providers')
+    fetch('/api/models')
       .then((r) => r.json())
       .then((data) => {
-        const active = (data.providers || []).find((p: { is_active: number }) => p.is_active === 1);
-        if (active) {
-          setActiveProviderBaseUrl(active.base_url || null);
-          setActiveProviderName(active.name || null);
-        } else {
-          setActiveProviderBaseUrl(null);
-          setActiveProviderName(null);
+        if (data.models && data.models.length > 0) {
+          setDynamicModels(
+            data.models.map((m: { value: string; displayName: string }) => ({
+              value: m.value,
+              label: m.displayName,
+            }))
+          );
         }
       })
       .catch(() => {});
   }, []);
 
-  // Compute model options based on active provider
-  const MODEL_OPTIONS = DEFAULT_MODEL_OPTIONS.map((opt) => {
-    if (activeProviderBaseUrl && PROVIDER_MODEL_LABELS[activeProviderBaseUrl]) {
-      const label = PROVIDER_MODEL_LABELS[activeProviderBaseUrl][opt.value];
-      if (label) return { ...opt, label };
-    }
-    return opt;
-  });
+  const MODEL_OPTIONS = dynamicModels || FALLBACK_MODEL_OPTIONS;
 
   // Toggle per-session skip permissions
   const toggleSkipPermissions = useCallback(async () => {

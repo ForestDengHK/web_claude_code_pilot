@@ -108,11 +108,10 @@ function groupSessionsByProject(sessions: ChatSession[]): ProjectGroup[] {
   return groups;
 }
 
-const MODE_BADGE_CONFIG = {
+const MODE_BADGE_CONFIG: Record<string, { label: string; className: string }> = {
   code: { label: "Code", className: "bg-blue-500/10 text-blue-500" },
   plan: { label: "Plan", className: "bg-sky-500/10 text-sky-500" },
-  ask: { label: "Ask", className: "bg-green-500/10 text-green-500" },
-} as const;
+};
 
 export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
   const pathname = usePathname();
@@ -470,7 +469,7 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                         const needsApproval =
                           pendingApprovalSessionId === session.id;
                         const mode = session.mode || "code";
-                        const badgeCfg = MODE_BADGE_CONFIG[mode];
+                        const badgeCfg = MODE_BADGE_CONFIG[mode] || MODE_BADGE_CONFIG.code;
 
                         return (
                           <div

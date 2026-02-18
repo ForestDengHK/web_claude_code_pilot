@@ -57,18 +57,13 @@ export async function POST(request: NextRequest) {
     // Determine model: request override > session model > default setting
     const effectiveModel = model || session.model || getSetting('default_model') || undefined;
 
-    // Determine permission mode from chat mode: code → acceptEdits, plan → plan, ask → default (no tools)
+    // Determine permission mode from chat mode: code → acceptEdits, plan → plan
     const effectiveMode = mode || session.mode || 'code';
     let permissionMode: string;
     let systemPromptOverride: string | undefined;
     switch (effectiveMode) {
       case 'plan':
         permissionMode = 'plan';
-        break;
-      case 'ask':
-        permissionMode = 'default';
-        systemPromptOverride = (session.system_prompt || '') +
-          '\n\nYou are in Ask mode. Answer questions and provide information only. Do not use any tools, do not read or write files, do not execute commands. Only respond with text.';
         break;
       default: // 'code'
         permissionMode = 'acceptEdits';
