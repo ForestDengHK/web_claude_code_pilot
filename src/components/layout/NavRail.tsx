@@ -40,7 +40,7 @@ export function NavRail({ onToggleChatList, skipPermissionsActive }: NavRailProp
   const isChatRoute = pathname === "/chat" || pathname.startsWith("/chat/");
 
   return (
-    <aside className="flex w-14 shrink-0 flex-col items-center bg-sidebar pb-3 pt-10">
+    <aside className="hidden md:flex w-14 shrink-0 flex-col items-center bg-sidebar pb-3 pt-10">
       {/* Nav icons */}
       <nav className="flex flex-1 flex-col items-center gap-1">
         {navItems.map((item) => {

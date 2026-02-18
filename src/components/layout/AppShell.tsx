@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { usePathname } from "next/navigation";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { NavRail } from "./NavRail";
+import { BottomNav } from "./BottomNav";
 import { ChatListPanel } from "./ChatListPanel";
 import { RightPanel } from "./RightPanel";
 import { ResizeHandle } from "./ResizeHandle";
@@ -26,7 +27,7 @@ function defaultViewMode(filePath: string): PreviewViewMode {
   return RENDERED_EXTENSIONS.has(ext) ? "rendered" : "source";
 }
 
-const LG_BREAKPOINT = 1024;
+const MD_BREAKPOINT = 768;
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -124,7 +125,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Keep chat list state in sync when resizing across the breakpoint (only on chat routes)
   useEffect(() => {
     if (!isChatRoute) return;
-    const mql = window.matchMedia(`(min-width: ${LG_BREAKPOINT}px)`);
+    const mql = window.matchMedia(`(min-width: ${MD_BREAKPOINT}px)`);
     const handler = (e: MediaQueryListEvent) => setChatListOpenRaw(e.matches);
     mql.addEventListener("change", handler);
     setChatListOpenRaw(mql.matches);
@@ -189,7 +190,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <PanelContext.Provider value={panelContextValue}>
       <TooltipProvider delayDuration={300}>
-        <div className="flex h-screen overflow-hidden">
+        <div className="flex h-screen overflow-hidden pb-14 md:pb-0">
           <NavRail
             onToggleChatList={() => setChatListOpen(!chatListOpen)}
             skipPermissionsActive={skipPermissionsActive}
@@ -218,6 +219,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           )}
           {isChatDetailRoute && <RightPanel width={rightPanelWidth} />}
         </div>
+        <BottomNav
+          onToggleChatList={() => setChatListOpen(!chatListOpen)}
+          skipPermissionsActive={skipPermissionsActive}
+        />
       </TooltipProvider>
     </PanelContext.Provider>
   );
