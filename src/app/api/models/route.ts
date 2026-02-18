@@ -68,6 +68,9 @@ export async function GET() {
   try {
     // Build env for CLI subprocess (mirrors claude-client.ts logic)
     const sdkEnv: Record<string, string> = { ...process.env as Record<string, string> };
+    // Unset CLAUDECODE so the subprocess doesn't think it's nested inside a Claude Code session
+    delete sdkEnv.CLAUDECODE;
+    delete sdkEnv.CLAUDE_CODE_ENTRYPOINT;
     if (!sdkEnv.HOME) sdkEnv.HOME = os.homedir();
     if (!sdkEnv.USERPROFILE) sdkEnv.USERPROFILE = os.homedir();
     sdkEnv.PATH = getExpandedPath();

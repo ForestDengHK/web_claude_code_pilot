@@ -147,10 +147,17 @@ function handleSSEEvent(
 /**
  * Reads an SSE response body and dispatches parsed events through callbacks.
  * Returns the final accumulated text and token usage.
+ *
+ * @param signal  Optional AbortSignal. When aborted, the read loop exits and
+ *                throws a DOMException('', 'AbortError') so the caller can
+ *                distinguish a deliberate loop-exit from other errors.
+ *                This signal is independent of the backend AbortController —
+ *                aborting here does NOT cancel the server-side Claude process.
  */
 export async function consumeSSEStream(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   callbacks: SSECallbacks,
+  signal?: AbortSignal,
 ): Promise<{ accumulated: string; tokenUsage: TokenUsage | null }> {
   const decoder = new TextDecoder();
   let buffer = '';
@@ -165,8 +172,25 @@ export async function consumeSSEStream(
     },
   };
 
+  // If a signal is provided, create a Promise that rejects when it fires.
+  // We race this against reader.read() so that a hung read() can be unblocked.
+  const abortPromise: Promise<never> | null = signal
+    ? new Promise((_, reject) => {
+        if (signal.aborted) {
+          reject(new DOMException('SSE read loop aborted for recovery', 'AbortError'));
+        } else {
+          signal.addEventListener('abort', () => {
+            reject(new DOMException('SSE read loop aborted for recovery', 'AbortError'));
+          }, { once: true });
+        }
+      })
+    : null;
+
   while (true) {
-    const { done, value } = await reader.read();
+    const readPromise = reader.read();
+    const { done, value } = abortPromise
+      ? await Promise.race([readPromise, abortPromise])
+      : await readPromise;
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });

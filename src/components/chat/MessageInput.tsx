@@ -121,6 +121,55 @@ const FALLBACK_MODEL_OPTIONS = [
 ];
 
 /**
+ * 将 Claude API 完整模型名称转换为工具栏按钮的短显示名称。
+ * 下拉菜单中保持显示完整名称，只有按钮标签缩短。
+ *
+ * 示例:
+ *   "claude-sonnet-4-5"        -> "Sonnet 4"
+ *   "claude-opus-4-5"          -> "Opus 4"
+ *   "claude-3-5-haiku-latest"  -> "Haiku 3.5"
+ *   "claude-3-7-sonnet-latest" -> "Sonnet 3.7"
+ *   "Sonnet" / "Opus" / "Haiku" -> 原样返回（fallback 已经够短）
+ */
+function getShortModelName(label: string): string {
+  if (label.length <= 8) return label;
+
+  const lower = label.toLowerCase();
+  const numericSegments = label.match(/\d+/g) ?? [];
+
+  if (lower.includes('opus')) {
+    const major = numericSegments[0];
+    return major ? `Opus ${major}` : 'Opus';
+  }
+  if (lower.includes('sonnet')) {
+    // "claude-3-7-sonnet-latest" -> ["3","7"] -> "Sonnet 3.7"
+    // "claude-sonnet-4-5"        -> ["4","5"] -> "Sonnet 4"
+    if (numericSegments.length >= 2 && numericSegments[0] === '3') {
+      return `Sonnet ${numericSegments[0]}.${numericSegments[1]}`;
+    }
+    const major = numericSegments[0];
+    return major ? `Sonnet ${major}` : 'Sonnet';
+  }
+  if (lower.includes('haiku')) {
+    if (numericSegments.length >= 2 && numericSegments[0] === '3') {
+      return `Haiku ${numericSegments[0]}.${numericSegments[1]}`;
+    }
+    const major = numericSegments[0];
+    return major ? `Haiku ${major}` : 'Haiku';
+  }
+
+  // 通用 fallback：取最后一个英文单词 + 最后一个数字
+  const parts = label.split('-').filter(Boolean);
+  const lastWord = parts.findLast((p) => /[a-z]/i.test(p));
+  const lastNum = numericSegments[numericSegments.length - 1];
+  if (lastWord) {
+    const capitalized = lastWord.charAt(0).toUpperCase() + lastWord.slice(1);
+    return lastNum ? `${capitalized} ${lastNum}` : capitalized;
+  }
+  return label;
+}
+
+/**
  * Convert a data URL to a FileAttachment object.
  */
 async function dataUrlToFileAttachment(
@@ -914,11 +963,11 @@ export function MessageInput({
                 </div>
 
                 {/* Model selector */}
-                <div className="relative" ref={modelMenuRef}>
+                <div className="relative min-w-0 shrink" ref={modelMenuRef}>
                   <PromptInputButton
                     onClick={() => setModelMenuOpen((prev) => !prev)}
                   >
-                    <span className="text-xs font-mono">{currentModelOption.label}</span>
+                    <span className="text-xs font-mono max-w-[72px] truncate sm:max-w-none">{getShortModelName(currentModelOption.label)}</span>
                     <HugeiconsIcon icon={ArrowDown01Icon} className={cn("h-2.5 w-2.5 transition-transform duration-200", modelMenuOpen && "rotate-180")} />
                   </PromptInputButton>
 

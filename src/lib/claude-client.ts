@@ -249,6 +249,12 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // Then overlay any API config the user set in Web Claude Code Pilot settings (optional).
         const sdkEnv: Record<string, string> = { ...process.env as Record<string, string> };
 
+        // Unset CLAUDECODE so Claude Code doesn't think it's being launched inside
+        // an existing Claude Code session (which would cause it to exit with code 1).
+        // This happens when CodePilot itself is run from within a Claude Code terminal.
+        delete sdkEnv.CLAUDECODE;
+        delete sdkEnv.CLAUDE_CODE_ENTRYPOINT;
+
         // Ensure HOME/USERPROFILE are set so Claude Code can find ~/.claude/commands/
         if (!sdkEnv.HOME) sdkEnv.HOME = os.homedir();
         if (!sdkEnv.USERPROFILE) sdkEnv.USERPROFILE = os.homedir();

@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
 import { addMessage, getSession, updateSessionTitle, updateSdkSessionId, getSetting } from '@/lib/db';
+import { registerAbort, unregisterAbort } from '@/lib/abort-registry';
 import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment } from '@/types';
 import fs from 'fs';
 import path from 'path';
@@ -74,10 +75,13 @@ export async function POST(request: NextRequest) {
 
     const abortController = new AbortController();
 
-    // Handle client disconnect
-    request.signal.addEventListener('abort', () => {
-      abortController.abort();
-    });
+    // Register this controller so the user's Stop button (POST /api/chat/stop)
+    // can abort the Claude process explicitly.
+    // We intentionally do NOT bind request.signal here: mobile browsers drop the
+    // SSE socket when the app is backgrounded, and we don't want that to kill
+    // the Claude Code subprocess — it should keep running so that when the user
+    // returns and recovery polling kicks in, the full response is already in the DB.
+    registerAbort(session_id, abortController);
 
     // Convert file attachments to the format expected by streamClaude.
     // Include filePath from the already-saved files so claude-client can
@@ -114,8 +118,10 @@ export async function POST(request: NextRequest) {
     // Tee the stream: one for client, one for collecting the response
     const [streamForClient, streamForCollect] = stream.tee();
 
-    // Save assistant message in background
-    collectStreamResponse(streamForCollect, session_id);
+    // Save assistant message in background; clean up abort registry when done
+    collectStreamResponse(streamForCollect, session_id).finally(() => {
+      unregisterAbort(session_id);
+    });
 
     return new Response(streamForClient, {
       headers: {

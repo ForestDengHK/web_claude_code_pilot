@@ -79,6 +79,15 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const accumulatedRef = useRef('');
   // Ref for sendMessage to allow self-referencing in timeout auto-retry without circular deps
   const sendMessageRef = useRef<(content: string, files?: FileAttachment[], skillPrompt?: string) => Promise<void>>(undefined);
+  // Wake Lock sentinel — keeps the screen on during streaming to prevent socket death on screen-off
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  // Independent AbortController for the SSE read loop only (not the backend Claude process).
+  // Aborting this does NOT kill Claude — it just exits consumeSSEStream so recovery can start.
+  const readerAbortControllerRef = useRef<AbortController | null>(null);
+  // Flag: this abort was triggered by tab-resume recovery, not user stop — route to startRecovery()
+  const recoveryAbortRef = useRef(false);
+  // Timestamp of last SSE data received — used to detect hung reader on tab resume
+  const lastSseDataRef = useRef<number>(0);
 
   // Fetch messages from DB and check if the backend has finished
   const recoverMessages = useCallback(async (): Promise<boolean> => {
@@ -133,20 +142,34 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        // Re-sync streaming buffer
+        // Re-sync streaming buffer so UI shows whatever we've accumulated so far
         if (accumulatedRef.current) {
           setStreamingContent(accumulatedRef.current);
         }
-        // Trigger immediate recovery poll if recovering
+        // If recovery polling is already active, nudge it immediately
         if (recoveryActiveRef.current) {
           recoverMessages().then(done => {
             if (done) stopRecovery();
           });
+          return;
+        }
+        // Detect hung SSE reader: if we're still streaming but haven't received
+        // data for >2s, the socket died while in background (mobile OS behaviour).
+        // Cancel only the front-end reader — the backend Claude process keeps
+        // running independently (we decoupled it from request.signal).
+        // The catch block will see an AbortError, check recoveryAbortRef, and
+        // call startRecovery() to poll the DB for the completed response.
+        if (readerAbortControllerRef.current && lastSseDataRef.current > 0) {
+          const silentMs = Date.now() - lastSseDataRef.current;
+          if (silentMs > 2000) {
+            recoveryAbortRef.current = true;
+            readerAbortControllerRef.current.abort();
+          }
         }
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    // Also handle focus events
+    // iOS Safari sometimes fires focus without visibilitychange
     window.addEventListener('focus', handleVisibilityChange);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -162,6 +185,22 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       }
     };
   }, []);
+
+  // Acquire a screen Wake Lock while streaming to prevent the screen from
+  // turning off and triggering socket suspension on mobile devices.
+  // This doesn't prevent app-switch suspension, but covers the screen-timeout case.
+  useEffect(() => {
+    if (isStreaming) {
+      if ('wakeLock' in navigator) {
+        navigator.wakeLock.request('screen')
+          .then(lock => { wakeLockRef.current = lock; })
+          .catch(() => { /* not supported or denied — ignore */ });
+      }
+    } else {
+      wakeLockRef.current?.release().catch(() => {});
+      wakeLockRef.current = null;
+    }
+  }, [isStreaming]);
 
   const initializedRef = useRef(false);
   useEffect(() => {
@@ -207,9 +246,16 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   }, [sessionId, messages, hasMore]);
 
   const stopStreaming = useCallback(() => {
+    // Abort the client-side reader immediately
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
-  }, []);
+    // Also tell the server to abort the Claude process so it doesn't keep running
+    fetch('/api/chat/stop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId }),
+    }).catch(() => { /* best-effort */ });
+  }, [sessionId]);
 
   const handlePermissionResponse = useCallback(async (decision: 'allow' | 'allow_session' | 'deny') => {
     if (!pendingPermission) return;
@@ -308,8 +354,15 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         const reader = response.body?.getReader();
         if (!reader) throw new Error('No response stream');
 
+        // Create an independent abort controller for the read loop.
+        // Aborting this exits consumeSSEStream without touching the backend process.
+        const readerAbort = new AbortController();
+        readerAbortControllerRef.current = readerAbort;
+        lastSseDataRef.current = Date.now();
+
         const result = await consumeSSEStream(reader, {
           onText: (acc) => {
+            lastSseDataRef.current = Date.now();
             accumulated = acc;
             accumulatedRef.current = acc;
             setStreamingContent(acc);
@@ -322,16 +375,19 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             });
           },
           onToolResult: (res) => {
+            lastSseDataRef.current = Date.now();
             setStreamingToolOutput('');
             setToolResults((prev) => [...prev, res]);
           },
           onToolOutput: (data) => {
+            lastSseDataRef.current = Date.now();
             setStreamingToolOutput((prev) => {
               const next = prev + (prev ? '\n' : '') + data;
               return next.length > 5000 ? next.slice(-5000) : next;
             });
           },
           onToolProgress: (toolName, elapsed) => {
+            lastSseDataRef.current = Date.now();
             setStatusText(`Running ${toolName}... (${elapsed}s)`);
           },
           onStatus: (text) => {
@@ -356,7 +412,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             accumulatedRef.current = acc;
             setStreamingContent(acc);
           },
-        });
+        }, readerAbort.signal);
 
         accumulated = result.accumulated;
 
@@ -374,6 +430,13 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         }
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') {
+          // Tab-resume recovery: we cancelled the reader to unblock the hung read().
+          // The backend Claude process is still running — poll DB for the result.
+          if (recoveryAbortRef.current) {
+            recoveryAbortRef.current = false;
+            startRecovery();
+            return;
+          }
           const timeoutInfo = toolTimeoutRef.current;
           if (timeoutInfo) {
             // Tool execution timed out — save partial content and auto-retry
@@ -440,6 +503,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         setPermissionResolved(null);
         setPendingApprovalSessionId('');
         abortControllerRef.current = null;
+        readerAbortControllerRef.current = null;
+        lastSseDataRef.current = 0;
+        recoveryAbortRef.current = false;
         // Don't clear statusText or fire refresh if recovery is active — recovery handles that
         if (!recoveryActiveRef.current) {
           setStatusText(undefined);
