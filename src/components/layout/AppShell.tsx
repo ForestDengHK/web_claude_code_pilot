@@ -191,7 +191,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <TooltipProvider delayDuration={300}>
         <div className="flex h-screen overflow-hidden">
           <NavRail
-            chatListOpen={chatListOpen}
             onToggleChatList={() => setChatListOpen(!chatListOpen)}
             skipPermissionsActive={skipPermissionsActive}
           />

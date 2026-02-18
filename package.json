@@ -6,7 +6,7 @@
     "name": "op7418",
     "email": "7418@openclaw.ai"
   },
-  "description": "A native desktop GUI client for Claude Code",
+  "description": "A web GUI for Claude Code",
   "scripts": {
     "dev": "HOSTNAME=0.0.0.0 next dev --turbopack",
     "build": "next build",

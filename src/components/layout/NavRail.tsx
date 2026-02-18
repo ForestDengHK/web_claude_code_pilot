@@ -20,9 +20,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
-
 interface NavRailProps {
-  chatListOpen: boolean;
   onToggleChatList: () => void;
   skipPermissionsActive?: boolean;
 }
