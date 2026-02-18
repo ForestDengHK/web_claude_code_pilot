@@ -9,8 +9,8 @@
   "description": "A web GUI for Claude Code",
   "scripts": {
     "dev": "HOSTNAME=0.0.0.0 next dev --turbopack",
-    "build": "next build",
-    "start": "next start",
+    "build": "next build && node scripts/prepare-server.mjs",
+    "start": "node .next/standalone/codepilot-server.js",
     "lint": "eslint"
   },
   "dependencies": {
