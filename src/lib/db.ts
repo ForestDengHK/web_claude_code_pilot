@@ -217,6 +217,22 @@ export function getAllSessions(): ChatSession[] {
   return db.prepare('SELECT * FROM chat_sessions ORDER BY updated_at DESC').all() as ChatSession[];
 }
 
+export function getRecentWorkingDirectory(): string | undefined {
+  const db = getDb();
+  const row = db.prepare(
+    "SELECT working_directory FROM chat_sessions WHERE working_directory != '' ORDER BY updated_at DESC LIMIT 1"
+  ).get() as { working_directory: string } | undefined;
+  return row?.working_directory || undefined;
+}
+
+export function getAllWorkingDirectories(): string[] {
+  const db = getDb();
+  const rows = db.prepare(
+    "SELECT DISTINCT working_directory FROM chat_sessions WHERE working_directory != '' ORDER BY updated_at DESC"
+  ).all() as { working_directory: string }[];
+  return rows.map(r => r.working_directory);
+}
+
 export function getSession(id: string): ChatSession | undefined {
   const db = getDb();
   return db.prepare('SELECT * FROM chat_sessions WHERE id = ?').get(id) as ChatSession | undefined;

@@ -52,3 +52,12 @@ next-env.d.ts
 
 # user uploads (runtime data)
 .codepilot-uploads/
+
+# local database (root-level stray)
+.codepilot.db
+
+# Playwright MCP
+.playwright-mcp/
+
+# screenshots from testing
+*.png

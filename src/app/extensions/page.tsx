@@ -31,7 +31,7 @@ function ExtensionsPageInner() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="px-6 pt-4 pb-0">
+      <div className="px-4 md:px-6 pt-4 pb-0">
         <h1 className="text-xl font-semibold mb-3">Extensions</h1>
         <Tabs value={tab} onValueChange={(v) => setTab(v as ExtTab)}>
           <TabsList>
@@ -40,7 +40,7 @@ function ExtensionsPageInner() {
           </TabsList>
         </Tabs>
       </div>
-      <div className="flex-1 overflow-hidden p-6 flex flex-col min-h-0">
+      <div className="flex-1 overflow-hidden p-4 md:p-6 flex flex-col min-h-0">
         {tab === "skills" && <SkillsManager />}
         {tab === "mcp" && <McpManager />}
       </div>

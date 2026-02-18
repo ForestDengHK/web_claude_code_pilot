@@ -8,6 +8,7 @@ import type {
   ErrorResponse,
   SuccessResponse,
 } from '@/types';
+import { getAllWorkingDirectories } from '@/lib/db';
 
 function getSettingsPath(): string {
   return path.join(os.homedir(), '.claude', 'settings.json');
@@ -56,8 +57,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<MCPConfigR
       ...((settings.mcpServers || {}) as Record<string, MCPServerConfig>),
     };
 
-    const dir = request.nextUrl.searchParams.get('dir');
-    if (dir) {
+    // Use explicit dir param, or scan all known project working directories
+    const explicitDir = request.nextUrl.searchParams.get('dir');
+    const dirs = explicitDir ? [explicitDir] : getAllWorkingDirectories();
+    for (const dir of dirs) {
       // Project-level .mcp.json
       const projectMcpJson = readJsonFile(path.join(dir, '.mcp.json'));
       if (projectMcpJson.mcpServers) {

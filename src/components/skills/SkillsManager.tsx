@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 import { HugeiconsIcon } from "@hugeicons/react";
-import { PlusSignIcon, Search01Icon, ZapIcon, Loading02Icon } from "@hugeicons/core-free-icons";
+import { PlusSignIcon, Search01Icon, ZapIcon, Loading02Icon, ArrowLeft01Icon } from "@hugeicons/core-free-icons";
+import { cn } from "@/lib/utils";
 import { SkillListItem } from "./SkillListItem";
 import { SkillEditor } from "./SkillEditor";
 import { CreateSkillDialog } from "./CreateSkillDialog";
@@ -158,9 +159,13 @@ export function SkillsManager() {
       </div>
 
       {/* Main content */}
-      <div className="flex gap-4 flex-1 min-h-0">
-        {/* Left: skill list */}
-        <div className="w-64 shrink-0 flex flex-col border border-border rounded-lg overflow-hidden">
+      <div className="flex gap-0 md:gap-4 flex-1 min-h-0">
+        {/* Left: skill list — full width on mobile, w-64 on desktop */}
+        <div className={cn(
+          "flex flex-col border border-border rounded-lg overflow-hidden",
+          "w-full md:w-64 md:shrink-0",
+          selected ? "hidden md:flex" : "flex"
+        )}>
           <div className="p-2 border-b border-border">
             <div className="relative">
               <HugeiconsIcon icon={Search01Icon} className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -277,15 +282,31 @@ export function SkillsManager() {
           </div>
         </div>
 
-        {/* Right: editor */}
-        <div className="flex-1 min-w-0 border border-border rounded-lg overflow-hidden">
+        {/* Right: editor — full width on mobile, flex-1 on desktop */}
+        <div className={cn(
+          "flex flex-col min-w-0 border border-border rounded-lg overflow-hidden",
+          "w-full md:flex-1",
+          selected ? "flex" : "hidden md:flex"
+        )}>
           {selected ? (
-            <SkillEditor
-              key={`${selected.source}:${selected.name}`}
-              skill={selected}
-              onSave={handleSave}
-              onDelete={handleDelete}
-            />
+            <>
+              {/* Mobile back button */}
+              <button
+                className="flex items-center gap-1.5 px-3 py-2 text-sm text-muted-foreground border-b border-border md:hidden"
+                onClick={() => setSelected(null)}
+              >
+                <HugeiconsIcon icon={ArrowLeft01Icon} className="h-4 w-4" />
+                Back to list
+              </button>
+              <div className="flex-1 min-h-0">
+                <SkillEditor
+                  key={`${selected.source}:${selected.name}`}
+                  skill={selected}
+                  onSave={handleSave}
+                  onDelete={handleDelete}
+                />
+              </div>
+            </>
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-3">
               <HugeiconsIcon icon={ZapIcon} className="h-12 w-12 opacity-30" />

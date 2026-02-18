@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useTheme } from "next-themes";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Cancel01Icon, Copy01Icon, Tick01Icon, Loading02Icon } from "@hugeicons/core-free-icons";
+import { Cancel01Icon, Copy01Icon, Tick01Icon, Loading02Icon, ArrowExpandIcon, ArrowShrinkIcon } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -76,6 +76,7 @@ export function DocPreview({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -137,9 +138,11 @@ export function DocPreview({
       className={cn(
         "flex flex-col overflow-hidden bg-background",
         "fixed inset-0 z-50",
-        "md:static md:inset-auto md:z-auto md:h-full md:shrink-0 md:border-l md:border-border/40"
+        expanded
+          ? ""
+          : "md:static md:inset-auto md:z-auto md:h-full md:shrink-0 md:border-l md:border-border/40"
       )}
-      style={{ width }}
+      style={expanded ? undefined : { width }}
     >
       {/* Header */}
       <div className="flex h-10 shrink-0 items-center gap-2 px-3">
@@ -158,6 +161,11 @@ export function DocPreview({
             <HugeiconsIcon icon={Copy01Icon} className="h-3.5 w-3.5" />
           )}
           <span className="sr-only">Copy content</span>
+        </Button>
+
+        <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setExpanded(!expanded)}>
+          <HugeiconsIcon icon={expanded ? ArrowShrinkIcon : ArrowExpandIcon} className="h-3.5 w-3.5" />
+          <span className="sr-only">{expanded ? "Shrink preview" : "Expand preview"}</span>
         </Button>
 
         <Button variant="ghost" size="icon-sm" onClick={onClose}>

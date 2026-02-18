@@ -16,7 +16,7 @@ const CHATLIST_MAX = 400;
 const RIGHTPANEL_MIN = 200;
 const RIGHTPANEL_MAX = 480;
 const DOCPREVIEW_MIN = 320;
-const DOCPREVIEW_MAX = 800;
+const DOCPREVIEW_MAX = 1200;
 
 /** Extensions that default to "rendered" view mode */
 const RENDERED_EXTENSIONS = new Set([
@@ -83,7 +83,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [isChatRoute]);
   const [panelOpen, setPanelOpenRaw] = useState(false);
   const [panelContent, setPanelContent] = useState<PanelContent>("files");
-  const [workingDirectory, setWorkingDirectory] = useState("");
+  const [workingDirectory, setWorkingDirectoryRaw] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return localStorage.getItem("codepilot_working_dir") || "";
+  });
+  const setWorkingDirectory = useCallback((dir: string) => {
+    setWorkingDirectoryRaw(dir);
+    if (dir) localStorage.setItem("codepilot_working_dir", dir);
+  }, []);
   const [sessionId, setSessionId] = useState("");
   const [sessionTitle, setSessionTitle] = useState("");
   const [streamingSessionId, setStreamingSessionId] = useState("");

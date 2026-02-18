@@ -59,16 +59,35 @@ export function SettingsLayout() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-border/50 px-6 pt-4 pb-4">
+      <div className="border-b border-border/50 px-4 md:px-6 pt-4 pb-4">
         <h1 className="text-xl font-semibold">Settings</h1>
         <p className="text-sm text-muted-foreground">
           Manage CodePilot and Claude CLI settings
         </p>
       </div>
 
+      {/* Mobile: horizontal tab pills */}
+      <div className="flex gap-1.5 overflow-x-auto border-b border-border/50 px-4 py-2 md:hidden">
+        {sidebarItems.map((item) => (
+          <button
+            key={item.id}
+            onClick={() => handleSectionChange(item.id)}
+            className={cn(
+              "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors",
+              activeSection === item.id
+                ? "bg-foreground text-background"
+                : "text-muted-foreground bg-accent/50"
+            )}
+          >
+            <HugeiconsIcon icon={item.icon} className="h-3.5 w-3.5 shrink-0" />
+            {item.label}
+          </button>
+        ))}
+      </div>
+
       <div className="flex min-h-0 flex-1">
-        {/* Sidebar */}
-        <nav className="flex w-52 shrink-0 flex-col gap-1 border-r border-border/50 p-3">
+        {/* Desktop sidebar */}
+        <nav className="hidden md:flex w-52 shrink-0 flex-col gap-1 border-r border-border/50 p-3">
           {sidebarItems.map((item) => (
             <button
               key={item.id}
@@ -87,7 +106,7 @@ export function SettingsLayout() {
         </nav>
 
         {/* Content */}
-        <div className="flex-1 overflow-auto p-6">
+        <div className="flex-1 overflow-auto p-4 md:p-6">
           {activeSection === "general" && <GeneralSection />}
           {activeSection === "providers" && <ProviderManager />}
           {activeSection === "cli" && <CliSettingsSection />}

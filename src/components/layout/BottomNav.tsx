@@ -94,22 +94,28 @@ export function BottomNav({ onToggleChatList, skipPermissionsActive }: BottomNav
         );
       })}
 
-      {/* Files toggle (only on chat detail routes) */}
-      {isChatDetailRoute && (
-        <button
-          type="button"
-          className={cn(
-            "flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg text-muted-foreground transition-colors",
-            panelOpen && "text-foreground"
-          )}
-          onClick={() => setPanelOpen(!panelOpen)}
-        >
-          <div className="flex flex-col items-center gap-0.5">
-            <HugeiconsIcon icon={StructureFolderIcon} className="h-5 w-5" />
-            <span className="text-[10px] leading-tight">Files</span>
-          </div>
-        </button>
-      )}
+      {/* Files toggle */}
+      <button
+        type="button"
+        className={cn(
+          "flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg text-muted-foreground transition-colors",
+          panelOpen && isChatDetailRoute && "text-foreground"
+        )}
+        onClick={() => {
+          if (isChatDetailRoute) {
+            setPanelOpen(!panelOpen);
+          } else {
+            // Pre-set panel open so it shows when user navigates back to a chat
+            setPanelOpen(true);
+            router.push("/chat");
+          }
+        }}
+      >
+        <div className="flex flex-col items-center gap-0.5">
+          <HugeiconsIcon icon={StructureFolderIcon} className="h-5 w-5" />
+          <span className="text-[10px] leading-tight">Files</span>
+        </div>
+      </button>
 
       {/* Theme toggle */}
       {mounted && (
