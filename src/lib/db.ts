@@ -519,6 +519,39 @@ export function deactivateAllProviders(): void {
 }
 
 // ==========================================
+// Favorite & Recent Directory Operations
+// ==========================================
+
+export function getFavoriteDirectories(): Array<{ path: string; name: string }> {
+  const db = getDb();
+  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get('favorite_directories') as { value: string } | undefined;
+  if (!row) return [];
+  try { return JSON.parse(row.value); } catch { return []; }
+}
+
+export function addFavoriteDirectory(dirPath: string, name: string): void {
+  const db = getDb();
+  const favorites = getFavoriteDirectories();
+  if (favorites.some(f => f.path === dirPath)) return;
+  favorites.push({ path: dirPath, name });
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run('favorite_directories', JSON.stringify(favorites));
+}
+
+export function removeFavoriteDirectory(dirPath: string): void {
+  const db = getDb();
+  const favorites = getFavoriteDirectories().filter(f => f.path !== dirPath);
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run('favorite_directories', JSON.stringify(favorites));
+}
+
+export function getRecentDirectories(limit = 5): string[] {
+  const db = getDb();
+  const rows = db.prepare(
+    "SELECT DISTINCT working_directory FROM chat_sessions WHERE working_directory IS NOT NULL AND working_directory != '' ORDER BY updated_at DESC LIMIT ?"
+  ).all(limit) as Array<{ working_directory: string }>;
+  return rows.map(r => r.working_directory);
+}
+
+// ==========================================
 // Graceful Shutdown
 // ==========================================
 

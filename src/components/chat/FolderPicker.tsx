@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Folder01Icon, FolderOpenIcon, ArrowRight01Icon, ArrowUp01Icon } from "@hugeicons/core-free-icons";
+import { Folder01Icon, FolderOpenIcon, ArrowRight01Icon, ArrowUp01Icon, StarIcon, StarOffIcon } from "@hugeicons/core-free-icons";
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -32,6 +32,11 @@ interface BrowseResponse {
   drives?: string[];
 }
 
+interface FavoriteDir {
+  path: string;
+  name: string;
+}
+
 interface FolderPickerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -46,6 +51,39 @@ export function FolderPicker({ open, onOpenChange, onSelect, initialPath }: Fold
   const [loading, setLoading] = useState(false);
   const [pathInput, setPathInput] = useState('');
   const [drives, setDrives] = useState<string[]>([]);
+  const [favorites, setFavorites] = useState<FavoriteDir[]>([]);
+
+  // Fetch favorites when dialog opens
+  useEffect(() => {
+    if (open) {
+      fetch('/api/favorites')
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data) setFavorites(data.favorites || []);
+        })
+        .catch(() => {});
+    }
+  }, [open]);
+
+  const isFavorite = useCallback((dirPath: string) => {
+    return favorites.some(f => f.path === dirPath);
+  }, [favorites]);
+
+  const toggleFavorite = useCallback(async (dirPath: string, dirName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const isFav = isFavorite(dirPath);
+    try {
+      const res = await fetch('/api/favorites', {
+        method: isFav ? 'DELETE' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: dirPath, name: dirName }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setFavorites(data.favorites || []);
+      }
+    } catch { /* silent */ }
+  }, [isFavorite]);
 
   const browse = useCallback(async (dir?: string) => {
     setLoading(true);
@@ -117,7 +155,7 @@ export function FolderPicker({ open, onOpenChange, onSelect, initialPath }: Fold
 
         {/* Directory browser */}
         <div className="rounded-md border border-border">
-          {/* Current path + go up + drive switcher */}
+          {/* Current path + go up + drive switcher + star current */}
           <div className="flex items-center gap-2 border-b border-border bg-muted/30 px-3 py-2">
             <Button
               variant="ghost"
@@ -153,9 +191,22 @@ export function FolderPicker({ open, onOpenChange, onSelect, initialPath }: Fold
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-            <span className="min-w-0 overflow-x-auto whitespace-nowrap text-xs font-mono text-muted-foreground">
+            <span className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-xs font-mono text-muted-foreground">
               {currentDir}
             </span>
+            {currentDir && (
+              <button
+                className={`shrink-0 rounded p-1 transition-colors ${
+                  isFavorite(currentDir)
+                    ? 'text-yellow-500 hover:bg-yellow-500/10'
+                    : 'text-muted-foreground hover:text-yellow-500 hover:bg-yellow-500/10'
+                }`}
+                onClick={(e) => toggleFavorite(currentDir, currentDir.split('/').pop() || currentDir, e)}
+                title={isFavorite(currentDir) ? 'Remove from favorites' : 'Add to favorites'}
+              >
+                <HugeiconsIcon icon={isFavorite(currentDir) ? StarIcon : StarOffIcon} className="h-4 w-4" />
+              </button>
+            )}
           </div>
 
           {/* Folder list */}
@@ -171,15 +222,35 @@ export function FolderPicker({ open, onOpenChange, onSelect, initialPath }: Fold
             ) : (
               <div className="p-1">
                 {directories.map((dir) => (
-                  <button
+                  <div
                     key={dir.path}
-                    className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm hover:bg-accent transition-colors text-left"
-                    onClick={() => handleNavigate(dir.path)}
+                    className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm hover:bg-accent transition-colors text-left group"
                   >
-                    <HugeiconsIcon icon={Folder01Icon} className="h-4 w-4 shrink-0 text-blue-500" />
-                    <span className="truncate">{dir.name}</span>
-                    <HugeiconsIcon icon={ArrowRight01Icon} className="ml-auto h-3 w-3 shrink-0 text-muted-foreground" />
-                  </button>
+                    <button
+                      className="flex flex-1 items-center gap-2 min-w-0"
+                      onClick={() => handleNavigate(dir.path)}
+                    >
+                      <HugeiconsIcon icon={Folder01Icon} className="h-4 w-4 shrink-0 text-blue-500" />
+                      <span className="truncate">{dir.name}</span>
+                    </button>
+                    <button
+                      className={`shrink-0 rounded p-1 opacity-0 group-hover:opacity-100 transition-all ${
+                        isFavorite(dir.path)
+                          ? 'text-yellow-500 opacity-100 hover:bg-yellow-500/10'
+                          : 'text-muted-foreground hover:text-yellow-500 hover:bg-yellow-500/10'
+                      }`}
+                      onClick={(e) => toggleFavorite(dir.path, dir.name, e)}
+                      title={isFavorite(dir.path) ? 'Remove from favorites' : 'Add to favorites'}
+                    >
+                      <HugeiconsIcon icon={isFavorite(dir.path) ? StarIcon : StarOffIcon} className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      className="shrink-0 text-muted-foreground"
+                      onClick={() => handleNavigate(dir.path)}
+                    >
+                      <HugeiconsIcon icon={ArrowRight01Icon} className="h-3 w-3" />
+                    </button>
+                  </div>
                 ))}
               </div>
             )}

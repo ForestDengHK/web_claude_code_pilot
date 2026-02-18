@@ -1,10 +1,13 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { HugeiconsIcon } from "@hugeicons/react";
+import { StarIcon, StarOffIcon, Clock01Icon, Folder01Icon, FolderOpenIcon } from "@hugeicons/core-free-icons";
 import type { Message, SSEEvent, SessionResponse, TokenUsage, PermissionRequestEvent } from '@/types';
 import { MessageList } from '@/components/chat/MessageList';
 import { MessageInput } from '@/components/chat/MessageInput';
+import { FolderPicker } from '@/components/chat/FolderPicker';
 import { usePanel } from '@/hooks/usePanel';
 
 interface ToolUseInfo {
@@ -16,6 +19,11 @@ interface ToolUseInfo {
 interface ToolResultInfo {
   tool_use_id: string;
   content: string;
+}
+
+interface FavoriteDir {
+  path: string;
+  name: string;
 }
 
 export default function NewChatPage() {
@@ -34,6 +42,51 @@ export default function NewChatPage() {
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
   const [streamingToolOutput, setStreamingToolOutput] = useState('');
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Favorites & Recent
+  const [favorites, setFavorites] = useState<FavoriteDir[]>([]);
+  const [recentDirs, setRecentDirs] = useState<string[]>([]);
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+
+  // Fetch favorites and recent on mount
+  useEffect(() => {
+    fetch('/api/favorites')
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data) {
+          setFavorites(data.favorites || []);
+          setRecentDirs(data.recent || []);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const toggleFavorite = useCallback(async (dirPath: string) => {
+    const isFav = favorites.some(f => f.path === dirPath);
+    try {
+      const res = await fetch('/api/favorites', {
+        method: isFav ? 'DELETE' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: dirPath, name: dirPath.split('/').pop() || dirPath }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setFavorites(data.favorites || []);
+      }
+    } catch { /* silent */ }
+  }, [favorites]);
+
+  const selectDirectory = useCallback((dirPath: string) => {
+    setWorkingDir(dirPath);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('codepilot:last-working-directory', dirPath);
+    }
+  }, []);
+
+  const handleFolderPickerSelect = useCallback((dirPath: string) => {
+    selectDirectory(dirPath);
+    setFolderPickerOpen(false);
+  }, [selectDirectory]);
 
   const stopStreaming = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -347,20 +400,139 @@ export default function NewChatPage() {
     }
   }, [sendFirstMessage]);
 
+  // Filter recent dirs that are not already in favorites
+  const favoritePaths = new Set(favorites.map(f => f.path));
+  const filteredRecent = recentDirs.filter(d => !favoritePaths.has(d));
+
+  const showDirectoryPicker = messages.length === 0 && !isStreaming;
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <MessageList
-        messages={messages}
-        streamingContent={streamingContent}
-        isStreaming={isStreaming}
-        toolUses={toolUses}
-        toolResults={toolResults}
-        streamingToolOutput={streamingToolOutput}
-        statusText={statusText}
-        pendingPermission={pendingPermission}
-        onPermissionResponse={handlePermissionResponse}
-        permissionResolved={permissionResolved}
-      />
+      {showDirectoryPicker ? (
+        <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
+          <div className="w-full max-w-md space-y-6">
+            {/* Selected directory indicator */}
+            {workingDir && (
+              <div className="rounded-lg border border-border bg-accent/30 px-4 py-3">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <HugeiconsIcon icon={FolderOpenIcon} className="h-4 w-4 text-blue-500" />
+                  <span className="font-medium text-foreground">Selected:</span>
+                  <span className="truncate font-mono text-xs">{workingDir}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Favorites section */}
+            {favorites.length > 0 && (
+              <div>
+                <div className="mb-2 flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                  <HugeiconsIcon icon={StarIcon} className="h-4 w-4 text-yellow-500" />
+                  Favorites
+                </div>
+                <div className="space-y-1">
+                  {favorites.map((fav) => (
+                    <button
+                      key={fav.path}
+                      className={`flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-colors hover:bg-accent min-h-[48px] ${
+                        workingDir === fav.path
+                          ? 'border-blue-500/50 bg-blue-500/5'
+                          : 'border-border'
+                      }`}
+                      onClick={() => selectDirectory(fav.path)}
+                    >
+                      <HugeiconsIcon icon={Folder01Icon} className="h-4 w-4 shrink-0 text-blue-500" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-medium">{fav.name}</div>
+                        <div className="truncate font-mono text-xs text-muted-foreground">{fav.path}</div>
+                      </div>
+                      <button
+                        className="shrink-0 rounded p-1 text-yellow-500 hover:bg-yellow-500/10 transition-colors"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleFavorite(fav.path);
+                        }}
+                        title="Remove from favorites"
+                      >
+                        <HugeiconsIcon icon={StarIcon} className="h-4 w-4" />
+                      </button>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Recent section */}
+            {filteredRecent.length > 0 && (
+              <div>
+                <div className="mb-2 flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                  <HugeiconsIcon icon={Clock01Icon} className="h-4 w-4" />
+                  Recent
+                </div>
+                <div className="space-y-1">
+                  {filteredRecent.map((dirPath) => {
+                    const dirName = dirPath.split('/').pop() || dirPath;
+                    return (
+                      <button
+                        key={dirPath}
+                        className={`flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-colors hover:bg-accent min-h-[48px] ${
+                          workingDir === dirPath
+                            ? 'border-blue-500/50 bg-blue-500/5'
+                            : 'border-border'
+                        }`}
+                        onClick={() => selectDirectory(dirPath)}
+                      >
+                        <HugeiconsIcon icon={Folder01Icon} className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-medium">{dirName}</div>
+                          <div className="truncate font-mono text-xs text-muted-foreground">{dirPath}</div>
+                        </div>
+                        <button
+                          className="shrink-0 rounded p-1 text-muted-foreground hover:text-yellow-500 hover:bg-yellow-500/10 transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleFavorite(dirPath);
+                          }}
+                          title="Add to favorites"
+                        >
+                          <HugeiconsIcon icon={StarOffIcon} className="h-4 w-4" />
+                        </button>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Browse button */}
+            <button
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground transition-colors hover:border-foreground/30 hover:bg-accent hover:text-foreground min-h-[48px]"
+              onClick={() => setFolderPickerOpen(true)}
+            >
+              <HugeiconsIcon icon={FolderOpenIcon} className="h-4 w-4" />
+              Browse for folder...
+            </button>
+
+            {!workingDir && (favorites.length > 0 || filteredRecent.length > 0) && (
+              <p className="text-center text-xs text-muted-foreground">
+                Select a project directory to start chatting
+              </p>
+            )}
+          </div>
+        </div>
+      ) : (
+        <MessageList
+          messages={messages}
+          streamingContent={streamingContent}
+          isStreaming={isStreaming}
+          toolUses={toolUses}
+          toolResults={toolResults}
+          streamingToolOutput={streamingToolOutput}
+          statusText={statusText}
+          pendingPermission={pendingPermission}
+          onPermissionResponse={handlePermissionResponse}
+          permissionResolved={permissionResolved}
+        />
+      )}
       <MessageInput
         onSend={sendFirstMessage}
         onCommand={handleCommand}
@@ -372,6 +544,13 @@ export default function NewChatPage() {
         workingDirectory={workingDir}
         mode={mode}
         onModeChange={setMode}
+      />
+
+      {/* Folder Picker Dialog */}
+      <FolderPicker
+        open={folderPickerOpen}
+        onOpenChange={setFolderPickerOpen}
+        onSelect={handleFolderPickerSelect}
       />
     </div>
   );
