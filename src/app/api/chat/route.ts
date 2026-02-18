@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
     if (session.title === 'New Chat') {
       const firstLine = content.split('\n')[0].trim();
       const hasCJK = /[\u3000-\u9fff\uac00-\ud7af\uf900-\ufaff]/.test(firstLine);
-      const limit = hasCJK ? 20 : 40;
+      const limit = hasCJK ? 10 : 15;
       const title = firstLine.length > limit
         ? firstLine.slice(0, limit) + '…'
         : firstLine || content.slice(0, limit);
