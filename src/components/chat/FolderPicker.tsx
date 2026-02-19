@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Folder01Icon, FolderOpenIcon, ArrowRight01Icon, ArrowUp01Icon, StarIcon, StarOffIcon } from "@hugeicons/core-free-icons";
 import { Button } from '@/components/ui/button';
@@ -121,8 +121,27 @@ export function FolderPicker({ open, onOpenChange, onSelect, initialPath }: Fold
     if (parentDir) browse(parentDir);
   };
 
+  // Debounced auto-browse: update directory list as user types
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handlePathChange = (value: string) => {
+    setPathInput(value);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      const trimmed = value.trim();
+      if (trimmed && trimmed !== currentDir) {
+        browse(trimmed);
+      }
+    }, 400);
+  };
+
+  // Cleanup debounce on unmount
+  useEffect(() => {
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, []);
+
   const handlePathSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (debounceRef.current) clearTimeout(debounceRef.current);
     if (pathInput.trim()) {
       browse(pathInput.trim());
     }
@@ -144,7 +163,7 @@ export function FolderPicker({ open, onOpenChange, onSelect, initialPath }: Fold
         <form onSubmit={handlePathSubmit} className="flex gap-2">
           <Input
             value={pathInput}
-            onChange={(e) => setPathInput(e.target.value)}
+            onChange={(e) => handlePathChange(e.target.value)}
             placeholder="/path/to/project"
             className="flex-1 font-mono text-sm"
           />
