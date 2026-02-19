@@ -85,7 +85,7 @@ export function FolderPicker({ open, onOpenChange, onSelect, initialPath }: Fold
     } catch { /* silent */ }
   }, [isFavorite]);
 
-  const browse = useCallback(async (dir?: string) => {
+  const browse = useCallback(async (dir?: string, { updateInput = true }: { updateInput?: boolean } = {}) => {
     setLoading(true);
     try {
       const url = dir
@@ -97,7 +97,7 @@ export function FolderPicker({ open, onOpenChange, onSelect, initialPath }: Fold
         setCurrentDir(data.current);
         setParentDir(data.parent);
         setDirectories(data.directories);
-        setPathInput(data.current);
+        if (updateInput) setPathInput(data.current);
         setDrives(data.drives || []);
       }
     } catch {
@@ -129,7 +129,7 @@ export function FolderPicker({ open, onOpenChange, onSelect, initialPath }: Fold
     debounceRef.current = setTimeout(() => {
       const trimmed = value.trim();
       if (trimmed && trimmed !== currentDir) {
-        browse(trimmed);
+        browse(trimmed, { updateInput: false });
       }
     }, 400);
   };
