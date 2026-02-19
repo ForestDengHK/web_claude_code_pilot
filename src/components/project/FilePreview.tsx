@@ -6,8 +6,8 @@ import { ArrowLeft01Icon, Copy01Icon, Tick01Icon, Loading02Icon } from "@hugeico
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
-import { atomOneDark } from "react-syntax-highlighter/dist/esm/styles/hljs";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { usePanel } from "@/hooks/usePanel";
 import type { FilePreview as FilePreviewType } from "@/types";
 
@@ -117,7 +117,7 @@ export function FilePreview({ filePath, onBack }: FilePreviewProps) {
           <div className="rounded-md border border-border text-xs">
             <SyntaxHighlighter
               language={preview.language}
-              style={atomOneDark}
+              style={oneDark}
               showLineNumbers
               customStyle={{
                 margin: 0,
@@ -129,7 +129,7 @@ export function FilePreview({ filePath, onBack }: FilePreviewProps) {
               lineNumberStyle={{
                 minWidth: "2.5em",
                 paddingRight: "8px",
-                color: "#636d83",
+                color: "#3a3a48",
                 userSelect: "none",
               }}
             >

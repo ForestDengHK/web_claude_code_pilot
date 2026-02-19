@@ -17,6 +17,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { ChevronRightIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ImageLightbox } from '@/components/chat/ImageLightbox';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -114,6 +115,43 @@ function getFilePath(input: unknown): string {
 function truncatePath(path: string, maxLen = 50): string {
   if (path.length <= maxLen) return path;
   return '...' + path.slice(path.length - maxLen + 3);
+}
+
+// ---------------------------------------------------------------------------
+// Image detection
+// ---------------------------------------------------------------------------
+
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.avif', '.bmp', '.ico'];
+
+function isImagePath(path: string): boolean {
+  const lower = path.toLowerCase();
+  return IMAGE_EXTENSIONS.some(ext => lower.endsWith(ext));
+}
+
+function ImagePreview({ filePath }: { filePath: string }) {
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const src = `/api/files/raw?path=${encodeURIComponent(filePath)}`;
+
+  return (
+    <>
+      <div className="pl-6 py-1">
+        <button
+          type="button"
+          onClick={() => setLightboxOpen(true)}
+          className="rounded-lg overflow-hidden hover:opacity-80 transition"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={src} alt={extractFilename(filePath)} className="max-h-32 rounded-lg" />
+        </button>
+      </div>
+      <ImageLightbox
+        images={[{ src, alt: extractFilename(filePath) }]}
+        initialIndex={0}
+        open={lightboxOpen}
+        onOpenChange={setLightboxOpen}
+      />
+    </>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -224,12 +262,17 @@ export function ToolActionsGroup({
   streamingToolOutput: _streamingToolOutput,
 }: ToolActionsGroupProps) {
   const hasRunningTool = tools.some((t) => t.result === undefined);
+  const hasImageWrite = tools.some((t) => {
+    const cat = getToolCategory(t.name);
+    const fp = getFilePath(t.input);
+    return cat === 'write' && fp && isImagePath(fp) && t.result !== undefined;
+  });
 
   // Track whether user has manually toggled and their chosen state
   const [userExpandedState, setUserExpandedState] = useState<boolean | null>(null);
 
-  // Derived: if user has toggled, use their choice; otherwise auto-expand based on streaming state
-  const expanded = userExpandedState !== null ? userExpandedState : (hasRunningTool || isStreaming);
+  // Derived: if user has toggled, use their choice; otherwise auto-expand based on streaming state or image writes
+  const expanded = userExpandedState !== null ? userExpandedState : (hasRunningTool || isStreaming || hasImageWrite);
 
   if (tools.length === 0) return null;
 
@@ -296,9 +339,18 @@ export function ToolActionsGroup({
               transition={{ duration: 0.12, ease: 'easeOut' }}
             >
               <div className="ml-1.5 mt-0.5 border-l-2 border-border/50 pl-2">
-                {tools.map((tool, i) => (
-                  <ToolActionRow key={tool.id || `tool-${i}`} tool={tool} />
-                ))}
+                {tools.map((tool, i) => {
+                  const category = getToolCategory(tool.name);
+                  const filePath = getFilePath(tool.input);
+                  const status = getStatus(tool);
+                  const showImage = category === 'write' && filePath && isImagePath(filePath) && status !== 'running';
+                  return (
+                    <div key={tool.id || `tool-${i}`}>
+                      <ToolActionRow tool={tool} />
+                      {showImage && <ImagePreview filePath={filePath} />}
+                    </div>
+                  );
+                })}
               </div>
             </motion.div>
           </motion.div>

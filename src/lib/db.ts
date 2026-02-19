@@ -355,6 +355,13 @@ export function addMessage(
   return db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as Message;
 }
 
+export function getAllMessages(sessionId: string): Message[] {
+  const db = getDb();
+  return db.prepare(
+    'SELECT * FROM messages WHERE session_id = ? ORDER BY rowid ASC'
+  ).all(sessionId) as Message[];
+}
+
 export function clearSessionMessages(sessionId: string): void {
   const db = getDb();
   db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);

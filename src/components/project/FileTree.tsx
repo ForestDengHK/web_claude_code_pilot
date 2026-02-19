@@ -15,7 +15,19 @@ import {
 import type { ReactNode } from "react";
 
 const PREVIEWABLE_EXTENSIONS = new Set([
+  // Markup & data
   "md", "mdx", "html", "htm", "json", "yaml", "yml", "toml", "csv", "tsv", "svg", "xml",
+  // Code
+  "js", "jsx", "ts", "tsx", "mjs", "cjs",
+  "py", "rb", "go", "rs", "java", "kt", "swift", "c", "cpp", "h", "hpp", "cs",
+  "php", "dart", "lua", "zig", "vue", "svelte",
+  // Config & scripting
+  "sh", "bash", "zsh", "fish", "ps1", "bat", "cmd",
+  "sql", "graphql", "gql", "prisma",
+  "css", "scss", "less", "sass",
+  "dockerfile", "makefile", "cmake",
+  "ini", "cfg", "conf", "env", "properties",
+  "txt", "log", "gitignore", "editorconfig",
 ]);
 
 interface FileTreeProps {

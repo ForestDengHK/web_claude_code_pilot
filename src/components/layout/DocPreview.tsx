@@ -6,9 +6,9 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { Cancel01Icon, Copy01Icon, Tick01Icon, Loading02Icon, ArrowExpandIcon, ArrowShrinkIcon } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
-import { atomOneDark } from "react-syntax-highlighter/dist/esm/styles/hljs";
-import { atomOneLight } from "react-syntax-highlighter/dist/esm/styles/hljs";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { Streamdown } from "streamdown";
 import { cjk } from "@streamdown/cjk";
 import { code } from "@streamdown/code";
@@ -251,7 +251,7 @@ function SourceView({ preview, isDark }: { preview: FilePreviewType; isDark: boo
     <div className="text-xs">
       <SyntaxHighlighter
         language={preview.language}
-        style={isDark ? atomOneDark : atomOneLight}
+        style={isDark ? oneDark : oneLight}
         showLineNumbers
         customStyle={{
           margin: 0,

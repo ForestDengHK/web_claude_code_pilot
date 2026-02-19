@@ -18,6 +18,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { cn } from '@/lib/utils';
 import { CodeBlock } from './CodeBlock';
+import { ImageLightbox } from './ImageLightbox';
 
 type ToolStatus = 'running' | 'success' | 'error';
 
@@ -94,6 +95,39 @@ function getFilePath(input: unknown): string {
   const inp = input as Record<string, unknown> | undefined;
   if (!inp) return '';
   return (inp.file_path || inp.path || inp.filePath || '') as string;
+}
+
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.avif', '.bmp', '.ico'];
+
+function isImagePath(path: string): boolean {
+  const lower = path.toLowerCase();
+  return IMAGE_EXTENSIONS.some(ext => lower.endsWith(ext));
+}
+
+function ImageThumbnail({ filePath }: { filePath: string }) {
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const src = `/api/files/raw?path=${encodeURIComponent(filePath)}`;
+
+  return (
+    <>
+      <div className="mt-2">
+        <button
+          type="button"
+          onClick={() => setLightboxOpen(true)}
+          className="rounded-lg overflow-hidden hover:opacity-80 transition"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={src} alt={extractFilename(filePath)} className="max-h-40 rounded-lg" />
+        </button>
+      </div>
+      <ImageLightbox
+        images={[{ src, alt: extractFilename(filePath) }]}
+        initialIndex={0}
+        open={lightboxOpen}
+        onOpenChange={setLightboxOpen}
+      />
+    </>
+  );
 }
 
 function StatusIndicator({ status }: { status: ToolStatus }) {
@@ -186,19 +220,26 @@ export function ToolCallBlock({
         const diff = renderDiff(input);
         const inp = input as Record<string, unknown> | undefined;
         const content = (inp?.content || inp?.new_source || inp?.new_string || '') as string;
+        const showImagePreview = filePath && isImagePath(filePath) && status !== 'running';
 
         return (
           <div className="space-y-2">
             {filePath && (
               <div className="text-xs text-muted-foreground font-mono px-1">{filePath}</div>
             )}
-            {diff}
-            {!diff && content && (
-              <CodeBlock
-                code={content.slice(0, 5000)}
-                language={guessLanguageFromPath(filePath)}
-                showLineNumbers={true}
-              />
+            {showImagePreview ? (
+              <ImageThumbnail filePath={filePath} />
+            ) : (
+              <>
+                {diff}
+                {!diff && content && (
+                  <CodeBlock
+                    code={content.slice(0, 5000)}
+                    language={guessLanguageFromPath(filePath)}
+                    showLineNumbers={true}
+                  />
+                )}
+              </>
             )}
             {result && (
               <div className="text-xs text-muted-foreground px-1 mt-1">{result.slice(0, 500)}</div>
