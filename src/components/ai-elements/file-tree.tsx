@@ -18,6 +18,7 @@ import {
   FolderOpenIcon,
   MinusIcon,
   PlusIcon,
+  Trash2Icon,
 } from "lucide-react";
 import {
   createContext,
@@ -36,6 +37,7 @@ interface FileTreeContextType {
   onRemove?: (path: string) => void;
   onPreview?: (path: string) => void;
   onDownload?: (path: string) => void;
+  onDelete?: (path: string) => void;
   attachedPaths?: Set<string>;
 }
 
@@ -58,6 +60,7 @@ export type FileTreeProps = HTMLAttributes<HTMLDivElement> & {
   onRemove?: (path: string) => void;
   onPreview?: (path: string) => void;
   onDownload?: (path: string) => void;
+  onDelete?: (path: string) => void;
   onExpandedChange?: (expanded: Set<string>) => void;
   attachedPaths?: Set<string>;
 };
@@ -71,6 +74,7 @@ export const FileTree = ({
   onRemove,
   onPreview,
   onDownload,
+  onDelete,
   onExpandedChange,
   attachedPaths,
   className,
@@ -95,8 +99,8 @@ export const FileTree = ({
   );
 
   const contextValue = useMemo(
-    () => ({ attachedPaths, expandedPaths, onAdd, onDownload, onPreview, onRemove, onSelect, selectedPath, togglePath }),
-    [attachedPaths, expandedPaths, onAdd, onDownload, onPreview, onRemove, onSelect, selectedPath, togglePath]
+    () => ({ attachedPaths, expandedPaths, onAdd, onDelete, onDownload, onPreview, onRemove, onSelect, selectedPath, togglePath }),
+    [attachedPaths, expandedPaths, onAdd, onDelete, onDownload, onPreview, onRemove, onSelect, selectedPath, togglePath]
   );
 
   return (
@@ -252,7 +256,7 @@ export const FileTreeFile = ({
   children,
   ...props
 }: FileTreeFileProps) => {
-  const { selectedPath, onSelect, onAdd, onRemove, onPreview, onDownload, attachedPaths } = useContext(FileTreeContext);
+  const { selectedPath, onSelect, onAdd, onRemove, onPreview, onDownload, onDelete, attachedPaths } = useContext(FileTreeContext);
   const isSelected = selectedPath === path;
   const isAttached = attachedPaths?.has(path) ?? false;
 
@@ -297,6 +301,14 @@ export const FileTreeFile = ({
     [onDownload, path]
   );
 
+  const handleDelete = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onDelete?.(path);
+    },
+    [onDelete, path]
+  );
+
   const fileContextValue = useMemo(() => ({ name, path }), [name, path]);
 
   return (
@@ -333,7 +345,7 @@ export const FileTreeFile = ({
                 </span>
               );
             })()}
-            {(onPreview || onDownload || onAdd) && (
+            {(onPreview || onDownload || onDelete || onAdd) && (
               <span className="ml-auto flex shrink-0 items-center">
                 <button
                   type="button"
@@ -364,6 +376,16 @@ export const FileTreeFile = ({
                     title="Download file"
                   >
                     <DownloadIcon className="size-4 text-muted-foreground md:size-3" />
+                  </button>
+                )}
+                {onDelete && (
+                  <button
+                    type="button"
+                    className="flex size-8 items-center justify-center rounded transition-opacity hover:bg-red-500/10 md:size-5 md:opacity-0 md:group-hover/file:opacity-100"
+                    onClick={handleDelete}
+                    title="Delete file"
+                  >
+                    <Trash2Icon className="size-4 text-muted-foreground hover:text-red-500 md:size-3" />
                   </button>
                 )}
                 {onAdd && (

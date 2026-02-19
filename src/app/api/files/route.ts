@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import os from 'os';
+import fs from 'fs/promises';
 import { scanDirectory, isPathSafe, isRootPath } from '@/lib/files';
 import type { FileTreeResponse, ErrorResponse } from '@/types';
 
@@ -57,6 +58,66 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     return NextResponse.json<ErrorResponse>(
       { error: error instanceof Error ? error.message : 'Failed to scan directory' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  const { searchParams } = request.nextUrl;
+  const filePath = searchParams.get('path');
+  const baseDir = searchParams.get('baseDir');
+
+  if (!filePath) {
+    return NextResponse.json<ErrorResponse>(
+      { error: 'Missing path parameter' },
+      { status: 400 }
+    );
+  }
+
+  if (!baseDir) {
+    return NextResponse.json<ErrorResponse>(
+      { error: 'Missing baseDir parameter' },
+      { status: 400 }
+    );
+  }
+
+  const resolvedPath = path.resolve(filePath);
+  const resolvedBase = path.resolve(baseDir);
+
+  if (isRootPath(resolvedBase)) {
+    return NextResponse.json<ErrorResponse>(
+      { error: 'Cannot use filesystem root as base directory' },
+      { status: 403 }
+    );
+  }
+
+  if (!isPathSafe(resolvedBase, resolvedPath)) {
+    return NextResponse.json<ErrorResponse>(
+      { error: 'File is outside the project scope' },
+      { status: 403 }
+    );
+  }
+
+  // Prevent deleting the project root itself
+  if (resolvedPath === resolvedBase) {
+    return NextResponse.json<ErrorResponse>(
+      { error: 'Cannot delete the project root directory' },
+      { status: 403 }
+    );
+  }
+
+  try {
+    const stat = await fs.stat(resolvedPath);
+    if (stat.isDirectory()) {
+      await fs.rm(resolvedPath, { recursive: true });
+    } else {
+      await fs.unlink(resolvedPath);
+    }
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return NextResponse.json<ErrorResponse>(
+      { error: error instanceof Error ? error.message : 'Failed to delete file' },
       { status: 500 }
     );
   }

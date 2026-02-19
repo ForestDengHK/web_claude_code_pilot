@@ -5,6 +5,16 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { RefreshIcon, Search01Icon, SourceCodeIcon, CodeIcon, File01Icon } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import type { FileTreeNode } from "@/types";
 import {
@@ -128,6 +138,8 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [attachedPaths, setAttachedPaths] = useState<Set<string>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchTree = useCallback(async () => {
     if (!workingDirectory) {
@@ -172,6 +184,25 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
     window.addEventListener('attached-files-changed', handler);
     return () => window.removeEventListener('attached-files-changed', handler);
   }, []);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!deleteTarget || !workingDirectory) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(
+        `/api/files?path=${encodeURIComponent(deleteTarget)}&baseDir=${encodeURIComponent(workingDirectory)}`,
+        { method: 'DELETE' }
+      );
+      if (res.ok) {
+        fetchTree();
+      }
+    } catch {
+      // silently fail
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
+    }
+  }, [deleteTarget, workingDirectory, fetchTree]);
 
   // Build default expanded set from first-level directories
   const defaultExpanded = new Set(
@@ -241,12 +272,41 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
               a.click();
               a.remove();
             }}
+            onDelete={(filePath: string) => setDeleteTarget(filePath)}
             className="border-0 rounded-none"
           >
             <RenderTreeNodes nodes={tree} searchQuery={searchQuery} />
           </AIFileTree>
         )}
       </div>
+
+      {/* Delete confirmation dialog */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-base">Delete file</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>This will permanently delete:</p>
+                <p className="rounded bg-muted px-2 py-1 font-mono text-xs text-foreground break-all">
+                  {deleteTarget?.split("/").pop()}
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel size="sm" disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              size="sm"
+              variant="destructive"
+              onClick={handleDeleteConfirm}
+              disabled={deleting}
+            >
+              {deleting ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -33,6 +33,7 @@ interface DocPreviewProps {
 const RENDERABLE_EXTENSIONS = new Set([
   ".md", ".mdx", ".html", ".htm",
   ".json", ".csv", ".tsv", ".svg", ".xml", ".yaml", ".yml",
+  ".pdf",
 ]);
 
 function getExtension(filePath: string): string {
@@ -62,6 +63,10 @@ function isSvg(filePath: string): boolean {
   return getExtension(filePath) === ".svg";
 }
 
+function isPdf(filePath: string): boolean {
+  return getExtension(filePath) === ".pdf";
+}
+
 export function DocPreview({
   filePath,
   viewMode,
@@ -78,7 +83,15 @@ export function DocPreview({
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
+  const isPdfFile = isPdf(filePath);
+
   useEffect(() => {
+    // PDFs are binary — skip text preview fetch
+    if (isPdfFile) {
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
 
     async function loadPreview() {
@@ -111,7 +124,7 @@ export function DocPreview({
     return () => {
       cancelled = true;
     };
-  }, [filePath]);
+  }, [filePath, isPdfFile]);
 
   const handleCopyContent = async () => {
     const text = preview?.content || filePath;
@@ -150,7 +163,7 @@ export function DocPreview({
           <p className="truncate text-sm font-medium">{fileName}</p>
         </div>
 
-        {canRender && (
+        {canRender && !isPdfFile && (
           <ViewModeToggle value={viewMode} onChange={onViewModeChange} />
         )}
 
@@ -199,6 +212,8 @@ export function DocPreview({
           <div className="px-4 py-8 text-center">
             <p className="text-sm text-destructive">{error}</p>
           </div>
+        ) : isPdfFile ? (
+          <PdfRenderedView filePath={filePath} />
         ) : preview ? (
           viewMode === "rendered" && canRender ? (
             <RenderedView content={preview.content} filePath={filePath} />
@@ -304,6 +319,10 @@ function RenderedView({
 
   if (isSvg(filePath)) {
     return <SvgRenderedView content={content} />;
+  }
+
+  if (isPdf(filePath)) {
+    return <PdfRenderedView filePath={filePath} />;
   }
 
   const ext = getExtension(filePath);
@@ -540,6 +559,19 @@ function SvgRenderedView({ content }: { content: string }) {
       sandbox=""
       className="h-full w-full border-0"
       title="SVG Preview"
+    />
+  );
+}
+
+/* ── PDF Rendered View (browser built-in viewer) ── */
+
+function PdfRenderedView({ filePath }: { filePath: string }) {
+  const src = `/api/files/raw?path=${encodeURIComponent(filePath)}`;
+  return (
+    <iframe
+      src={src}
+      className="h-full w-full border-0"
+      title="PDF Preview"
     />
   );
 }
