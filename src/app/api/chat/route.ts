@@ -11,8 +11,8 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
-    const body: SendMessageRequest & { files?: FileAttachment[]; toolTimeout?: number; skillPrompt?: string } = await request.json();
-    const { session_id, content, model, mode, files, toolTimeout, skillPrompt } = body;
+    const body: SendMessageRequest & { files?: FileAttachment[]; toolTimeout?: number } = await request.json();
+    const { session_id, content, model, mode, files, toolTimeout } = body;
 
     if (!session_id || !content) {
       return new Response(JSON.stringify({ error: 'session_id and content are required' }), {
@@ -97,8 +97,9 @@ export async function POST(request: NextRequest) {
         break;
     }
 
-    // Skill content goes into system prompt (not user message), matching Claude Code CLI behavior
-    const systemPromptOverride = skillPrompt || session.system_prompt || undefined;
+    // Skill content is now injected directly into the user message as <command-name> blocks
+    // (matching Claude Code CLI behavior). Only session-level system_prompt is used here.
+    const systemPromptOverride = session.system_prompt || undefined;
 
     const abortController = new AbortController();
 

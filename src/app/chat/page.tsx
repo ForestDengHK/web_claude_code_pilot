@@ -120,7 +120,7 @@ export default function NewChatPage() {
   }, [pendingPermission, setPendingApprovalSessionId]);
 
   const sendFirstMessage = useCallback(
-    async (content: string, _files?: unknown, skillPrompt?: string) => {
+    async (content: string, _files?: unknown, skillInfo?: { name: string; content: string }) => {
       if (isStreaming) return;
 
       // Require a project directory before sending
@@ -135,6 +135,13 @@ export default function NewChatPage() {
         };
         setMessages((prev) => [...prev, hint]);
         return;
+      }
+
+      // When a skill is active, inject its content into the API message as a
+      // <command-name> block (matching Claude Code CLI behavior).
+      let apiContent = content;
+      if (skillInfo) {
+        apiContent = `<command-name>${skillInfo.name}</command-name>\n\n${skillInfo.content}\n\nUser request: ${content}`;
       }
 
       setIsStreaming(true);
@@ -173,7 +180,7 @@ export default function NewChatPage() {
         // Notify ChatListPanel to refresh immediately
         window.dispatchEvent(new CustomEvent('session-created'));
 
-        // Add user message to UI
+        // Add user message to UI (display clean user text, not the skill-wrapped version)
         const userMessage: Message = {
           id: 'temp-' + Date.now(),
           session_id: session.id,
@@ -184,11 +191,11 @@ export default function NewChatPage() {
         };
         setMessages([userMessage]);
 
-        // Send the message via streaming API
+        // Send the message via streaming API (apiContent includes skill wrapper if applicable)
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: session.id, content, mode, model: currentModel, ...(skillPrompt ? { skillPrompt } : {}) }),
+          body: JSON.stringify({ session_id: session.id, content: apiContent, mode, model: currentModel }),
           signal: controller.signal,
         });
 

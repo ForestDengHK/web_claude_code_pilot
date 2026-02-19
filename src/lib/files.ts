@@ -12,7 +12,6 @@ const IGNORED_DIRS = new Set([
   '.turbo',
   'coverage',
   '.output',
-  'build',
 ]);
 
 const LANGUAGE_MAP: Record<string, string> = {

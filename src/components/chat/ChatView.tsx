@@ -128,7 +128,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   // Ref to keep accumulated streaming content in sync regardless of React batching
   const accumulatedRef = useRef('');
   // Ref for sendMessage to allow self-referencing in timeout auto-retry without circular deps
-  const sendMessageRef = useRef<(content: string, files?: FileAttachment[], skillPrompt?: string) => Promise<void>>(undefined);
+  const sendMessageRef = useRef<(content: string, files?: FileAttachment[], skillInfo?: { name: string; content: string }) => Promise<void>>(undefined);
   // Wake Lock sentinel — keeps the screen on during streaming to prevent socket death on screen-off
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   // Independent AbortController for the SSE read loop only (not the backend Claude process).
@@ -411,12 +411,20 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   }, [pendingPermission, setPendingApprovalSessionId]);
 
   const sendMessage = useCallback(
-    async (content: string, files?: FileAttachment[], skillPrompt?: string) => {
+    async (content: string, files?: FileAttachment[], skillInfo?: { name: string; content: string }) => {
       if (isStreaming) return;
 
       // Cancel any ongoing recovery from a previous disconnection
       if (recoveryActiveRef.current) {
         stopRecovery();
+      }
+
+      // When a skill is active, inject its content into the API message as a
+      // <command-name> block — this matches how Claude Code CLI loads skills
+      // via the Skill tool.  The display message stays clean (just user text).
+      let apiContent = content;
+      if (skillInfo) {
+        apiContent = `<command-name>${skillInfo.name}</command-name>\n\n${skillInfo.content}\n\nUser request: ${content}`;
       }
 
       // Build display content: embed file metadata as HTML comment for MessageItem to parse
@@ -458,11 +466,10 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             session_id: sessionId,
-            content,
+            content: apiContent,
             mode,
             model: currentModel,
             ...(files && files.length > 0 ? { files } : {}),
-            ...(skillPrompt ? { skillPrompt } : {}),
           }),
           signal: controller.signal,
         });

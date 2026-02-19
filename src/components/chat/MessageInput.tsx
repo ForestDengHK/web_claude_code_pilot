@@ -46,7 +46,7 @@ import { nanoid } from 'nanoid';
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
 interface MessageInputProps {
-  onSend: (content: string, files?: FileAttachment[], skillPrompt?: string) => void;
+  onSend: (content: string, files?: FileAttachment[], skillInfo?: { name: string; content: string }) => void;
   onCommand?: (command: string) => void;
   onStop?: () => void;
   disabled?: boolean;
@@ -670,12 +670,13 @@ export function MessageInput({
           return;
         }
 
-        // Check skills cache — pass skill content as system prompt, not user message
+        // Check skills cache — pass skill name + content so ChatView can inject
+        // it into the message as a <command-name> block (matching Claude Code CLI behavior)
         const skillContent = skillsCacheRef.current.get(commandName);
         if (skillContent) {
-          const displayText = userInput || `/${commandName}`;
+          const displayText = userInput ? `/${commandName} ${userInput}` : `/${commandName}`;
           setInputValue('');
-          onSend(displayText, hasFiles ? files : undefined, skillContent);
+          onSend(displayText, hasFiles ? files : undefined, { name: commandName, content: skillContent });
           return;
         }
       }
