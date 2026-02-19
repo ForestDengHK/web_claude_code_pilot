@@ -3,7 +3,7 @@
 
 **Claude Code 的 Web GUI** -- 通过可视化界面进行对话、编码和项目管理，无需在终端中操作。自托管在你自己的机器上，可从任何浏览器访问（包括通过 Tailscale 从手机访问）。
 
-[English](./README.md) | [日本語](./README_JA.md)
+[English](./README.md)
 
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](#)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -66,8 +66,8 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/op7418/CodePilot.git
-cd CodePilot
+git clone https://github.com/ForestDengHK/web_claude_code_pilot.git
+cd web_claude_code_pilot
 
 # 安装依赖
 npm install
@@ -111,10 +111,10 @@ PORT=4000 node .next/standalone/codepilot-server.js
   <key>ProgramArguments</key>
   <array>
     <string>/opt/homebrew/bin/node</string>
-    <string>/path/to/CodePilot/.next/standalone/codepilot-server.js</string>
+    <string>/path/to/web_claude_code_pilot/.next/standalone/codepilot-server.js</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/path/to/CodePilot</string>
+  <string>/path/to/web_claude_code_pilot</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PORT</key>
@@ -136,7 +136,7 @@ PORT=4000 node .next/standalone/codepilot-server.js
 </plist>
 ```
 
-> 将 `/path/to/CodePilot` 和 `/Users/YOU` 替换为你的实际路径。如果不是使用 Homebrew 安装的 Node，请调整 `node` 路径（`which node`）。
+> 将 `/path/to/web_claude_code_pilot` 和 `/Users/YOU` 替换为你的实际路径。如果不是使用 Homebrew 安装的 Node，请调整 `node` 路径（`which node`）。
 
 **2. 服务管理命令：**
 
@@ -162,7 +162,7 @@ tail -f ~/.codepilot/service.error.log
 **3. 代码变更后**（更新并重启）：
 
 ```bash
-cd /path/to/CodePilot
+cd /path/to/web_claude_code_pilot
 git pull                  # 或进行你的修改
 npm install               # 如果依赖有变化
 npm run build             # 重新构建生产包
@@ -200,7 +200,7 @@ rm ~/Library/LaunchAgents/com.codepilot.web.plist
 ## 项目结构
 
 ```
-codepilot/
+web_claude_code_pilot/
 ├── .github/workflows/      # CI/CD：构建和自动发版
 ├── src/
 │   ├── app/                 # Next.js App Router 页面和 API 路由
@@ -209,26 +209,35 @@ codepilot/
 │   │   ├── settings/        # 设置编辑器
 │   │   └── api/             # REST + SSE 接口
 │   │       ├── chat/        # 会话、消息、流式传输、权限
+│   │       ├── claude-sessions/ # CLI 会话导入
+│   │       ├── favorites/   # 文件夹收藏增删改查
 │   │       ├── files/       # 文件树和预览
+│   │       ├── models/      # 从 SDK 获取模型列表
 │   │       ├── plugins/     # 插件和 MCP 增删改查
+│   │       ├── providers/   # API 提供商管理
 │   │       ├── settings/    # 设置读写
 │   │       ├── skills/      # 技能增删改查
-│   │       └── tasks/       # 任务追踪
+│   │       ├── tasks/       # 任务追踪
+│   │       └── uploads/     # 文件上传处理
 │   ├── components/
 │   │   ├── ai-elements/     # 消息气泡、代码块、工具调用等
 │   │   ├── chat/            # ChatView、MessageList、MessageInput、流式消息
 │   │   ├── layout/          # AppShell、NavRail、BottomNav、RightPanel
 │   │   ├── plugins/         # MCP 服务器列表和编辑器
 │   │   ├── project/         # FileTree、FilePreview、TaskList
+│   │   ├── settings/        # 设置页面组件
 │   │   ├── skills/          # SkillsManager、SkillEditor
 │   │   └── ui/              # 基于 Radix 的基础组件（button、dialog、tabs...）
-│   ├── hooks/               # 自定义 React Hooks（usePanel 等）
+│   ├── hooks/               # 自定义 React Hooks（usePanel、useSSEStream 等）
 │   ├── lib/                 # 核心逻辑
-│   │   ├── claude-client.ts # Agent SDK 流式封装
-│   │   ├── db.ts            # SQLite 数据库、迁移、CRUD
-│   │   ├── files.ts         # 文件系统工具函数
+│   │   ├── abort-registry.ts       # 流式中断控制器注册表
+│   │   ├── claude-client.ts        # Agent SDK 流式封装
+│   │   ├── claude-session-parser.ts # CLI 会话导入解析器
+│   │   ├── db.ts                   # SQLite 数据库、迁移、CRUD
+│   │   ├── files.ts                # 文件系统工具函数
 │   │   ├── permission-registry.ts  # 权限请求/响应桥接
-│   │   └── utils.ts         # 通用工具函数
+│   │   ├── platform.ts             # 平台检测工具
+│   │   └── utils.ts                # 通用工具函数
 │   └── types/               # TypeScript 接口和 API 类型定义
 ├── codepilot-server.js      # standalone 服务器入口（加载 shell 环境）
 ├── package.json
@@ -263,7 +272,7 @@ git push origin v0.8.1
 ### 说明
 
 - standalone 服务器（`codepilot-server.js`）会加载用户的 shell 环境以获取 `ANTHROPIC_API_KEY`、`PATH` 等
-- 聊天数据存储在 `~/.codepilot/codepilot.db`（开发模式下为 `./data/`）
+- 聊天数据存储在 `~/.codepilot/codepilot.db`（可通过 `CLAUDE_GUI_DATA_DIR` 环境变量覆盖）
 - 应用使用 SQLite WAL 模式，并发读取性能优秀
 
 ### 故障排除

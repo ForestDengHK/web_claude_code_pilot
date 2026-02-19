@@ -20,8 +20,8 @@ interface RightPanelProps {
 export function RightPanel({ width }: RightPanelProps) {
   const { panelOpen, setPanelOpen, workingDirectory, previewFile, setPreviewFile, setPreviewViewMode } = usePanel();
 
-  const handleFileAdd = useCallback((path: string) => {
-    window.dispatchEvent(new CustomEvent('attach-file-to-chat', { detail: { path } }));
+  const handleFileAdd = useCallback((path: string, isDirectory?: boolean) => {
+    window.dispatchEvent(new CustomEvent('attach-file-to-chat', { detail: { path, isDirectory: isDirectory ?? false } }));
   }, []);
 
   const handleFileRemove = useCallback((path: string) => {

@@ -31,21 +31,41 @@ export async function POST(request: NextRequest) {
 
     // Save user message — persist file metadata so attachments survive page reload
     let savedContent = content;
+
+    // Separate path references (from file tree +) from real uploads
+    const PATH_REF_TYPES = new Set(['text/x-directory-ref', 'text/x-file-ref']);
+    const pathRefFiles = files?.filter(f => PATH_REF_TYPES.has(f.type)) || [];
+    const uploadFiles = files?.filter(f => !PATH_REF_TYPES.has(f.type)) || [];
+
+    // Decode original paths from path-ref files (content is the disk path)
+    const pathRefs = pathRefFiles.map(f => ({
+      id: f.id,
+      name: f.name,
+      type: f.type,
+      originalPath: Buffer.from(f.data, 'base64').toString('utf-8'),
+    }));
+
     let fileMeta: Array<{ id: string; name: string; type: string; size: number; filePath: string }> | undefined;
-    if (files && files.length > 0) {
+    if (uploadFiles.length > 0) {
       const workDir = session.working_directory;
       const uploadDir = path.join(workDir, '.codepilot-uploads');
       if (!fs.existsSync(uploadDir)) {
         fs.mkdirSync(uploadDir, { recursive: true });
       }
-      fileMeta = files.map((f) => {
+      fileMeta = uploadFiles.map((f) => {
         const safeName = path.basename(f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
         const filePath = path.join(uploadDir, `${Date.now()}-${safeName}`);
         const buffer = Buffer.from(f.data, 'base64');
         fs.writeFileSync(filePath, buffer);
         return { id: f.id, name: f.name, type: f.type, size: buffer.length, filePath };
       });
-      savedContent = `<!--files:${JSON.stringify(fileMeta)}-->${content}`;
+    }
+    if ((fileMeta && fileMeta.length > 0) || pathRefs.length > 0) {
+      const allMeta = [
+        ...(fileMeta || []),
+        ...pathRefs.map(r => ({ id: r.id, name: r.name, type: r.type, size: 0, filePath: r.originalPath })),
+      ];
+      savedContent = `<!--files:${JSON.stringify(allMeta)}-->${content}`;
     }
     addMessage(session_id, 'user', savedContent);
 
@@ -93,18 +113,30 @@ export async function POST(request: NextRequest) {
     // Convert file attachments to the format expected by streamClaude.
     // Include filePath from the already-saved files so claude-client can
     // reference the on-disk copies instead of writing them again.
-    const fileAttachments: FileAttachment[] | undefined = files && files.length > 0
-      ? files.map((f, i) => {
-          const meta = fileMeta?.find((m: { id: string }) => m.id === f.id);
-          return {
-            id: f.id || `file-${Date.now()}-${i}`,
-            name: f.name,
-            type: f.type,
-            size: f.size,
-            data: f.data,
-            filePath: meta?.filePath,
-          };
-        })
+    // Path references (from tree +) carry originalPath and need no disk copy.
+    const allFiles = [
+      ...uploadFiles.map((f, i) => {
+        const meta = fileMeta?.find((m: { id: string }) => m.id === f.id);
+        return {
+          id: f.id || `file-${Date.now()}-${i}`,
+          name: f.name,
+          type: f.type,
+          size: f.size,
+          data: f.data,
+          filePath: meta?.filePath,
+        };
+      }),
+      ...pathRefs.map((r) => ({
+        id: r.id,
+        name: r.name,
+        type: r.type,
+        size: 0,
+        data: '',
+        filePath: r.originalPath,
+      })),
+    ];
+    const fileAttachments: FileAttachment[] | undefined = allFiles.length > 0
+      ? allFiles
       : undefined;
 
     // Stream Claude response, using SDK session ID for resume if available

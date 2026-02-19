@@ -330,6 +330,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       abortControllerRef.current = controller;
 
       let accumulated = '';
+      let toolCount = 0;
 
       try {
         const response = await fetch('/api/chat', {
@@ -368,6 +369,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             setStreamingContent(acc);
           },
           onToolUse: (tool) => {
+            toolCount++;
             setStreamingToolOutput('');
             setToolUses((prev) => {
               if (prev.some((t) => t.id === tool.id)) return prev;
@@ -417,12 +419,14 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         accumulated = result.accumulated;
 
         // Add the assistant message to the list
-        if (accumulated.trim()) {
+        const finalContent = accumulated.trim()
+          || (toolCount > 0 ? '*(Task completed with tool activity but no text response)*' : '');
+        if (finalContent) {
           const assistantMessage: Message = {
             id: 'temp-assistant-' + Date.now(),
             session_id: sessionId,
             role: 'assistant',
-            content: accumulated.trim(),
+            content: finalContent,
             created_at: new Date().toISOString(),
             token_usage: result.tokenUsage ? JSON.stringify(result.tokenUsage) : null,
           };

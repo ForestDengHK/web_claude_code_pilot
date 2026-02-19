@@ -6,7 +6,7 @@
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](#)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-[中文文档](./README_CN.md) | [日本語](./README_JA.md)
+[中文文档](./README_CN.md)
 
 > **Fork notice:** This project is forked from [op7418/CodePilot](https://github.com/op7418/CodePilot) (MIT License). The original project is a desktop Electron app. This fork removes Electron and rebuilds it as a standalone Next.js web server, with significant changes listed below.
 
@@ -66,8 +66,8 @@ This fork diverges from the original CodePilot with the following major changes:
 
 ```bash
 # Clone the repository
-git clone https://github.com/op7418/CodePilot.git
-cd CodePilot
+git clone https://github.com/ForestDengHK/web_claude_code_pilot.git
+cd web_claude_code_pilot
 
 # Install dependencies
 npm install
@@ -111,10 +111,10 @@ To run Web Claude Code Pilot as a persistent background service that auto-starts
   <key>ProgramArguments</key>
   <array>
     <string>/opt/homebrew/bin/node</string>
-    <string>/path/to/CodePilot/.next/standalone/codepilot-server.js</string>
+    <string>/path/to/web_claude_code_pilot/.next/standalone/codepilot-server.js</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/path/to/CodePilot</string>
+  <string>/path/to/web_claude_code_pilot</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PORT</key>
@@ -136,7 +136,7 @@ To run Web Claude Code Pilot as a persistent background service that auto-starts
 </plist>
 ```
 
-> Replace `/path/to/CodePilot` and `/Users/YOU` with your actual paths. Adjust the `node` path if not using Homebrew (`which node`).
+> Replace `/path/to/web_claude_code_pilot` and `/Users/YOU` with your actual paths. Adjust the `node` path if not using Homebrew (`which node`).
 
 **2. Service management commands:**
 
@@ -162,7 +162,7 @@ tail -f ~/.codepilot/service.error.log
 **3. After code changes** (update & restart):
 
 ```bash
-cd /path/to/CodePilot
+cd /path/to/web_claude_code_pilot
 git pull                  # or make your changes
 npm install               # if dependencies changed
 npm run build             # rebuild production bundle
@@ -200,7 +200,7 @@ rm ~/Library/LaunchAgents/com.codepilot.web.plist
 ## Project Structure
 
 ```
-codepilot/
+web_claude_code_pilot/
 ├── .github/workflows/      # CI/CD: build & auto-release
 ├── src/
 │   ├── app/                 # Next.js App Router pages & API routes
@@ -209,26 +209,35 @@ codepilot/
 │   │   ├── settings/        # Settings editor
 │   │   └── api/             # REST + SSE endpoints
 │   │       ├── chat/        # Sessions, messages, streaming, permissions
+│   │       ├── claude-sessions/ # CLI session import
+│   │       ├── favorites/   # Folder favorites CRUD
 │   │       ├── files/       # File tree & preview
+│   │       ├── models/      # Model list from SDK
 │   │       ├── plugins/     # Plugin & MCP CRUD
+│   │       ├── providers/   # API provider management
 │   │       ├── settings/    # Settings read/write
 │   │       ├── skills/      # Skill CRUD
-│   │       └── tasks/       # Task tracking
+│   │       ├── tasks/       # Task tracking
+│   │       └── uploads/     # File upload handling
 │   ├── components/
 │   │   ├── ai-elements/     # Message bubbles, code blocks, tool calls, etc.
 │   │   ├── chat/            # ChatView, MessageList, MessageInput, streaming
 │   │   ├── layout/          # AppShell, NavRail, BottomNav, RightPanel
 │   │   ├── plugins/         # MCP server list & editor
 │   │   ├── project/         # FileTree, FilePreview, TaskList
+│   │   ├── settings/        # Settings page components
 │   │   ├── skills/          # SkillsManager, SkillEditor
 │   │   └── ui/              # Radix-based primitives (button, dialog, tabs, ...)
-│   ├── hooks/               # Custom React hooks (usePanel, ...)
+│   ├── hooks/               # Custom React hooks (usePanel, useSSEStream, ...)
 │   ├── lib/                 # Core logic
-│   │   ├── claude-client.ts # Agent SDK streaming wrapper
-│   │   ├── db.ts            # SQLite schema, migrations, CRUD
-│   │   ├── files.ts         # File system helpers
+│   │   ├── abort-registry.ts       # Streaming abort controller registry
+│   │   ├── claude-client.ts        # Agent SDK streaming wrapper
+│   │   ├── claude-session-parser.ts # CLI session import parser
+│   │   ├── db.ts                   # SQLite schema, migrations, CRUD
+│   │   ├── files.ts                # File system helpers
 │   │   ├── permission-registry.ts  # Permission request/response bridge
-│   │   └── utils.ts         # Shared utilities
+│   │   ├── platform.ts             # Platform detection utilities
+│   │   └── utils.ts                # Shared utilities
 │   └── types/               # TypeScript interfaces & API contracts
 ├── codepilot-server.js      # Standalone server entry (loads shell env)
 ├── package.json
@@ -263,7 +272,7 @@ git push origin v0.8.1
 ### Notes
 
 - The standalone server (`codepilot-server.js`) loads the user's shell environment to pick up `ANTHROPIC_API_KEY`, `PATH`, etc.
-- Chat data is stored in `~/.codepilot/codepilot.db` (or `./data/codepilot.db` in dev mode).
+- Chat data is stored in `~/.codepilot/codepilot.db` (override with `CLAUDE_GUI_DATA_DIR` env var).
 - The app uses WAL mode for SQLite, so concurrent reads are fast.
 
 ### Troubleshooting

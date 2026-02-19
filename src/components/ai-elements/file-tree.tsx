@@ -32,7 +32,7 @@ interface FileTreeContextType {
   togglePath: (path: string) => void;
   selectedPath?: string;
   onSelect?: (path: string) => void;
-  onAdd?: (path: string) => void;
+  onAdd?: (path: string, isDirectory?: boolean) => void;
   onRemove?: (path: string) => void;
   onPreview?: (path: string) => void;
   onDownload?: (path: string) => void;
@@ -54,7 +54,7 @@ export type FileTreeProps = HTMLAttributes<HTMLDivElement> & {
   defaultExpanded?: Set<string>;
   selectedPath?: string;
   onSelect?: (path: string) => void;
-  onAdd?: (path: string) => void;
+  onAdd?: (path: string, isDirectory?: boolean) => void;
   onRemove?: (path: string) => void;
   onPreview?: (path: string) => void;
   onDownload?: (path: string) => void;
@@ -139,13 +139,26 @@ export const FileTreeFolder = ({
   children,
   ...props
 }: FileTreeFolderProps) => {
-  const { expandedPaths, togglePath } =
+  const { expandedPaths, togglePath, onAdd, onRemove, attachedPaths } =
     useContext(FileTreeContext);
   const isExpanded = expandedPaths.has(path);
+  const isAttached = attachedPaths?.has(path) ?? false;
 
   const handleToggle = useCallback(() => {
     togglePath(path);
   }, [togglePath, path]);
+
+  const handleAdd = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (isAttached) {
+        onRemove?.(path);
+      } else {
+        onAdd?.(path, true);
+      }
+    },
+    [onAdd, onRemove, path, isAttached]
+  );
 
   const folderContextValue = useMemo(
     () => ({ isExpanded, name, path }),
@@ -162,7 +175,7 @@ export const FileTreeFolder = ({
           {...props}
         >
           <div
-            className="flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors hover:bg-muted/50"
+            className="group/folder flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors hover:bg-muted/50"
           >
             <CollapsibleTrigger asChild>
               <button
@@ -186,6 +199,25 @@ export const FileTreeFolder = ({
               )}
             </FileTreeIcon>
             <FileTreeName>{name}</FileTreeName>
+            {onAdd && (
+              <span className="ml-auto flex shrink-0 items-center">
+                <button
+                  type="button"
+                  className={cn(
+                    "flex size-8 items-center justify-center rounded transition-opacity hover:bg-muted md:size-5",
+                    isAttached ? "opacity-100" : "md:opacity-0 md:group-hover/folder:opacity-100"
+                  )}
+                  onClick={handleAdd}
+                  title={isAttached ? "Remove folder from chat" : "Add folder to chat"}
+                >
+                  {isAttached ? (
+                    <MinusIcon className="size-4 text-orange-500 md:size-3" />
+                  ) : (
+                    <PlusIcon className="size-4 text-muted-foreground md:size-3" />
+                  )}
+                </button>
+              </span>
+            )}
           </div>
           <CollapsibleContent>
             <div className="ml-4 border-l pl-2">{children}</div>

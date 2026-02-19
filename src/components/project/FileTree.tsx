@@ -21,7 +21,7 @@ const PREVIEWABLE_EXTENSIONS = new Set([
 interface FileTreeProps {
   workingDirectory: string;
   onFileSelect: (path: string) => void;
-  onFileAdd?: (path: string) => void;
+  onFileAdd?: (path: string, isDirectory?: boolean) => void;
   onFileRemove?: (path: string) => void;
   onFilePreview?: (path: string) => void;
 }

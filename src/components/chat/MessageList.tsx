@@ -85,7 +85,7 @@ export function MessageList({
     return (
       <div className="flex flex-1 items-center justify-center">
         <ConversationEmptyState
-          title="Claude Chat"
+          title="Web Claude Code Pilot"
           description="Start a conversation with Claude. Ask questions, get help with code, or explore ideas."
           icon={<CodePilotLogo className="h-16 w-16" />}
         />

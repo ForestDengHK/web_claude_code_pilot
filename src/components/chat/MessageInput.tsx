@@ -42,18 +42,8 @@ import type { ChatStatus } from 'ai';
 import type { FileAttachment } from '@/types';
 import { nanoid } from 'nanoid';
 
-// Accepted file types for upload
-const ACCEPTED_FILE_TYPES = [
-  'image/jpeg', 'image/png', 'image/gif', 'image/webp',
-  'application/pdf',
-  'text/*',
-  '.md', '.json', '.csv', '.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs',
-].join(',');
-
-// Max file sizes
-const MAX_IMAGE_SIZE = 5 * 1024 * 1024;  // 5MB
-const MAX_DOC_SIZE = 10 * 1024 * 1024;   // 10MB
-const MAX_FILE_SIZE = MAX_DOC_SIZE;       // Use larger limit; we validate per-type in conversion
+// Max file size — generous limit since files are saved to disk and read by Claude Code tools
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
 interface MessageInputProps {
   onSend: (content: string, files?: FileAttachment[], skillPrompt?: string) => void;
@@ -280,25 +270,24 @@ function FileTreeAttachmentBridge() {
   // Listen for attach events
   useEffect(() => {
     const handler = async (e: Event) => {
-      const customEvent = e as CustomEvent<{ path: string }>;
+      const customEvent = e as CustomEvent<{ path: string; isDirectory?: boolean }>;
       const filePath = customEvent.detail?.path;
+      const isDirectory = customEvent.detail?.isDirectory ?? false;
       if (!filePath) return;
 
       // Already attached — ignore duplicate
       if (pathToIdRef.current.has(filePath)) return;
 
       try {
-        const res = await fetch(`/api/files/raw?path=${encodeURIComponent(filePath)}`);
-        if (!res.ok) {
-          console.warn(`[FileTreeAttachment] Failed to fetch file: ${res.status} ${res.statusText}`, filePath);
-          return;
-        }
-        const blob = await res.blob();
-        const filename = filePath.split(/[/\\]/).pop() || 'file';
-        const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+        // Both files and directories from the tree: create a lightweight path reference.
+        // No need to fetch content — Claude Code subprocess reads from disk directly.
+        // The MIME type marks it as a reference so the API can handle it appropriately.
+        const baseName = filePath.split(/[/\\]/).pop() || (isDirectory ? 'directory' : 'file');
+        const filename = isDirectory ? `${baseName}/` : baseName;
+        const mimeType = isDirectory ? 'text/x-directory-ref' : 'text/x-file-ref';
+        const file = new File([filePath], filename, { type: mimeType });
+
         attachmentsRef.current.add([file]);
-        // After add, find the new attachment by matching the latest entry
-        // The add is async-ish (setState), so we defer the id lookup
         setTimeout(() => {
           const files = attachmentsRef.current.files;
           const match = files.find(f => f.filename === filename && !pathToIdRef.current.has(filePath));
@@ -309,7 +298,7 @@ function FileTreeAttachmentBridge() {
           }
         }, 100);
       } catch (err) {
-        console.warn('[FileTreeAttachment] Error attaching file:', filePath, err);
+        console.warn('[FileTreeAttachment] Error attaching:', filePath, err);
       }
     };
 
@@ -641,9 +630,7 @@ export function MessageInput({
             file.mediaType || 'application/octet-stream',
           );
           // Enforce per-type size limits
-          const isImage = attachment.type.startsWith('image/');
-          const sizeLimit = isImage ? MAX_IMAGE_SIZE : MAX_DOC_SIZE;
-          if (attachment.size <= sizeLimit) {
+          if (attachment.size <= MAX_FILE_SIZE) {
             attachments.push(attachment);
           }
         } catch {
@@ -908,7 +895,6 @@ export function MessageInput({
           {/* PromptInput replaces the old input area */}
           <PromptInput
             onSubmit={handleSubmit}
-            accept={ACCEPTED_FILE_TYPES}
             multiple
             maxFileSize={MAX_FILE_SIZE}
           >

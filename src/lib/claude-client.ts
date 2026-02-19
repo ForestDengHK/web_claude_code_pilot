@@ -12,6 +12,7 @@ import type {
   McpSSEServerConfig,
   McpHttpServerConfig,
   McpServerConfig,
+  SdkPluginConfig,
   NotificationHookInput,
   PostToolUseHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
@@ -82,6 +83,96 @@ function resolveScriptFromCmd(cmdPath: string): string | undefined {
     // ignore read errors
   }
   return undefined;
+}
+
+/**
+ * Read installed plugins from ~/.claude/plugins/installed_plugins.json
+ * and return them as SDK-compatible local plugin configs.
+ *
+ * The SDK uses the directory basename as the plugin name. Since install paths
+ * end with a version hash (e.g. .../document-skills/69c0b1a06741), we create
+ * symlinks under a temp directory with the correct plugin name so skills
+ * register as "document-skills:pdf" instead of "69c0b1a06741:pdf".
+ */
+function getInstalledPlugins(): SdkPluginConfig[] {
+  try {
+    const installedPath = path.join(os.homedir(), '.claude', 'plugins', 'installed_plugins.json');
+    if (!fs.existsSync(installedPath)) return [];
+
+    const data = JSON.parse(fs.readFileSync(installedPath, 'utf-8'));
+    if (!data.plugins || typeof data.plugins !== 'object') return [];
+
+    // Also read enabledPlugins from settings to only load enabled ones
+    const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
+    let enabledPlugins: Record<string, boolean> = {};
+    if (fs.existsSync(settingsPath)) {
+      try {
+        const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+        enabledPlugins = settings.enabledPlugins || {};
+      } catch { /* ignore */ }
+    }
+
+    // Directory for symlinks with correct plugin names
+    const linksDir = path.join(os.homedir(), '.claude', 'plugins', '.codepilot-links');
+    let linksDirReady = false;
+
+    const plugins: SdkPluginConfig[] = [];
+    for (const [pluginKey, entries] of Object.entries(data.plugins)) {
+      // Only load plugins that are enabled in settings
+      if (!enabledPlugins[pluginKey]) continue;
+
+      const entryList = entries as Array<{ installPath?: string }>;
+      if (!Array.isArray(entryList) || entryList.length === 0) continue;
+
+      const installPath = entryList[0].installPath;
+      if (!installPath || !fs.existsSync(installPath)) continue;
+
+      // Extract human-readable plugin name from key (e.g. "document-skills@anthropic-agent-skills" -> "document-skills")
+      const pluginName = pluginKey.split('@')[0];
+      const dirBasename = path.basename(installPath);
+
+      // If basename already matches the plugin name, use directly
+      if (dirBasename === pluginName) {
+        plugins.push({ type: 'local', path: installPath });
+        continue;
+      }
+
+      // Create a symlink: .codepilot-links/<pluginName> -> <installPath>
+      if (!linksDirReady) {
+        if (!fs.existsSync(linksDir)) {
+          fs.mkdirSync(linksDir, { recursive: true });
+        }
+        linksDirReady = true;
+      }
+
+      const linkPath = path.join(linksDir, pluginName);
+      try {
+        // Remove stale symlink if it points elsewhere
+        if (fs.existsSync(linkPath) || fs.lstatSync(linkPath).isSymbolicLink()) {
+          const target = fs.readlinkSync(linkPath);
+          if (target !== installPath) {
+            fs.unlinkSync(linkPath);
+            fs.symlinkSync(installPath, linkPath);
+          }
+        }
+      } catch {
+        // Doesn't exist yet — create it
+        try {
+          fs.symlinkSync(installPath, linkPath);
+        } catch { /* ignore */ }
+      }
+
+      if (fs.existsSync(linkPath)) {
+        plugins.push({ type: 'local', path: linkPath });
+      } else {
+        // Fallback to direct path if symlink creation failed
+        plugins.push({ type: 'local', path: installPath });
+      }
+    }
+    return plugins;
+  } catch {
+    return [];
+  }
 }
 
 let cachedClaudePath: string | null | undefined;
@@ -251,7 +342,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         // Unset CLAUDECODE so Claude Code doesn't think it's being launched inside
         // an existing Claude Code session (which would cause it to exit with code 1).
-        // This happens when CodePilot itself is run from within a Claude Code terminal.
+        // This happens when Web Claude Code Pilot itself is run from within a Claude Code terminal.
         delete sdkEnv.CLAUDECODE;
         delete sdkEnv.CLAUDE_CODE_ENTRYPOINT;
 
@@ -422,6 +513,12 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           queryOptions.mcpServers = toSdkMcpConfig(effectiveMcpServers);
         }
 
+        // Load installed plugins so the subprocess has access to skills, agents, etc.
+        const installedPlugins = getInstalledPlugins();
+        if (installedPlugins.length > 0) {
+          queryOptions.plugins = installedPlugins;
+        }
+
         // Resume session if we have an SDK session ID from a previous conversation turn
         if (sdkSessionId) {
           queryOptions.resume = sdkSessionId;
@@ -512,23 +609,53 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         };
 
         // Build the prompt with file attachments.
+        // Path references (from tree +) → injected as @file/@directory style references.
         // Images → sent as multimodal base64 content blocks (vision).
-        // Non-image files → saved to disk and referenced via Read tool.
+        // Other uploaded files → saved to disk and referenced via Read tool.
         let finalPrompt: string | AsyncIterable<SDKUserMessage> = prompt;
 
         if (files && files.length > 0) {
-          const imageFiles = files.filter(f => isImageFile(f.type));
-          const nonImageFiles = files.filter(f => !isImageFile(f.type));
+          const PATH_REF_TYPES = new Set(['text/x-directory-ref', 'text/x-file-ref']);
+          const pathRefFiles = files.filter(f => PATH_REF_TYPES.has(f.type));
+          const regularFiles = files.filter(f => !PATH_REF_TYPES.has(f.type));
+          const imageFiles = regularFiles.filter(f => isImageFile(f.type));
+          const nonImageFiles = regularFiles.filter(f => !isImageFile(f.type));
 
-          // Save non-image files to disk for Read tool access
+          // Build prompt references
+          const references: string[] = [];
+
+          // Path references: original disk paths, Claude Code reads/explores directly
+          for (const ref of pathRefFiles) {
+            const originalPath = ref.filePath || '';
+            if (ref.type === 'text/x-directory-ref') {
+              references.push(`Directory: ${originalPath}`);
+            } else {
+              references.push(`File: ${originalPath}`);
+            }
+          }
+
+          // Pass attached directories as additionalDirectories so Claude Code
+          // has permission to access paths outside the working directory
+          const dirRefs = pathRefFiles
+            .filter(f => f.type === 'text/x-directory-ref')
+            .map(f => f.filePath || '')
+            .filter(Boolean);
+          if (dirRefs.length > 0) {
+            queryOptions.additionalDirectories = dirRefs;
+          }
+
+          // Uploaded non-image files: saved to disk for Read tool access
           let textPrompt = prompt;
           if (nonImageFiles.length > 0) {
             const workDir = workingDirectory || os.homedir();
             const savedPaths = getUploadedFilePaths(nonImageFiles, workDir);
-            const fileReferences = savedPaths
-              .map((p, i) => `[User attached file: ${p} (${nonImageFiles[i].name})]`)
-              .join('\n');
-            textPrompt = `${fileReferences}\n\nPlease read the attached file(s) above using your Read tool, then respond to the user's message:\n\n${prompt}`;
+            for (let i = 0; i < savedPaths.length; i++) {
+              references.push(`File: ${savedPaths[i]} (${nonImageFiles[i].name})`);
+            }
+          }
+
+          if (references.length > 0) {
+            textPrompt = `The user has attached the following files/directories for context. Use the Read tool to read files and the Glob/LS tools to explore directories:\n\n${references.join('\n')}\n\n${prompt}`;
           }
 
           // If there are images, build a multimodal SDKUserMessage

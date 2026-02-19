@@ -203,6 +203,7 @@ export default function NewChatPage() {
         const decoder = new TextDecoder();
         let accumulated = '';
         let tokenUsage: TokenUsage | null = null;
+        let toolCount = 0;
         let buffer = '';
 
         while (true) {
@@ -228,6 +229,7 @@ export default function NewChatPage() {
                 case 'tool_use': {
                   try {
                     const toolData = JSON.parse(event.data);
+                    toolCount++;
                     setStreamingToolOutput('');
                     setToolUses((prev) => {
                       if (prev.some((t) => t.id === toolData.id)) return prev;
@@ -310,12 +312,14 @@ export default function NewChatPage() {
         }
 
         // Add the completed assistant message
-        if (accumulated.trim()) {
+        const finalContent = accumulated.trim()
+          || (toolCount > 0 ? '*(Task completed with tool activity but no text response)*' : '');
+        if (finalContent) {
           const assistantMessage: Message = {
             id: 'temp-assistant-' + Date.now(),
             session_id: session.id,
             role: 'assistant',
-            content: accumulated.trim(),
+            content: finalContent,
             created_at: new Date().toISOString(),
             token_usage: tokenUsage ? JSON.stringify(tokenUsage) : null,
           };
