@@ -53,7 +53,8 @@ export async function GET(request: NextRequest) {
 
   const buffer = await fs.readFile(resolved);
   const ext = path.extname(resolved).toLowerCase();
-  const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+  const baseMime = MIME_TYPES[ext] || 'application/octet-stream';
+  const contentType = baseMime.startsWith('text/') ? `${baseMime}; charset=utf-8` : baseMime;
 
   return new Response(buffer, {
     headers: {

@@ -25,3 +25,7 @@ export function abortSession(sessionId: string): boolean {
 export function unregisterAbort(sessionId: string): void {
   registry.delete(sessionId);
 }
+
+export function isSessionActive(sessionId: string): boolean {
+  return registry.has(sessionId);
+}

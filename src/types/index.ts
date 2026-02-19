@@ -313,6 +313,7 @@ export type SSEEventType =
   | 'result'             // final result with usage stats
   | 'error'              // error occurred
   | 'permission_request' // permission approval needed
+  | 'heartbeat'          // keepalive signal for connection health
   | 'done';              // stream complete
 
 export interface SSEEvent {

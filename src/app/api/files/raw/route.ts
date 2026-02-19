@@ -111,11 +111,19 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const buffer = await fs.readFile(resolved);
+  let buffer = await fs.readFile(resolved);
   const ext = path.extname(resolved).toLowerCase();
-  const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+  const baseMime = MIME_TYPES[ext] || 'application/octet-stream';
+  const isText = baseMime.startsWith('text/');
+  const contentType = isText ? `${baseMime}; charset=utf-8` : baseMime;
   const isDownload = request.nextUrl.searchParams.get('download') === '1';
   const disposition = isDownload ? 'attachment' : 'inline';
+
+  // Prepend UTF-8 BOM for text file downloads so mobile text editors
+  // can detect the encoding correctly (without BOM, Chinese/Japanese/etc. become garbled)
+  if (isText && isDownload && buffer.length > 0 && !(buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF)) {
+    buffer = Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), buffer]);
+  }
 
   return new Response(buffer, {
     headers: {

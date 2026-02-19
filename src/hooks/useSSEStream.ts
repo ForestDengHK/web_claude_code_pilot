@@ -10,6 +10,7 @@ interface ToolUseInfo {
 interface ToolResultInfo {
   tool_use_id: string;
   content: string;
+  is_error?: boolean;
 }
 
 export interface SSECallbacks {
@@ -22,6 +23,7 @@ export interface SSECallbacks {
   onResult: (usage: TokenUsage | null) => void;
   onPermissionRequest: (data: PermissionRequestEvent) => void;
   onToolTimeout: (toolName: string, elapsedSeconds: number) => void;
+  onHeartbeat?: () => void;
   onError: (accumulated: string) => void;
 }
 
@@ -61,6 +63,7 @@ function handleSSEEvent(
         callbacks.onToolResult({
           tool_use_id: resultData.tool_use_id,
           content: resultData.content,
+          is_error: resultData.is_error,
         });
       } catch {
         // skip malformed tool_result data
@@ -126,6 +129,11 @@ function handleSSEEvent(
       } catch {
         // skip malformed timeout data
       }
+      return accumulated;
+    }
+
+    case 'heartbeat': {
+      callbacks.onHeartbeat?.();
       return accumulated;
     }
 
@@ -237,6 +245,7 @@ export function useSSEStream() {
         onResult: (u) => callbacksRef.current?.onResult(u),
         onPermissionRequest: (d) => callbacksRef.current?.onPermissionRequest(d),
         onToolTimeout: (n, s) => callbacksRef.current?.onToolTimeout(n, s),
+        onHeartbeat: () => callbacksRef.current?.onHeartbeat?.(),
         onError: (a) => callbacksRef.current?.onError(a),
       };
 

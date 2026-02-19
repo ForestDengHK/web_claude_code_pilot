@@ -18,6 +18,36 @@ interface ToolUseInfo {
 interface ToolResultInfo {
   tool_use_id: string;
   content: string;
+  is_error?: boolean;
+}
+
+/** Build message content string: plain text if no tools, structured JSON if tools exist */
+function buildMessageContent(
+  text: string,
+  toolUses: ToolUseInfo[],
+  toolResults: ToolResultInfo[],
+): string {
+  if (toolUses.length === 0) return text;
+
+  const blocks: Array<Record<string, unknown>> = [];
+  if (text) {
+    blocks.push({ type: 'text', text });
+  } else {
+    blocks.push({ type: 'text', text: '*(Task completed with tool activity but no text response)*' });
+  }
+  for (const tool of toolUses) {
+    blocks.push({ type: 'tool_use', id: tool.id, name: tool.name, input: tool.input });
+    const toolResult = toolResults.find((r) => r.tool_use_id === tool.id);
+    if (toolResult) {
+      blocks.push({
+        type: 'tool_result',
+        tool_use_id: toolResult.tool_use_id,
+        content: toolResult.content,
+        is_error: toolResult.is_error || false,
+      });
+    }
+  }
+  return JSON.stringify(blocks);
 }
 
 interface ChatViewProps {
@@ -45,6 +75,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
   const [streamingToolOutput, setStreamingToolOutput] = useState('');
   const toolTimeoutRef = useRef<{ toolName: string; elapsedSeconds: number } | null>(null);
+  // Refs to track tool data for building optimistic message (React state may be stale in async context)
+  const toolUsesRef = useRef<ToolUseInfo[]>([]);
+  const toolResultsRef = useRef<ToolResultInfo[]>([]);
 
   // Search state
   const [searchOpen, setSearchOpen] = useState(false);
@@ -128,32 +161,69 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       recoveryTimerRef.current = null;
     }
     recoveryActiveRef.current = false;
+    // Perform the deferred cleanup that the finally block skipped
+    setIsStreaming(false);
+    setStreamingSessionId('');
+    setStreamingContent('');
+    accumulatedRef.current = '';
+    setToolUses([]);
+    setToolResults([]);
+    toolUsesRef.current = [];
+    toolResultsRef.current = [];
+    setStreamingToolOutput('');
+    setPendingPermission(null);
+    setPermissionResolved(null);
+    setPendingApprovalSessionId('');
+    abortControllerRef.current = null;
+    readerAbortControllerRef.current = null;
+    lastSseDataRef.current = 0;
+    recoveryAbortRef.current = false;
     setStatusText(undefined);
     window.dispatchEvent(new CustomEvent('refresh-file-tree'));
-  }, []);
+  }, [setStreamingSessionId, setPendingApprovalSessionId]);
 
   const startRecovery = useCallback(() => {
+    // Prevent duplicate recovery
+    if (recoveryActiveRef.current) return;
     recoveryActiveRef.current = true;
     setStatusText('Reconnecting...');
-    let attempts = 0;
-    const maxAttempts = 20; // 20 * 3s = 60s
 
     const poll = async () => {
-      attempts++;
-      const done = await recoverMessages();
-      if (done || attempts >= maxAttempts) {
-        stopRecovery();
-        if (!done) {
-          // Last attempt — fetch whatever we have
-          recoverMessages();
+      try {
+        const res = await fetch(`/api/chat/sessions/${sessionId}/status`);
+        if (!res.ok) {
+          setStatusText('Connection lost, retrying...');
+          return;
         }
+        const status: { isProcessing: boolean; pendingPermission: PermissionRequestEvent | null } = await res.json();
+
+        if (!status.isProcessing) {
+          // Claude has finished — fetch final messages and stop recovery
+          await recoverMessages();
+          stopRecovery();
+          return;
+        }
+
+        if (status.pendingPermission) {
+          // Restore the permission dialog so the user can respond
+          setPendingPermission(status.pendingPermission);
+          setPermissionResolved(null);
+          setPendingApprovalSessionId(sessionId);
+          setStatusText('Waiting for permission...');
+          return;
+        }
+
+        // Still processing — update status and keep polling
+        setStatusText('Reconnecting... Claude is still running');
+      } catch {
+        setStatusText('Connection lost, retrying...');
       }
     };
 
     // Immediate first poll
     poll();
     recoveryTimerRef.current = setInterval(poll, 3000);
-  }, [recoverMessages, stopRecovery]);
+  }, [sessionId, recoverMessages, stopRecovery, setPendingApprovalSessionId]);
 
   // Re-sync streaming content when the window regains visibility (browser tab switch)
   useEffect(() => {
@@ -217,6 +287,22 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       wakeLockRef.current?.release().catch(() => {});
       wakeLockRef.current = null;
     }
+  }, [isStreaming]);
+
+  // Foreground heartbeat timeout: if we're streaming and haven't received any
+  // SSE data for 30s (3 missed heartbeats), the connection is dead — trigger recovery
+  useEffect(() => {
+    if (!isStreaming) return;
+    const checkInterval = setInterval(() => {
+      if (lastSseDataRef.current > 0 && Date.now() - lastSseDataRef.current > 30000) {
+        // Connection is dead — abort the reader to trigger recovery
+        if (readerAbortControllerRef.current) {
+          recoveryAbortRef.current = true;
+          readerAbortControllerRef.current.abort();
+        }
+      }
+    }, 5000);
+    return () => clearInterval(checkInterval);
   }, [isStreaming]);
 
   // Cmd/Ctrl+F to open search, Escape to close
@@ -356,6 +442,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       accumulatedRef.current = '';
       setToolUses([]);
       setToolResults([]);
+      toolUsesRef.current = [];
+      toolResultsRef.current = [];
       setStatusText(undefined);
 
       const controller = new AbortController();
@@ -405,13 +493,21 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             setStreamingToolOutput('');
             setToolUses((prev) => {
               if (prev.some((t) => t.id === tool.id)) return prev;
-              return [...prev, tool];
+              const next = [...prev, tool];
+              toolUsesRef.current = next;
+              return next;
             });
           },
           onToolResult: (res) => {
             lastSseDataRef.current = Date.now();
             setStreamingToolOutput('');
-            setToolResults((prev) => [...prev, res]);
+            setToolResults((prev) => {
+              // Deduplicate: tool results can arrive from both PostToolUse hook and user message blocks
+              if (prev.some((r) => r.tool_use_id === res.tool_use_id)) return prev;
+              const next = [...prev, res];
+              toolResultsRef.current = next;
+              return next;
+            });
           },
           onToolOutput: (data) => {
             lastSseDataRef.current = Date.now();
@@ -441,6 +537,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           onToolTimeout: (toolName, elapsedSeconds) => {
             toolTimeoutRef.current = { toolName, elapsedSeconds };
           },
+          onHeartbeat: () => {
+            lastSseDataRef.current = Date.now();
+          },
           onError: (acc) => {
             accumulated = acc;
             accumulatedRef.current = acc;
@@ -450,8 +549,10 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
 
         accumulated = result.accumulated;
 
-        // Add the assistant message to the list
-        const finalContent = accumulated.trim()
+        // Build optimistic assistant message with tool blocks (matching DB JSON format)
+        // so that MessageItem.parseToolBlocks() can render tools after streaming ends
+        const finalText = accumulated.trim();
+        const finalContent = buildMessageContent(finalText, toolUsesRef.current, toolResultsRef.current)
           || (toolCount > 0 ? '*(Task completed with tool activity but no text response)*' : '');
         if (finalContent) {
           const assistantMessage: Message = {
@@ -476,12 +577,13 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           const timeoutInfo = toolTimeoutRef.current;
           if (timeoutInfo) {
             // Tool execution timed out — save partial content and auto-retry
-            if (accumulated.trim()) {
+            if (accumulated.trim() || toolUsesRef.current.length > 0) {
+              const partialText = (accumulated.trim() || '') + `\n\n*(tool ${timeoutInfo.toolName} timed out after ${timeoutInfo.elapsedSeconds}s)*`;
               const partialMessage: Message = {
                 id: 'temp-assistant-' + Date.now(),
                 session_id: sessionId,
                 role: 'assistant',
-                content: accumulated.trim() + `\n\n*(tool ${timeoutInfo.toolName} timed out after ${timeoutInfo.elapsedSeconds}s)*`,
+                content: buildMessageContent(partialText.trim(), toolUsesRef.current, toolResultsRef.current) || partialText.trim(),
                 created_at: new Date().toISOString(),
                 token_usage: null,
               };
@@ -510,12 +612,13 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             return; // Skip the normal finally cleanup since we did it above
           }
           // User manually stopped generation — add partial content
-          if (accumulated.trim()) {
+          if (accumulated.trim() || toolUsesRef.current.length > 0) {
+            const partialText = (accumulated.trim() || '') + '\n\n*(generation stopped)*';
             const partialMessage: Message = {
               id: 'temp-assistant-' + Date.now(),
               session_id: sessionId,
               role: 'assistant',
-              content: accumulated.trim() + '\n\n*(generation stopped)*',
+              content: buildMessageContent(partialText.trim(), toolUsesRef.current, toolResultsRef.current) || partialText.trim(),
               created_at: new Date().toISOString(),
               token_usage: null,
             };
@@ -528,22 +631,30 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         }
       } finally {
         toolTimeoutRef.current = null;
-        setIsStreaming(false);
-        setStreamingSessionId('');
-        setStreamingContent('');
-        accumulatedRef.current = '';
-        setToolUses([]);
-        setToolResults([]);
-        setStreamingToolOutput('');
-        setPendingPermission(null);
-        setPermissionResolved(null);
-        setPendingApprovalSessionId('');
-        abortControllerRef.current = null;
-        readerAbortControllerRef.current = null;
-        lastSseDataRef.current = 0;
-        recoveryAbortRef.current = false;
-        // Don't clear statusText or fire refresh if recovery is active — recovery handles that
-        if (!recoveryActiveRef.current) {
+        if (recoveryActiveRef.current) {
+          // Recovery is active — only clean up internal refs, keep UI state visible
+          // so the user sees "Reconnecting..." and any pending permission dialog.
+          // stopRecovery() will perform the full state cleanup later.
+          abortControllerRef.current = null;
+          readerAbortControllerRef.current = null;
+          recoveryAbortRef.current = false;
+        } else {
+          setIsStreaming(false);
+          setStreamingSessionId('');
+          setStreamingContent('');
+          accumulatedRef.current = '';
+          setToolUses([]);
+          setToolResults([]);
+          toolUsesRef.current = [];
+          toolResultsRef.current = [];
+          setStreamingToolOutput('');
+          setPendingPermission(null);
+          setPermissionResolved(null);
+          setPendingApprovalSessionId('');
+          abortControllerRef.current = null;
+          readerAbortControllerRef.current = null;
+          lastSseDataRef.current = 0;
+          recoveryAbortRef.current = false;
           setStatusText(undefined);
           window.dispatchEvent(new CustomEvent('refresh-file-tree'));
         }

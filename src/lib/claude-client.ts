@@ -320,6 +320,7 @@ function getUploadedFilePaths(files: FileAttachment[], workDir: string): string[
 export function streamClaude(options: ClaudeStreamOptions): ReadableStream<string> {
   const {
     prompt,
+    sessionId,
     sdkSessionId,
     model,
     systemPrompt,
@@ -332,8 +333,20 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
     skipPermissions: skipPermissionsOption,
   } = options;
 
+  let heartbeatInterval: ReturnType<typeof setInterval>;
+
   return new ReadableStream<string>({
     async start(controller) {
+      // Heartbeat: send periodic keepalive so the client can detect dead connections
+      heartbeatInterval = setInterval(() => {
+        try {
+          controller.enqueue(formatSSE({ type: 'heartbeat', data: '' }));
+        } catch {
+          // Controller already closed — clear interval
+          clearInterval(heartbeatInterval);
+        }
+      }, 10000);
+
       try {
         // Build env for the Claude Code subprocess.
         // Start with process.env.
@@ -547,7 +560,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
           // Wait for user response (resolved by POST /api/chat/permission)
           // Store original input so registry can inject updatedInput on allow
-          return registerPendingPermission(permissionRequestId, input, opts.signal);
+          return registerPendingPermission(permissionRequestId, input, opts.signal, sessionId, permEvent);
         };
 
         // Hooks: capture notifications and tool completion events
@@ -838,9 +851,11 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           }
         }
 
+        clearInterval(heartbeatInterval);
         controller.enqueue(formatSSE({ type: 'done', data: '' }));
         controller.close();
       } catch (error) {
+        clearInterval(heartbeatInterval);
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         controller.enqueue(formatSSE({ type: 'error', data: errorMessage }));
         controller.enqueue(formatSSE({ type: 'done', data: '' }));
@@ -849,6 +864,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
     },
 
     cancel() {
+      clearInterval(heartbeatInterval);
       abortController?.abort();
     },
   });
