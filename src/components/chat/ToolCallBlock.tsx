@@ -14,6 +14,7 @@ import {
   Loading02Icon,
   CheckmarkCircle02Icon,
   CancelCircleIcon,
+  Download04Icon,
 } from "@hugeicons/core-free-icons";
 import { cn } from '@/lib/utils';
 import { CodeBlock } from './CodeBlock';
@@ -317,6 +318,23 @@ export function ToolCallBlock({
         )} />
         <span className="font-mono text-xs truncate flex-1 text-foreground/80">{summary}</span>
         <div className="flex items-center gap-2 shrink-0 ml-2">
+          {category === 'write' && filePath && status !== 'running' && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                const url = `/api/files/raw?path=${encodeURIComponent(filePath)}&download=1`;
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = '';
+                a.click();
+              }}
+              className="p-0.5 rounded hover:bg-muted/60 text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+              title="Download file"
+            >
+              <HugeiconsIcon icon={Download04Icon} className="h-3 w-3" />
+            </button>
+          )}
           {duration !== undefined && (
             <span className="text-xs text-muted-foreground">{formatDuration(duration)}</span>
           )}

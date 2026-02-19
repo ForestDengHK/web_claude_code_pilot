@@ -39,6 +39,9 @@ interface MessageListProps {
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
+  highlightMessageIds?: Set<string>;
+  activeMessageId?: string | null;
+  searchQuery?: string;
 }
 
 export function MessageList({
@@ -56,6 +59,9 @@ export function MessageList({
   hasMore,
   loadingMore,
   onLoadMore,
+  highlightMessageIds,
+  activeMessageId,
+  searchQuery,
 }: MessageListProps) {
   // Scroll anchor: preserve position when older messages are prepended
   const anchorIdRef = useRef<string | null>(null);
@@ -108,8 +114,18 @@ export function MessageList({
           </div>
         )}
         {messages.map((message) => (
-          <div key={message.id} id={`msg-${message.id}`}>
-            <MessageItem message={message} />
+          <div
+            key={message.id}
+            id={`msg-${message.id}`}
+            className={
+              highlightMessageIds?.has(message.id)
+                ? activeMessageId === message.id
+                  ? 'ring-2 ring-primary/60 rounded-lg transition-shadow duration-200'
+                  : 'ring-1 ring-primary/30 rounded-lg transition-shadow duration-200'
+                : ''
+            }
+          >
+            <MessageItem message={message} searchQuery={searchQuery} />
           </div>
         ))}
 

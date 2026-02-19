@@ -13,6 +13,7 @@ import {
   Loading02Icon,
   CheckmarkCircle02Icon,
   CancelCircleIcon,
+  Download04Icon,
 } from "@hugeicons/core-free-icons";
 import { ChevronRightIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -143,6 +144,28 @@ function StatusDot({ status }: { status: ToolStatus }) {
 // Compact row for a single tool action
 // ---------------------------------------------------------------------------
 
+function DownloadButton({ filePath }: { filePath: string }) {
+  const handleDownload = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const url = `/api/files/raw?path=${encodeURIComponent(filePath)}&download=1`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '';
+    a.click();
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleDownload}
+      className="p-0.5 rounded hover:bg-muted/60 text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+      title="Download file"
+    >
+      <HugeiconsIcon icon={Download04Icon} className="h-3 w-3" />
+    </button>
+  );
+}
+
 function ToolActionRow({ tool }: { tool: ToolAction }) {
   const category = getToolCategory(tool.name);
   const icon = getToolIcon(category);
@@ -168,6 +191,10 @@ function ToolActionRow({ tool }: { tool: ToolAction }) {
         <span className="text-muted-foreground/40 text-[11px] font-mono truncate max-w-[200px] hidden sm:inline">
           {truncatePath(filePath)}
         </span>
+      )}
+
+      {category === 'write' && filePath && status !== 'running' && (
+        <DownloadButton filePath={filePath} />
       )}
 
       <StatusDot status={status} />

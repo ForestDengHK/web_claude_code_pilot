@@ -13,6 +13,7 @@ import { FileAttachmentDisplay } from './FileAttachmentDisplay';
 
 interface MessageItemProps {
   message: Message;
+  searchQuery?: string;
 }
 
 interface ToolBlock {
@@ -197,9 +198,26 @@ function TokenUsageDisplay({ usage }: { usage: TokenUsage }) {
   );
 }
 
+function HighlightedText({ text, query }: { text: string; query: string }) {
+  if (!query) return <>{text}</>;
+  const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+  const parts = text.split(regex);
+  return (
+    <>
+      {parts.map((part, i) =>
+        regex.test(part) ? (
+          <mark key={i} className="bg-yellow-300/40 dark:bg-yellow-500/30 text-inherit rounded-sm px-0.5">{part}</mark>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
+  );
+}
+
 const COLLAPSE_HEIGHT = 300;
 
-export function MessageItem({ message }: MessageItemProps) {
+export function MessageItem({ message, searchQuery }: MessageItemProps) {
   const isUser = message.role === 'user';
   const { text, tools } = parseToolBlocks(message.content);
   const pairedTools = pairTools(tools);
@@ -270,7 +288,7 @@ export function MessageItem({ message }: MessageItemProps) {
                     : undefined
                 }
               >
-                {displayText}
+                {searchQuery ? <HighlightedText text={displayText} query={searchQuery} /> : displayText}
               </div>
               {isOverflowing && !isExpanded && (
                 <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-secondary to-transparent pointer-events-none" />

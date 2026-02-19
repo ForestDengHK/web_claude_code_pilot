@@ -4,6 +4,8 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { Message, MessagesResponse, PermissionRequestEvent, FileAttachment } from '@/types';
 import { MessageList } from './MessageList';
 import { MessageInput } from './MessageInput';
+import { SearchBar } from './SearchBar';
+import { SearchIcon } from 'lucide-react';
 import { usePanel } from '@/hooks/usePanel';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
 
@@ -43,6 +45,21 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
   const [streamingToolOutput, setStreamingToolOutput] = useState('');
   const toolTimeoutRef = useRef<{ toolName: string; elapsedSeconds: number } | null>(null);
+
+  // Search state
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [highlightMessageIds, setHighlightMessageIds] = useState<Set<string>>(new Set());
+  const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const handleSearchHighlightChange = useCallback(
+    (matchIds: Set<string>, activeId: string | null, query: string) => {
+      setHighlightMessageIds(matchIds);
+      setActiveMessageId(activeId);
+      setSearchQuery(query);
+    },
+    []
+  );
 
   // Stream recovery: when SSE disconnects (mobile tab suspension), poll DB for the response
   const recoveryActiveRef = useRef(false);
@@ -201,6 +218,21 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       wakeLockRef.current = null;
     }
   }, [isStreaming]);
+
+  // Cmd/Ctrl+F to open search, Escape to close
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+        e.preventDefault();
+        setSearchOpen(true);
+      } else if (e.key === 'Escape' && searchOpen) {
+        e.preventDefault();
+        setSearchOpen(false);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [searchOpen]);
 
   const initializedRef = useRef(false);
   useEffect(() => {
@@ -598,7 +630,24 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   }, [sessionId, sendMessage]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col relative">
+      {searchOpen ? (
+        <SearchBar
+          messages={messages}
+          isOpen={searchOpen}
+          onClose={() => setSearchOpen(false)}
+          onHighlightChange={handleSearchHighlightChange}
+        />
+      ) : messages.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setSearchOpen(true)}
+          className="absolute top-2 right-2 z-10 p-1.5 rounded-md bg-background/80 backdrop-blur-sm border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+          title="Search messages (Cmd+F)"
+        >
+          <SearchIcon className="h-3.5 w-3.5" />
+        </button>
+      )}
       <MessageList
         messages={messages}
         streamingContent={streamingContent}
@@ -614,6 +663,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         hasMore={hasMore}
         loadingMore={loadingMore}
         onLoadMore={loadEarlierMessages}
+        highlightMessageIds={highlightMessageIds}
+        activeMessageId={activeMessageId}
+        searchQuery={searchQuery}
       />
       <MessageInput
         onSend={sendMessage}
