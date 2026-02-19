@@ -115,8 +115,8 @@ async function scanDirectoryRecursive(dir: string, depth: number): Promise<FileT
   });
 
   for (const entry of sorted) {
-    // Skip hidden files/dirs (except common config files)
-    if (entry.name.startsWith('.') && !entry.name.startsWith('.env')) {
+    // Skip hidden files/dirs (except common config files and uploads)
+    if (entry.name.startsWith('.') && !entry.name.startsWith('.env') && entry.name !== '.codepilot-uploads') {
       continue;
     }
 
