@@ -7,12 +7,18 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import {
   ChevronRightIcon,
   CopyIcon,
   DownloadIcon,
-  EyeIcon,
+  EllipsisIcon,
   FileIcon,
   FolderIcon,
   FolderOpenIcon,
@@ -27,6 +33,21 @@ import {
   useMemo,
   useState,
 } from "react";
+
+function copyToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text);
+    return;
+  }
+  const el = document.createElement("textarea");
+  el.value = text;
+  el.setAttribute("readonly", "");
+  Object.assign(el.style, { position: "fixed", left: "-9999px" });
+  document.body.appendChild(el);
+  el.select();
+  document.execCommand("copy");
+  document.body.removeChild(el);
+}
 
 interface FileTreeContextType {
   expandedPaths: Set<string>;
@@ -256,7 +277,7 @@ export const FileTreeFile = ({
   children,
   ...props
 }: FileTreeFileProps) => {
-  const { selectedPath, onSelect, onAdd, onRemove, onPreview, onDownload, onDelete, attachedPaths } = useContext(FileTreeContext);
+  const { selectedPath, onSelect, onAdd, onRemove, onDownload, onDelete, attachedPaths } = useContext(FileTreeContext);
   const isSelected = selectedPath === path;
   const isAttached = attachedPaths?.has(path) ?? false;
 
@@ -271,14 +292,6 @@ export const FileTreeFile = ({
       }
     },
     [onSelect, path]
-  );
-
-  const handlePreview = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      onPreview?.(path);
-    },
-    [onPreview, path]
   );
 
   const handleAdd = useCallback(
@@ -345,48 +358,49 @@ export const FileTreeFile = ({
                 </span>
               );
             })()}
-            {(onPreview || onDownload || onDelete || onAdd) && (
+            {(onDownload || onDelete || onAdd) && (
               <span className="ml-auto flex shrink-0 items-center">
                 <button
                   type="button"
                   className="flex size-8 items-center justify-center rounded transition-opacity hover:bg-muted md:size-5 md:opacity-0 md:group-hover/file:opacity-100"
                   onClick={(e) => {
                     e.stopPropagation();
-                    navigator.clipboard.writeText(name);
+                    copyToClipboard(name);
                   }}
                   title="Copy file name"
                 >
                   <CopyIcon className="size-4 text-muted-foreground md:size-3" />
                 </button>
-                {onPreview && (
-                  <button
-                    type="button"
-                    className="flex size-8 items-center justify-center rounded transition-opacity hover:bg-muted md:size-5 md:opacity-0 md:group-hover/file:opacity-100"
-                    onClick={handlePreview}
-                    title="Preview file"
-                  >
-                    <EyeIcon className="size-4 text-muted-foreground md:size-3" />
-                  </button>
-                )}
-                {onDownload && (
-                  <button
-                    type="button"
-                    className="flex size-8 items-center justify-center rounded transition-opacity hover:bg-muted md:size-5 md:opacity-0 md:group-hover/file:opacity-100"
-                    onClick={handleDownload}
-                    title="Download file"
-                  >
-                    <DownloadIcon className="size-4 text-muted-foreground md:size-3" />
-                  </button>
-                )}
-                {onDelete && (
-                  <button
-                    type="button"
-                    className="flex size-8 items-center justify-center rounded transition-opacity hover:bg-red-500/10 md:size-5 md:opacity-0 md:group-hover/file:opacity-100"
-                    onClick={handleDelete}
-                    title="Delete file"
-                  >
-                    <Trash2Icon className="size-4 text-muted-foreground hover:text-red-500 md:size-3" />
-                  </button>
+                {(onDownload || onDelete) && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        className="flex size-8 items-center justify-center rounded transition-opacity hover:bg-muted md:size-5 md:opacity-0 md:group-hover/file:opacity-100"
+                        onClick={(e) => e.stopPropagation()}
+                        title="More actions"
+                      >
+                        <EllipsisIcon className="size-4 text-muted-foreground md:size-3" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="min-w-[140px]">
+                      {onDownload && (
+                        <DropdownMenuItem onClick={handleDownload}>
+                          <DownloadIcon className="size-4" />
+                          Download
+                        </DropdownMenuItem>
+                      )}
+                      {onDelete && (
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onClick={handleDelete}
+                        >
+                          <Trash2Icon className="size-4" />
+                          Delete
+                        </DropdownMenuItem>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 )}
                 {onAdd && (
                   <button

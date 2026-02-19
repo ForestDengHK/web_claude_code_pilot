@@ -8,13 +8,12 @@ import { PlusSignIcon, ListViewIcon, CodeIcon, Loading02Icon } from "@hugeicons/
 import { McpServerList } from "@/components/plugins/McpServerList";
 import { McpServerEditor } from "@/components/plugins/McpServerEditor";
 import { ConfigEditor } from "@/components/plugins/ConfigEditor";
-import { usePanel } from "@/hooks/usePanel";
 import type { MCPServer } from "@/types";
 
-export function McpManager({ workingDir: workingDirProp }: { workingDir?: string } = {}) {
-  // Use prop if provided, otherwise read from app-wide panel context
-  const { workingDirectory: contextWorkingDir } = usePanel();
-  const workingDir = workingDirProp || contextWorkingDir || undefined;
+export function McpManager({ workingDir }: { workingDir?: string } = {}) {
+  // Only use explicitly passed workingDir.
+  // On the Extensions page no dir is passed, so the API discovers all
+  // project directories and returns MCP servers from every project.
   const [servers, setServers] = useState<Record<string, MCPServer>>({});
   const [loading, setLoading] = useState(true);
   const [editorOpen, setEditorOpen] = useState(false);

@@ -19,6 +19,39 @@ function getUserConfigPath(): string {
   return path.join(os.homedir(), '.claude.json');
 }
 
+/**
+ * Discover project directories from multiple sources so we find all .mcp.json files.
+ * Sources:
+ *  - Chat sessions in the CodePilot database
+ *  - ~/.claude/projects/ directory names (Claude Code encodes paths as dir names)
+ */
+function discoverProjectDirs(): string[] {
+  const seen = new Set<string>();
+
+  // 1. From database sessions
+  for (const dir of getAllWorkingDirectories()) {
+    seen.add(dir);
+  }
+
+  // 2. From ~/.claude/projects/ — dir names like "-Users-party-working-boi" → "/Users/party/working/boi"
+  const projectsDir = path.join(os.homedir(), '.claude', 'projects');
+  try {
+    const entries = fs.readdirSync(projectsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && entry.name.startsWith('-')) {
+        const realPath = entry.name.replace(/-/g, path.sep);
+        if (fs.existsSync(realPath)) {
+          seen.add(realPath);
+        }
+      }
+    }
+  } catch {
+    // ~/.claude/projects/ may not exist
+  }
+
+  return Array.from(seen);
+}
+
 function readJsonFile(filePath: string): Record<string, unknown> {
   if (!fs.existsSync(filePath)) return {};
   try {
@@ -57,9 +90,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<MCPConfigR
       ...((settings.mcpServers || {}) as Record<string, MCPServerConfig>),
     };
 
-    // Use explicit dir param, or scan all known project working directories
+    // Use explicit dir param, or discover project directories from:
+    // 1. Chat sessions in the database
+    // 2. ~/.claude/projects/ (Claude Code per-project config dirs encode real paths)
     const explicitDir = request.nextUrl.searchParams.get('dir');
-    const dirs = explicitDir ? [explicitDir] : getAllWorkingDirectories();
+    const dirs = explicitDir ? [explicitDir] : discoverProjectDirs();
     for (const dir of dirs) {
       // Project-level .mcp.json
       const projectMcpJson = readJsonFile(path.join(dir, '.mcp.json'));

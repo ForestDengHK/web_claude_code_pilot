@@ -47,42 +47,39 @@ export function McpServerList({ servers, onEdit, onDelete }: McpServerListProps)
         const typeInfo = getServerTypeInfo(server);
         return (
           <Card key={name}>
-            <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
-              <div className="flex-1 min-w-0 mr-3">
-                <div className="flex items-center gap-2 mb-1">
+            <CardHeader className="space-y-0 pb-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
                   <HugeiconsIcon icon={typeInfo.icon} className={`h-4 w-4 shrink-0 ${typeInfo.color}`} />
-                  <CardTitle className="text-sm font-medium">{name}</CardTitle>
-                  <Badge variant="outline" className="text-xs shrink-0">
+                  <CardTitle className="text-sm font-medium truncate">{name}</CardTitle>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <Badge variant="outline" className="text-xs">
                     {typeInfo.label}
                   </Badge>
-                  <Badge variant="secondary" className="text-xs shrink-0">
-                    Configured
-                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={() => onEdit(name, server)}
+                  >
+                    <HugeiconsIcon icon={PencilIcon} className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-destructive hover:text-destructive"
+                    onClick={() => onDelete(name)}
+                  >
+                    <HugeiconsIcon icon={Delete02Icon} className="h-3.5 w-3.5" />
+                  </Button>
                 </div>
-                <CardDescription className="text-xs mt-1 font-mono">
-                  {server.url
-                    ? server.url
-                    : `${server.command} ${server.args?.join(' ') || ''}`}
-                </CardDescription>
               </div>
-              <div className="flex gap-1 shrink-0">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => onEdit(name, server)}
-                >
-                  <HugeiconsIcon icon={PencilIcon} className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-destructive hover:text-destructive"
-                  onClick={() => onDelete(name)}
-                >
-                  <HugeiconsIcon icon={Delete02Icon} className="h-3.5 w-3.5" />
-                </Button>
-              </div>
+              <CardDescription className="text-xs mt-1.5 font-mono truncate">
+                {server.url
+                  ? server.url
+                  : `${server.command} ${server.args?.join(' ') || ''}`}
+              </CardDescription>
             </CardHeader>
             {(server.env && Object.keys(server.env).length > 0) ||
             (server.args && server.args.length > 0) ? (
