@@ -466,14 +466,26 @@ export const CodeBlockCopyButton = ({
   const { code } = useContext(CodeBlockContext);
 
   const copyToClipboard = useCallback(async () => {
-    if (typeof window === "undefined" || !navigator?.clipboard?.writeText) {
+    if (typeof window === "undefined") {
       onError?.(new Error("Clipboard API not available"));
       return;
     }
 
     try {
       if (!isCopied) {
-        await navigator.clipboard.writeText(code);
+        if (navigator?.clipboard?.writeText) {
+          await navigator.clipboard.writeText(code);
+        } else {
+          // Fallback for non-secure contexts (e.g. HTTP via Tailscale on mobile)
+          const el = document.createElement('textarea');
+          el.value = code;
+          el.setAttribute('readonly', '');
+          Object.assign(el.style, { position: 'fixed', left: '-9999px' });
+          document.body.appendChild(el);
+          el.select();
+          document.execCommand('copy');
+          document.body.removeChild(el);
+        }
         setIsCopied(true);
         onCopy?.();
         timeoutRef.current = window.setTimeout(

@@ -155,16 +155,32 @@ function parseMessageFiles(content: string): { files: FileAttachment[]; text: st
   }
 }
 
+function copyToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text);
+    return;
+  }
+  // Fallback for non-secure contexts (e.g. HTTP via Tailscale on mobile)
+  const el = document.createElement('textarea');
+  el.value = text;
+  el.setAttribute('readonly', '');
+  Object.assign(el.style, { position: 'fixed', left: '-9999px' });
+  document.body.appendChild(el);
+  el.select();
+  document.execCommand('copy');
+  document.body.removeChild(el);
+}
+
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = useCallback(async () => {
+  const handleCopy = useCallback(() => {
     try {
-      await navigator.clipboard.writeText(text);
+      copyToClipboard(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // fallback
+      // ignore
     }
   }, [text]);
 
