@@ -1,11 +1,21 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useTheme } from "next-themes";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Cancel01Icon, Copy01Icon, Tick01Icon, Loading02Icon, ArrowExpandIcon, ArrowShrinkIcon } from "@hugeicons/core-free-icons";
+import { Cancel01Icon, Copy01Icon, Tick01Icon, Loading02Icon, ArrowExpandIcon, ArrowShrinkIcon, PencilEdit02Icon } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -83,7 +93,20 @@ export function DocPreview({
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
+  // Edit mode state
+  const [editing, setEditing] = useState(false);
+  const [editContent, setEditContent] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
   const isPdfFile = isPdf(filePath);
+
+  useEffect(() => {
+    // Reset edit mode when file changes
+    setEditing(false);
+    setEditContent("");
+  }, [filePath]);
 
   useEffect(() => {
     // PDFs are binary — skip text preview fetch
@@ -133,6 +156,52 @@ export function DocPreview({
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleEnterEdit = () => {
+    if (!preview) return;
+    setEditContent(preview.content);
+    setEditing(true);
+    setTimeout(() => textareaRef.current?.focus(), 50);
+  };
+
+  const handleCancelEdit = () => {
+    setEditing(false);
+    setEditContent("");
+  };
+
+  const handleConfirmSave = async () => {
+    setShowConfirm(false);
+    setSaving(true);
+    try {
+      const res = await fetch("/api/files/write", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path: filePath,
+          content: editContent,
+          baseDir: workingDirectory || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to save");
+      }
+      // Update preview with new content
+      const lines = editContent.split("\n");
+      setPreview((prev) =>
+        prev ? { ...prev, content: editContent, line_count: lines.length } : prev
+      );
+      setEditing(false);
+      setEditContent("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save file");
+      setSaving(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const hasChanges = editing && preview && editContent !== preview.content;
+
   const fileName = filePath.split("/").pop() || filePath;
 
   // Build breadcrumb — show last 3 segments
@@ -160,31 +229,65 @@ export function DocPreview({
       {/* Header */}
       <div className="flex h-10 shrink-0 items-center gap-2 px-3">
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">{fileName}</p>
+          <p className="truncate text-sm font-medium">
+            {editing && <span className="text-blue-500 mr-1.5 text-xs font-normal">Editing</span>}
+            {fileName}
+          </p>
         </div>
 
-        {canRender && !isPdfFile && (
-          <ViewModeToggle value={viewMode} onChange={onViewModeChange} />
+        {editing ? (
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleCancelEdit}
+              className="h-6 px-2 text-xs"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setShowConfirm(true)}
+              disabled={saving || !hasChanges}
+              className="h-6 px-2 text-xs"
+            >
+              {saving ? "Saving..." : "Save"}
+            </Button>
+          </>
+        ) : (
+          <>
+            {canRender && !isPdfFile && (
+              <ViewModeToggle value={viewMode} onChange={onViewModeChange} />
+            )}
+
+            {preview && !loading && !error && !isPdfFile && (
+              <Button variant="ghost" size="icon-sm" onClick={handleEnterEdit} title="Edit file">
+                <HugeiconsIcon icon={PencilEdit02Icon} className="h-3.5 w-3.5" />
+                <span className="sr-only">Edit file</span>
+              </Button>
+            )}
+
+            <Button variant="ghost" size="icon-sm" onClick={handleCopyContent}>
+              {copied ? (
+                <HugeiconsIcon icon={Tick01Icon} className="h-3.5 w-3.5 text-green-500" />
+              ) : (
+                <HugeiconsIcon icon={Copy01Icon} className="h-3.5 w-3.5" />
+              )}
+              <span className="sr-only">Copy content</span>
+            </Button>
+
+            <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setExpanded(!expanded)}>
+              <HugeiconsIcon icon={expanded ? ArrowShrinkIcon : ArrowExpandIcon} className="h-3.5 w-3.5" />
+              <span className="sr-only">{expanded ? "Shrink preview" : "Expand preview"}</span>
+            </Button>
+
+            <Button variant="ghost" size="icon-sm" onClick={onClose}>
+              <HugeiconsIcon icon={Cancel01Icon} className="h-3.5 w-3.5" />
+              <span className="sr-only">Close preview</span>
+            </Button>
+          </>
         )}
-
-        <Button variant="ghost" size="icon-sm" onClick={handleCopyContent}>
-          {copied ? (
-            <HugeiconsIcon icon={Tick01Icon} className="h-3.5 w-3.5 text-green-500" />
-          ) : (
-            <HugeiconsIcon icon={Copy01Icon} className="h-3.5 w-3.5" />
-          )}
-          <span className="sr-only">Copy content</span>
-        </Button>
-
-        <Button variant="ghost" size="icon-sm" className="hidden md:inline-flex" onClick={() => setExpanded(!expanded)}>
-          <HugeiconsIcon icon={expanded ? ArrowShrinkIcon : ArrowExpandIcon} className="h-3.5 w-3.5" />
-          <span className="sr-only">{expanded ? "Shrink preview" : "Expand preview"}</span>
-        </Button>
-
-        <Button variant="ghost" size="icon-sm" onClick={onClose}>
-          <HugeiconsIcon icon={Cancel01Icon} className="h-3.5 w-3.5" />
-          <span className="sr-only">Close preview</span>
-        </Button>
       </div>
 
       {/* Breadcrumb + language — subtle, no border */}
@@ -201,7 +304,18 @@ export function DocPreview({
 
       {/* Content */}
       <div className="flex-1 min-h-0 overflow-auto">
-        {loading ? (
+        {editing ? (
+          <textarea
+            ref={textareaRef}
+            value={editContent}
+            onChange={(e) => setEditContent(e.target.value)}
+            spellCheck={false}
+            className={cn(
+              "h-full w-full resize-none border-0 p-3 font-mono text-xs leading-relaxed focus:outline-none",
+              isDark ? "bg-[#282c34] text-[#abb2bf]" : "bg-white text-[#383a42]"
+            )}
+          />
+        ) : loading ? (
           <div className="flex items-center justify-center py-12">
             <HugeiconsIcon
               icon={Loading02Icon}
@@ -222,6 +336,26 @@ export function DocPreview({
           )
         ) : null}
       </div>
+
+      {/* Save confirmation dialog */}
+      <AlertDialog open={showConfirm} onOpenChange={setShowConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Save changes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will overwrite{" "}
+              <span className="font-mono text-foreground">{fileName}</span> on
+              disk. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmSave}>
+              Save
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
