@@ -113,7 +113,6 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
   const router = useRouter();
   const { streamingSessionId, pendingApprovalSessionId } = usePanel();
   const [sessions, setSessions] = useState<ChatSession[]>([]);
-  const [hoveredSession, setHoveredSession] = useState<string | null>(null);
   const [deletingSession, setDeletingSession] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -455,7 +454,6 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                     <div className="mt-0.5 flex flex-col gap-0.5">
                       {group.sessions.map((session) => {
                         const isActive = pathname === `/chat/${session.id}`;
-                        const isHovered = hoveredSession === session.id;
                         const isDeleting = deletingSession === session.id;
                         const isSessionStreaming =
                           streamingSessionId === session.id;
@@ -466,10 +464,6 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                           <div
                             key={session.id}
                             className="group relative"
-                            onMouseEnter={() =>
-                              setHoveredSession(session.id)
-                            }
-                            onMouseLeave={() => setHoveredSession(null)}
                           >
                             <Link
                               href={`/chat/${session.id}`}
@@ -508,32 +502,34 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                                 </span>
                               </div>
                             </Link>
-                            {(isHovered || isDeleting) && (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon-xs"
-                                    className="absolute right-1 top-1 bg-sidebar text-muted-foreground/60 hover:text-destructive"
-                                    onClick={(e) =>
-                                      handleDeleteSession(e, session.id)
-                                    }
-                                    disabled={isDeleting}
-                                  >
-                                    <HugeiconsIcon
-                                      icon={Delete02Icon}
-                                      className="h-3 w-3"
-                                    />
-                                    <span className="sr-only">
-                                      Delete session
-                                    </span>
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent side="right">
-                                  Delete
-                                </TooltipContent>
-                              </Tooltip>
-                            )}
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  className={cn(
+                                    "absolute right-1 top-1 bg-sidebar text-muted-foreground/60 hover:text-destructive transition-opacity",
+                                    "opacity-100 md:opacity-0 md:group-hover:opacity-100",
+                                    isDeleting && "opacity-100"
+                                  )}
+                                  onClick={(e) =>
+                                    handleDeleteSession(e, session.id)
+                                  }
+                                  disabled={isDeleting}
+                                >
+                                  <HugeiconsIcon
+                                    icon={Delete02Icon}
+                                    className="h-3 w-3"
+                                  />
+                                  <span className="sr-only">
+                                    Delete session
+                                  </span>
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="right">
+                                Delete
+                              </TooltipContent>
+                            </Tooltip>
                           </div>
                         );
                       })}
