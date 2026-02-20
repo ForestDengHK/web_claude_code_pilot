@@ -1,6 +1,10 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* Scan Streamdown's dist for Tailwind classes (list-inside, list-decimal, etc.)
+   that are not present in our own source code */
+@source "../../node_modules/streamdown/dist";
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
