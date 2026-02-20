@@ -11,6 +11,34 @@ import { ResizeHandle } from "./ResizeHandle";
 import { DocPreview } from "./DocPreview";
 import { PanelContext, type PanelContent, type PreviewViewMode } from "@/hooks/usePanel";
 
+/** Polyfill navigator.clipboard.writeText for non-secure contexts (HTTP via Tailscale on mobile). */
+function installClipboardPolyfill() {
+  if (window.isSecureContext) return;
+  const fallbackCopy = (text: string): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const el = document.createElement("textarea");
+      el.value = text;
+      el.setAttribute("readonly", "");
+      el.style.fontSize = "16px";
+      Object.assign(el.style, { position: "fixed", left: "-9999px", top: "0", opacity: "0" });
+      document.body.appendChild(el);
+      el.focus();
+      el.setSelectionRange(0, text.length);
+      let ok = false;
+      try { ok = document.execCommand("copy"); } catch { /* ignore */ }
+      document.body.removeChild(el);
+      ok ? resolve() : reject(new Error("execCommand copy failed"));
+    });
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText = fallbackCopy;
+  } else {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: fallbackCopy } as Clipboard,
+      configurable: true,
+    });
+  }
+}
+
 const CHATLIST_MIN = 180;
 const CHATLIST_MAX = 400;
 const RIGHTPANEL_MIN = 200;
@@ -34,6 +62,9 @@ const MD_BREAKPOINT = 768;
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+
+  // Install clipboard polyfill once on mount (before any user interaction)
+  useEffect(installClipboardPolyfill, []);
 
   const [chatListOpen, setChatListOpenRaw] = useState(false);
 
