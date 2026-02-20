@@ -97,6 +97,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   // Stream recovery: when SSE disconnects (mobile tab suspension), poll DB for the response
   const recoveryActiveRef = useRef(false);
   const recoveryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recoveringMessagesRef = useRef(false); // lock to prevent concurrent recoverMessages calls
 
   const setCurrentModel = useCallback((newModel: string) => {
     setCurrentModelRaw(newModel);
@@ -141,6 +142,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
 
   // Fetch messages from DB and check if the backend has finished
   const recoverMessages = useCallback(async (): Promise<boolean> => {
+    // Prevent concurrent calls (visibility handler + poll interval can race)
+    if (recoveringMessagesRef.current) return false;
+    recoveringMessagesRef.current = true;
     try {
       const res = await fetch(`/api/chat/sessions/${sessionId}/messages?limit=100`);
       if (!res.ok) return false;
@@ -152,6 +156,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       return lastMsg?.role === 'assistant';
     } catch {
       return false;
+    } finally {
+      recoveringMessagesRef.current = false;
     }
   }, [sessionId]);
 
@@ -233,11 +239,18 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         if (accumulatedRef.current) {
           setStreamingContent(accumulatedRef.current);
         }
-        // If recovery polling is already active, nudge it immediately
+        // If recovery polling is already active, check status before fetching messages.
+        // Only fetch messages if Claude is done — avoids replacing the messages array
+        // mid-processing which can cause messages to briefly disappear.
         if (recoveryActiveRef.current) {
-          recoverMessages().then(done => {
-            if (done) stopRecovery();
-          });
+          fetch(`/api/chat/sessions/${sessionId}/status`)
+            .then(res => res.ok ? res.json() : null)
+            .then(status => {
+              if (status && !status.isProcessing) {
+                recoverMessages().then(() => stopRecovery());
+              }
+            })
+            .catch(() => {});
           return;
         }
         // Detect hung SSE reader: if we're still streaming but haven't received
@@ -466,7 +479,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             session_id: sessionId,
-            content: apiContent,
+            content,
+            ...(apiContent !== content ? { prompt: apiContent } : {}),
             mode,
             model: currentModel,
             ...(files && files.length > 0 ? { files } : {}),

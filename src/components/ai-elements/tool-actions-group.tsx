@@ -41,10 +41,11 @@ interface ToolActionsGroupProps {
 // Tool categorisation
 // ---------------------------------------------------------------------------
 
-type ToolCategory = 'read' | 'write' | 'bash' | 'search' | 'other';
+type ToolCategory = 'read' | 'write' | 'bash' | 'search' | 'skill' | 'other';
 
 function getToolCategory(name: string): ToolCategory {
   const lower = name.toLowerCase();
+  if (lower === 'skill') return 'skill';
   if (lower === 'read' || lower === 'readfile' || lower === 'read_file') return 'read';
   if (
     lower === 'write' || lower === 'edit' || lower === 'writefile' ||
@@ -69,6 +70,7 @@ function getToolIcon(category: ToolCategory): IconSvgElement {
     case 'write':  return FileEditIcon;
     case 'bash':   return CommandLineIcon;
     case 'search': return Search01Icon;
+    case 'skill':  return Wrench01Icon;
     case 'other':  return Wrench01Icon;
   }
 }
@@ -100,6 +102,13 @@ function getToolSummary(name: string, input: unknown, category: ToolCategory): s
     case 'search': {
       const pattern = (inp.pattern || inp.query || inp.glob || '') as string;
       return pattern ? `"${pattern.length > 50 ? pattern.slice(0, 47) + '...' : pattern}"` : name;
+    }
+    case 'skill': {
+      const skillName = (inp.skill || inp.name || inp.skill_name || '') as string;
+      const args = (inp.args || '') as string;
+      if (skillName && args) return `/${skillName} ${args.length > 40 ? args.slice(0, 37) + '...' : args}`;
+      if (skillName) return `/${skillName}`;
+      return name;
     }
     default:
       return name;
@@ -211,17 +220,17 @@ function ToolActionRow({ tool }: { tool: ToolAction }) {
   const filePath = getFilePath(tool.input);
   const status = getStatus(tool);
 
-  const label = category === 'bash' ? '' : tool.name;
+  const label = category === 'bash' ? '' : category === 'skill' ? 'Skill' : tool.name;
 
   return (
     <div className="flex items-center gap-2 px-2 py-1 min-h-[28px] text-xs hover:bg-muted/30 rounded-sm transition-colors">
-      <HugeiconsIcon icon={icon} className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <HugeiconsIcon icon={icon} className={cn("h-3.5 w-3.5 shrink-0", category === 'skill' ? "text-blue-500" : "text-muted-foreground")} />
 
       {label && (
-        <span className="font-medium text-muted-foreground shrink-0">{label}</span>
+        <span className={cn("font-medium shrink-0", category === 'skill' ? "text-blue-500" : "text-muted-foreground")}>{label}</span>
       )}
 
-      <span className="font-mono text-muted-foreground/60 truncate flex-1">
+      <span className={cn("font-mono truncate flex-1", category === 'skill' ? "text-blue-500/70" : "text-muted-foreground/60")}>
         {summary}
       </span>
 

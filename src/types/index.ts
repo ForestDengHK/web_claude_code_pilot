@@ -167,6 +167,8 @@ export interface CreateSessionRequest {
 export interface SendMessageRequest {
   session_id: string;
   content: string;
+  /** Prompt sent to Claude (e.g. with skill injection). If omitted, `content` is used. */
+  prompt?: string;
   model?: string;
   mode?: string;
 }

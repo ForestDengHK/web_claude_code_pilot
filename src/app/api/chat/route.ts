@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: NextRequest) {
   try {
     const body: SendMessageRequest & { files?: FileAttachment[]; toolTimeout?: number } = await request.json();
-    const { session_id, content, model, mode, files, toolTimeout } = body;
+    const { session_id, content, prompt, model, mode, files, toolTimeout } = body;
 
     if (!session_id || !content) {
       return new Response(JSON.stringify({ error: 'session_id and content are required' }), {
@@ -140,9 +140,10 @@ export async function POST(request: NextRequest) {
       ? allFiles
       : undefined;
 
-    // Stream Claude response, using SDK session ID for resume if available
+    // Stream Claude response, using SDK session ID for resume if available.
+    // Use `prompt` (skill-injected content) if provided, otherwise plain `content`.
     const stream = streamClaude({
-      prompt: content,
+      prompt: prompt || content,
       sessionId: session_id,
       sdkSessionId: session.sdk_session_id || undefined,
       model: effectiveModel,

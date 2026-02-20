@@ -191,11 +191,17 @@ export default function NewChatPage() {
         };
         setMessages([userMessage]);
 
-        // Send the message via streaming API (apiContent includes skill wrapper if applicable)
+        // Send the message via streaming API (prompt includes skill wrapper if applicable)
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: session.id, content: apiContent, mode, model: currentModel }),
+          body: JSON.stringify({
+            session_id: session.id,
+            content,
+            ...(apiContent !== content ? { prompt: apiContent } : {}),
+            mode,
+            model: currentModel,
+          }),
           signal: controller.signal,
         });
 

@@ -45,6 +45,7 @@ function parseToolBlocks(content: string): { text: string; tools: ToolBlock[] } 
       
       for (const block of blocks) {
         if (block.type === 'text' && block.text) {
+          if (text) text += '\n\n';
           text += block.text;
         } else if (block.type === 'tool_use') {
           tools.push({

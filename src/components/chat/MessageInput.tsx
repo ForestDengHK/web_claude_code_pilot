@@ -671,7 +671,8 @@ export function MessageInput({
         }
 
         // Check skills cache — pass skill name + content so ChatView can inject
-        // it into the message as a <command-name> block (matching Claude Code CLI behavior)
+        // it into the message as a <command-name> block (matching Claude Code CLI behavior).
+        // The display text keeps the /command prefix so the user can see which skill was used.
         const skillContent = skillsCacheRef.current.get(commandName);
         if (skillContent) {
           const displayText = userInput ? `/${commandName} ${userInput}` : `/${commandName}`;
