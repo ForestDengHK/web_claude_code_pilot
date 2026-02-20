@@ -97,7 +97,6 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   // Stream recovery: when SSE disconnects (mobile tab suspension), poll DB for the response
   const recoveryActiveRef = useRef(false);
   const recoveryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const recoveringMessagesRef = useRef(false); // lock to prevent concurrent recoverMessages calls
 
   const setCurrentModel = useCallback((newModel: string) => {
     setCurrentModelRaw(newModel);
@@ -142,9 +141,6 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
 
   // Fetch messages from DB and check if the backend has finished
   const recoverMessages = useCallback(async (): Promise<boolean> => {
-    // Prevent concurrent calls (visibility handler + poll interval can race)
-    if (recoveringMessagesRef.current) return false;
-    recoveringMessagesRef.current = true;
     try {
       const res = await fetch(`/api/chat/sessions/${sessionId}/messages?limit=100`);
       if (!res.ok) return false;
@@ -156,8 +152,6 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       return lastMsg?.role === 'assistant';
     } catch {
       return false;
-    } finally {
-      recoveringMessagesRef.current = false;
     }
   }, [sessionId]);
 
@@ -194,6 +188,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     recoveryActiveRef.current = true;
     setStatusText('Reconnecting...');
 
+    let doneRetries = 0;
     const poll = async () => {
       try {
         const res = await fetch(`/api/chat/sessions/${sessionId}/status`);
@@ -204,12 +199,24 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         const status: { isProcessing: boolean; pendingPermission: PermissionRequestEvent | null } = await res.json();
 
         if (!status.isProcessing) {
-          // Claude has finished — fetch final messages and stop recovery
-          await recoverMessages();
-          stopRecovery();
+          // Claude has finished — fetch final messages and stop recovery.
+          // Only stop if messages were successfully recovered; otherwise keep
+          // polling so we don't lose the UI state before messages are loaded.
+          const done = await recoverMessages();
+          if (done) {
+            stopRecovery();
+          } else {
+            // Message fetch failed or Claude produced no output — retry a few
+            // times then force-stop to avoid infinite polling.
+            doneRetries++;
+            if (doneRetries >= 5) {
+              stopRecovery();
+            }
+          }
           return;
         }
 
+        doneRetries = 0; // reset when Claude is still processing
         if (status.pendingPermission) {
           // Restore the permission dialog so the user can respond
           setPendingPermission(status.pendingPermission);
@@ -247,7 +254,12 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             .then(res => res.ok ? res.json() : null)
             .then(status => {
               if (status && !status.isProcessing) {
-                recoverMessages().then(() => stopRecovery());
+                // Only stop recovery if messages were successfully recovered.
+                // If the fetch fails (e.g. mobile network still waking up),
+                // let the poll continue retrying.
+                recoverMessages().then(done => {
+                  if (done) stopRecovery();
+                });
               }
             })
             .catch(() => {});
@@ -276,6 +288,35 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       window.removeEventListener('focus', handleVisibilityChange);
     };
   }, [recoverMessages, stopRecovery]);
+
+  // On mount, check if Claude is still processing (e.g., after mobile browser killed
+  // and reloaded the page while Claude was running). If so, start recovery polling
+  // so we pick up the result when it finishes.
+  useEffect(() => {
+    // Only check if we're not already streaming (fresh mount, not mid-stream)
+    if (isStreaming || recoveryActiveRef.current) return;
+    let cancelled = false;
+    fetch(`/api/chat/sessions/${sessionId}/status`)
+      .then(res => res.ok ? res.json() : null)
+      .then(status => {
+        if (cancelled || !status) return;
+        if (status.isProcessing) {
+          // Claude is still running — enter recovery mode to poll for the result.
+          // Set isStreaming so the UI shows the streaming indicator.
+          setIsStreaming(true);
+          startRecovery();
+        } else if (status.pendingPermission) {
+          setIsStreaming(true);
+          setPendingPermission(status.pendingPermission);
+          setPermissionResolved(null);
+          setPendingApprovalSessionId(sessionId);
+          setStatusText('Waiting for permission...');
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on mount
+  }, [sessionId]);
 
   // Cleanup recovery timer on unmount
   useEffect(() => {

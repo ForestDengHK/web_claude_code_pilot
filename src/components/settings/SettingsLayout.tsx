@@ -27,29 +27,22 @@ const sidebarItems: SidebarItem[] = [
   { id: "cli", label: "Claude CLI", icon: CodeIcon },
 ];
 
-function getInitialSection(): Section {
-  if (typeof window !== "undefined") {
-    const hash = window.location.hash.replace("#", "");
-    if (sidebarItems.some((item) => item.id === hash)) {
-      return hash as Section;
-    }
-  }
-  return "general";
-}
-
 export function SettingsLayout() {
-  const [activeSection, setActiveSection] = useState<Section>(getInitialSection);
+  // Always initialise to "general" to match the server render (window.location
+  // is unavailable during SSR).  The useEffect below syncs the hash on mount.
+  const [activeSection, setActiveSection] = useState<Section>("general");
 
-  // Sync hash on mount and on popstate
+  // Sync hash on mount and on hashchange
   useEffect(() => {
-    const onHashChange = () => {
+    const syncHash = () => {
       const hash = window.location.hash.replace("#", "");
       if (sidebarItems.some((item) => item.id === hash)) {
         setActiveSection(hash as Section);
       }
     };
-    window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
+    syncHash(); // read initial hash
+    window.addEventListener("hashchange", syncHash);
+    return () => window.removeEventListener("hashchange", syncHash);
   }, []);
 
   const handleSectionChange = (section: Section) => {
