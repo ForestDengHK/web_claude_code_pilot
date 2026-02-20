@@ -759,7 +759,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         // This shouldn't be reached since non-immediate commands are handled via badge
         sendMessage(command);
     }
-  }, [sessionId, sendMessage]);
+  }, [sessionId, sendMessage, messages]);
 
   return (
     <div className="flex h-full min-h-0 flex-col relative">

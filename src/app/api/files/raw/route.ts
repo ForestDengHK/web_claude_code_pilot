@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
+import os from 'os';
+import { isPathSafe } from '@/lib/files';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -93,6 +95,18 @@ export async function GET(request: NextRequest) {
   }
 
   const resolved = path.resolve(filePath);
+  const homeDir = os.homedir();
+
+  // Scope restriction: only allow files within the user's home directory
+  // or within an explicitly provided baseDir (the session's working directory)
+  const baseDir = request.nextUrl.searchParams.get('baseDir');
+  const allowedRoot = baseDir ? path.resolve(baseDir) : homeDir;
+  if (!isPathSafe(allowedRoot, resolved)) {
+    return new Response(JSON.stringify({ error: 'File is outside the allowed scope' }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 
   try {
     await fs.access(resolved);

@@ -462,10 +462,13 @@ export function MessageInput({
 
   // Fetch files for @ mention
   const fetchFiles = useCallback(async (filter: string) => {
+    if (!workingDirectory) return [];
     try {
       const params = new URLSearchParams();
-      if (sessionId) params.set('session_id', sessionId);
+      params.set('dir', workingDirectory);
+      params.set('baseDir', workingDirectory);
       if (filter) params.set('q', filter);
+      params.set('depth', '4');
       const res = await fetch(`/api/files?${params.toString()}`);
       if (!res.ok) return [];
       const data = await res.json();
@@ -478,11 +481,16 @@ export function MessageInput({
         }
       }
       flattenTree(tree);
+      // Filter by query client-side (API doesn't support q param)
+      if (filter) {
+        const lower = filter.toLowerCase();
+        return items.filter(i => i.label.toLowerCase().includes(lower) || i.value.toLowerCase().includes(lower)).slice(0, 20);
+      }
       return items.slice(0, 20);
     } catch {
       return [];
     }
-  }, [sessionId]);
+  }, [workingDirectory]);
 
   // Fetch skills for / command (built-in + API)
   // Returns all items unfiltered — filtering is done by filteredItems

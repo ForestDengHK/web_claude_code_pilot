@@ -3,7 +3,7 @@ import { streamClaude } from '@/lib/claude-client';
 import { addMessage, getSession, updateSessionTitle, updateSdkSessionId, getSetting } from '@/lib/db';
 import { registerAbort, unregisterAbort } from '@/lib/abort-registry';
 import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment } from '@/types';
-import fs from 'fs';
+import fs from 'fs/promises';
 import path from 'path';
 
 export const runtime = 'nodejs';
@@ -49,16 +49,15 @@ export async function POST(request: NextRequest) {
     if (uploadFiles.length > 0) {
       const workDir = session.working_directory;
       const uploadDir = path.join(workDir, '.codepilot-uploads');
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
-      }
-      fileMeta = uploadFiles.map((f) => {
+      await fs.mkdir(uploadDir, { recursive: true });
+      fileMeta = [];
+      for (const f of uploadFiles) {
         const safeName = path.basename(f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
         const filePath = path.join(uploadDir, `${Date.now()}-${safeName}`);
         const buffer = Buffer.from(f.data, 'base64');
-        fs.writeFileSync(filePath, buffer);
-        return { id: f.id, name: f.name, type: f.type, size: buffer.length, filePath };
-      });
+        await fs.writeFile(filePath, buffer);
+        fileMeta.push({ id: f.id, name: f.name, type: f.type, size: buffer.length, filePath });
+      }
     }
     if ((fileMeta && fileMeta.length > 0) || pathRefs.length > 0) {
       const allMeta = [

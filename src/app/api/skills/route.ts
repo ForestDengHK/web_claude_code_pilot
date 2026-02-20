@@ -378,17 +378,11 @@ export async function GET(request: NextRequest) {
     const globalDir = getGlobalSkillsDir();
     const projectDir = getProjectSkillsDir(cwd);
 
-    console.log(`[skills] Scanning global: ${globalDir} (exists: ${fs.existsSync(globalDir)})`);
-    console.log(`[skills] Scanning project: ${projectDir} (exists: ${fs.existsSync(projectDir)})`);
-    console.log(`[skills] HOME=${process.env.HOME}, homedir=${os.homedir()}`);
-
     const globalSkills = scanDirectory(globalDir, "global");
     const projectSkills = scanDirectory(projectDir, "project");
 
     const agentsSkillsDir = getInstalledSkillsDir();
     const claudeSkillsDir = getClaudeSkillsDir();
-    console.log(`[skills] Scanning installed: ${agentsSkillsDir} (exists: ${fs.existsSync(agentsSkillsDir)})`);
-    console.log(`[skills] Scanning installed: ${claudeSkillsDir} (exists: ${fs.existsSync(claudeSkillsDir)})`);
     const agentsSkills = scanInstalledSkills(agentsSkillsDir, "agents");
     const claudeSkills = scanInstalledSkills(claudeSkillsDir, "claude");
     const preferredInstalledSource: InstalledSource =
@@ -397,9 +391,6 @@ export async function GET(request: NextRequest) {
         : agentsSkills.length > claudeSkills.length
           ? "agents"
           : "claude";
-    console.log(
-      `[skills] Installed counts: agents=${agentsSkills.length}, claude=${claudeSkills.length}, preferred=${preferredInstalledSource}`
-    );
     const installedSkills = resolveInstalledSkills(
       agentsSkills,
       claudeSkills,
@@ -432,7 +423,6 @@ export async function GET(request: NextRequest) {
     }
 
     const all = [...globalSkills, ...projectSkills, ...installedSkills, ...dedupedPluginSkills];
-    console.log(`[skills] Found: global=${globalSkills.length}, project=${projectSkills.length}, installed=${installedSkills.length}, plugin=${dedupedPluginSkills.length} (cache=${cachedSkills.length})`);
 
     return NextResponse.json({ skills: all });
   } catch (error) {
