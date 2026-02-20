@@ -8,9 +8,40 @@ import {
   ConversationScrollButton,
   ConversationEmptyState,
 } from '@/components/ai-elements/conversation';
+import { useStickToBottomContext } from 'use-stick-to-bottom';
 import { MessageItem } from './MessageItem';
 import { StreamingMessage } from './StreamingMessage';
 import { CodePilotLogo } from './CodePilotLogo';
+
+/**
+ * Scrolls to bottom when:
+ * 1. isStreaming transitions false→true (user sent a message)
+ * 2. Messages are bulk-replaced (recovery fetched from DB)
+ * This re-engages StickToBottom's lock even if the user had scrolled up.
+ */
+function ScrollOnSend({ isStreaming, messageIds }: { isStreaming: boolean; messageIds: string }) {
+  const { scrollToBottom } = useStickToBottomContext();
+  const prevStreamingRef = useRef(false);
+  const prevMessageIdsRef = useRef(messageIds);
+
+  useEffect(() => {
+    if (isStreaming && !prevStreamingRef.current) {
+      scrollToBottom();
+    }
+    prevStreamingRef.current = isStreaming;
+  }, [isStreaming, scrollToBottom]);
+
+  // Detect bulk message replacement (recovery): if the first message ID changed
+  // and we're not streaming, the array was replaced — scroll to bottom.
+  useEffect(() => {
+    if (messageIds !== prevMessageIdsRef.current && !isStreaming) {
+      scrollToBottom();
+    }
+    prevMessageIdsRef.current = messageIds;
+  }, [messageIds, isStreaming, scrollToBottom]);
+
+  return null;
+}
 
 interface ToolUseInfo {
   id: string;
@@ -144,6 +175,7 @@ export function MessageList({
           />
         )}
       </ConversationContent>
+      <ScrollOnSend isStreaming={isStreaming} messageIds={messages.length > 0 ? messages[0].id : ''} />
       <ConversationScrollButton />
     </Conversation>
   );
