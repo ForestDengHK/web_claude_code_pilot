@@ -64,24 +64,39 @@ export function CodeBlock({
     return lines.slice(0, maxCollapsedLines).join('\n');
   }, [code, lines, isCollapsible, expanded, maxCollapsedLines]);
 
-  const handleCopy = async () => {
+  const copyText = (text: string) => {
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text);
+      return;
+    }
+    // Fallback for non-secure contexts (e.g. HTTP via Tailscale on mobile)
+    const el = document.createElement('textarea');
+    el.value = text;
+    el.setAttribute('readonly', '');
+    Object.assign(el.style, { position: 'fixed', left: '-9999px' });
+    document.body.appendChild(el);
+    el.select();
+    document.execCommand('copy');
+    document.body.removeChild(el);
+  };
+
+  const handleCopy = () => {
     try {
-      await navigator.clipboard.writeText(code);
+      copyText(code);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // clipboard not available
+      // ignore
     }
   };
 
-  const handleCopyMarkdown = async () => {
+  const handleCopyMarkdown = () => {
     try {
-      const markdown = `\`\`\`${language}\n${code}\n\`\`\``;
-      await navigator.clipboard.writeText(markdown);
+      copyText(`\`\`\`${language}\n${code}\n\`\`\``);
       setCopiedMarkdown(true);
       setTimeout(() => setCopiedMarkdown(false), 2000);
     } catch {
-      // clipboard not available
+      // ignore
     }
   };
 
