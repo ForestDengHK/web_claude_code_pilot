@@ -46,6 +46,10 @@ const RENDERABLE_EXTENSIONS = new Set([
   ".pdf",
 ]);
 
+const IMAGE_EXTENSIONS = new Set([
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp", ".ico",
+]);
+
 function getExtension(filePath: string): string {
   const dot = filePath.lastIndexOf(".");
   return dot >= 0 ? filePath.slice(dot).toLowerCase() : "";
@@ -77,6 +81,10 @@ function isPdf(filePath: string): boolean {
   return getExtension(filePath) === ".pdf";
 }
 
+function isImage(filePath: string): boolean {
+  return IMAGE_EXTENSIONS.has(getExtension(filePath));
+}
+
 export function DocPreview({
   filePath,
   viewMode,
@@ -101,6 +109,8 @@ export function DocPreview({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const isPdfFile = isPdf(filePath);
+  const isImageFile = isImage(filePath);
+  const isBinaryPreview = isPdfFile || isImageFile;
 
   useEffect(() => {
     // Reset edit mode when file changes
@@ -109,8 +119,8 @@ export function DocPreview({
   }, [filePath]);
 
   useEffect(() => {
-    // PDFs are binary — skip text preview fetch
-    if (isPdfFile) {
+    // Binary files — skip text preview fetch
+    if (isBinaryPreview) {
       setLoading(false);
       return;
     }
@@ -147,7 +157,7 @@ export function DocPreview({
     return () => {
       cancelled = true;
     };
-  }, [filePath, isPdfFile]);
+  }, [filePath, isBinaryPreview]);
 
   const handleCopyContent = async () => {
     const text = preview?.content || filePath;
@@ -257,11 +267,11 @@ export function DocPreview({
           </>
         ) : (
           <>
-            {canRender && !isPdfFile && (
+            {canRender && !isBinaryPreview && (
               <ViewModeToggle value={viewMode} onChange={onViewModeChange} />
             )}
 
-            {preview && !loading && !error && !isPdfFile && (
+            {preview && !loading && !error && !isBinaryPreview && (
               <Button variant="ghost" size="icon-sm" onClick={handleEnterEdit} title="Edit file">
                 <HugeiconsIcon icon={PencilEdit02Icon} className="h-3.5 w-3.5" />
                 <span className="sr-only">Edit file</span>
@@ -326,6 +336,8 @@ export function DocPreview({
           <div className="px-4 py-8 text-center">
             <p className="text-sm text-destructive">{error}</p>
           </div>
+        ) : isImageFile ? (
+          <ImageRenderedView filePath={filePath} />
         ) : isPdfFile ? (
           <PdfRenderedView filePath={filePath} />
         ) : preview ? (
@@ -694,6 +706,23 @@ function SvgRenderedView({ content }: { content: string }) {
       className="h-full w-full border-0"
       title="SVG Preview"
     />
+  );
+}
+
+/* ── Image Rendered View ── */
+
+function ImageRenderedView({ filePath }: { filePath: string }) {
+  const src = `/api/files/raw?path=${encodeURIComponent(filePath)}`;
+  const fileName = filePath.split("/").pop() || "image";
+  return (
+    <div className="flex h-full items-center justify-center p-4 bg-[repeating-conic-gradient(#e0e0e0_0%_25%,transparent_0%_50%)] dark:bg-[repeating-conic-gradient(#333_0%_25%,transparent_0%_50%)] bg-[length:16px_16px]">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt={fileName}
+        className="max-w-full max-h-full object-contain rounded"
+      />
+    </div>
   );
 }
 

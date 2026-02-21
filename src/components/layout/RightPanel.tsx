@@ -29,10 +29,9 @@ export function RightPanel({ width }: RightPanelProps) {
   }, []);
 
   const handleFileSelect = useCallback((path: string) => {
-    // Only open preview for text-based files, skip images/videos/binaries
+    // Only open preview for text-based files and images, skip videos/binaries
     const ext = path.split(".").pop()?.toLowerCase() || "";
     const NON_PREVIEWABLE = new Set([
-      "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "avif",
       "mp4", "mov", "avi", "mkv", "webm", "flv", "wmv",
       "mp3", "wav", "ogg", "flac", "aac", "wma",
       "zip", "tar", "gz", "rar", "7z", "bz2",

@@ -27,6 +27,8 @@ import type { ReactNode } from "react";
 const PREVIEWABLE_EXTENSIONS = new Set([
   // Markup & data
   "md", "mdx", "html", "htm", "json", "yaml", "yml", "toml", "csv", "tsv", "svg", "xml",
+  // Images
+  "png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "ico",
   // Code
   "js", "jsx", "ts", "tsx", "mjs", "cjs",
   "py", "rb", "go", "rs", "java", "kt", "swift", "c", "cpp", "h", "hpp", "cs",
