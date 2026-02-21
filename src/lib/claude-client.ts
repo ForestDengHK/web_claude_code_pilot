@@ -16,9 +16,10 @@ import type {
   NotificationHookInput,
   PostToolUseHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
-import type { ClaudeStreamOptions, SSEEvent, TokenUsage, MCPServerConfig, PermissionRequestEvent, FileAttachment } from '@/types';
+import type { ClaudeStreamOptions, SSEEvent, TokenUsage, MCPServerConfig, PermissionRequestEvent, InputRequestEvent, FileAttachment } from '@/types';
 import { isImageFile } from '@/types';
 import { registerPendingPermission } from './permission-registry';
+import { registerPendingInputRequest } from './input-request-registry';
 import { getSetting, getActiveProvider } from './db';
 import { findClaudeBinary, findGitBash, getExpandedPath } from './platform';
 import os from 'os';
@@ -539,6 +540,21 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         // Permission handler: sends SSE event and waits for user response
         queryOptions.canUseTool = async (toolName, input, opts) => {
+          // Intercept AskUserQuestion: send questions to client, wait for answers
+          if (toolName === 'AskUserQuestion') {
+            const inputRequestId = `input-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            const inputEvent: InputRequestEvent = {
+              inputRequestId,
+              toolUseId: opts.toolUseID,
+              questions: (input.questions as InputRequestEvent['questions']) || [],
+            };
+            controller.enqueue(formatSSE({
+              type: 'input_request',
+              data: JSON.stringify(inputEvent),
+            }));
+            return registerPendingInputRequest(inputRequestId, input, opts.signal, sessionId, inputEvent);
+          }
+
           const permissionRequestId = `perm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
           const permEvent: PermissionRequestEvent = {

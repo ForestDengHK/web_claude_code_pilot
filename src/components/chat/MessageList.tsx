@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useEffect } from 'react';
-import type { Message, PermissionRequestEvent } from '@/types';
+import type { Message, PermissionRequestEvent, InputRequestEvent } from '@/types';
 import {
   Conversation,
   ConversationContent,
@@ -66,6 +66,9 @@ interface MessageListProps {
   pendingPermission?: PermissionRequestEvent | null;
   onPermissionResponse?: (decision: 'allow' | 'allow_session' | 'deny') => void;
   permissionResolved?: 'allow' | 'deny' | null;
+  pendingInputRequest?: InputRequestEvent | null;
+  onInputResponse?: (answers: Record<string, string>) => void;
+  inputRequestResolved?: boolean;
   onForceStop?: () => void;
   hasMore?: boolean;
   loadingMore?: boolean;
@@ -86,6 +89,9 @@ export function MessageList({
   pendingPermission,
   onPermissionResponse,
   permissionResolved,
+  pendingInputRequest,
+  onInputResponse,
+  inputRequestResolved,
   onForceStop,
   hasMore,
   loadingMore,
@@ -171,6 +177,9 @@ export function MessageList({
             pendingPermission={pendingPermission}
             onPermissionResponse={onPermissionResponse}
             permissionResolved={permissionResolved}
+            pendingInputRequest={pendingInputRequest}
+            onInputResponse={onInputResponse}
+            inputRequestResolved={inputRequestResolved}
             onForceStop={onForceStop}
           />
         )}

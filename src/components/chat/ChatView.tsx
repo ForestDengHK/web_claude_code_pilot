@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import type { Message, MessagesResponse, PermissionRequestEvent, FileAttachment } from '@/types';
+import type { Message, MessagesResponse, PermissionRequestEvent, InputRequestEvent, FileAttachment } from '@/types';
 import { MessageList } from './MessageList';
 import { MessageInput } from './MessageInput';
 import { SearchBar } from './SearchBar';
@@ -73,6 +73,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [currentModel, setCurrentModelRaw] = useState(modelName || '');
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
+  const [pendingInputRequest, setPendingInputRequest] = useState<InputRequestEvent | null>(null);
+  const [inputRequestResolved, setInputRequestResolved] = useState(false);
   const [streamingToolOutput, setStreamingToolOutput] = useState('');
   const toolTimeoutRef = useRef<{ toolName: string; elapsedSeconds: number } | null>(null);
   // Refs to track tool data for building optimistic message (React state may be stale in async context)
@@ -173,6 +175,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     setStreamingToolOutput('');
     setPendingPermission(null);
     setPermissionResolved(null);
+    setPendingInputRequest(null);
+    setInputRequestResolved(false);
     setPendingApprovalSessionId('');
     abortControllerRef.current = null;
     readerAbortControllerRef.current = null;
@@ -196,7 +200,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           setStatusText('Connection lost, retrying...');
           return;
         }
-        const status: { isProcessing: boolean; pendingPermission: PermissionRequestEvent | null } = await res.json();
+        const status: { isProcessing: boolean; pendingPermission: PermissionRequestEvent | null; pendingInputRequest: InputRequestEvent | null } = await res.json();
 
         if (!status.isProcessing) {
           // Claude has finished — fetch final messages and stop recovery.
@@ -223,6 +227,14 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           setPermissionResolved(null);
           setPendingApprovalSessionId(sessionId);
           setStatusText('Waiting for permission...');
+          return;
+        }
+
+        if (status.pendingInputRequest) {
+          // Restore the input request dialog so the user can respond
+          setPendingInputRequest(status.pendingInputRequest);
+          setInputRequestResolved(false);
+          setStatusText('Waiting for input...');
           return;
         }
 
@@ -311,6 +323,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           setPermissionResolved(null);
           setPendingApprovalSessionId(sessionId);
           setStatusText('Waiting for permission...');
+        } else if (status.pendingInputRequest) {
+          setIsStreaming(true);
+          setPendingInputRequest(status.pendingInputRequest);
+          setInputRequestResolved(false);
+          setStatusText('Waiting for input...');
         }
       })
       .catch(() => {});
@@ -464,6 +481,46 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     }, 1000);
   }, [pendingPermission, setPendingApprovalSessionId]);
 
+  const handleInputResponse = useCallback(async (answers: Record<string, string>) => {
+    if (!pendingInputRequest) return;
+
+    const submittedId = pendingInputRequest.inputRequestId;
+    setInputRequestResolved(true);
+
+    try {
+      await fetch('/api/chat/input', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          inputRequestId: submittedId,
+          answers,
+        }),
+      });
+    } catch {
+      // Best effort - the stream will handle timeout
+    }
+
+    // Clear input request state after a short delay so user sees the feedback.
+    // Guard: only clear if the same request is still pending — during recovery,
+    // the poll may have already set a NEWER input request (next question) and
+    // we must not clobber it.
+    setTimeout(() => {
+      setPendingInputRequest(prev => {
+        if (prev && prev.inputRequestId !== submittedId) {
+          // A newer input request arrived — don't clear it
+          return prev;
+        }
+        // Same request or already null — safe to clear
+        setInputRequestResolved(false);
+        // If recovery is active, reset status so it doesn't show stale "Waiting for input..."
+        if (recoveryActiveRef.current) {
+          setStatusText('Reconnecting...');
+        }
+        return null;
+      });
+    }, 1000);
+  }, [pendingInputRequest]);
+
   const sendMessage = useCallback(
     async (content: string, files?: FileAttachment[], skillInfo?: { name: string; content: string }) => {
       if (isStreaming) return;
@@ -596,6 +653,10 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             setPermissionResolved(null);
             setPendingApprovalSessionId(sessionId);
           },
+          onInputRequest: (inputData) => {
+            setPendingInputRequest(inputData);
+            setInputRequestResolved(false);
+          },
           onToolTimeout: (toolName, elapsedSeconds) => {
             toolTimeoutRef.current = { toolName, elapsedSeconds };
           },
@@ -712,6 +773,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           setStreamingToolOutput('');
           setPendingPermission(null);
           setPermissionResolved(null);
+          setPendingInputRequest(null);
+          setInputRequestResolved(false);
           setPendingApprovalSessionId('');
           abortControllerRef.current = null;
           readerAbortControllerRef.current = null;
@@ -832,6 +895,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         pendingPermission={pendingPermission}
         onPermissionResponse={handlePermissionResponse}
         permissionResolved={permissionResolved}
+        pendingInputRequest={pendingInputRequest}
+        onInputResponse={handleInputResponse}
+        inputRequestResolved={inputRequestResolved}
         onForceStop={stopStreaming}
         hasMore={hasMore}
         loadingMore={loadingMore}

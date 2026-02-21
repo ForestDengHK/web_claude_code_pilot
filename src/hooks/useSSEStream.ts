@@ -1,5 +1,5 @@
 import { useRef, useCallback } from 'react';
-import type { SSEEvent, TokenUsage, PermissionRequestEvent } from '@/types';
+import type { SSEEvent, TokenUsage, PermissionRequestEvent, InputRequestEvent } from '@/types';
 
 interface ToolUseInfo {
   id: string;
@@ -22,6 +22,7 @@ export interface SSECallbacks {
   onStatus: (text: string | undefined) => void;
   onResult: (usage: TokenUsage | null) => void;
   onPermissionRequest: (data: PermissionRequestEvent) => void;
+  onInputRequest: (data: InputRequestEvent) => void;
   onToolTimeout: (toolName: string, elapsedSeconds: number) => void;
   onHeartbeat?: () => void;
   onError: (accumulated: string) => void;
@@ -118,6 +119,16 @@ function handleSSEEvent(
         callbacks.onPermissionRequest(permData);
       } catch {
         // skip malformed permission_request data
+      }
+      return accumulated;
+    }
+
+    case 'input_request': {
+      try {
+        const inputData: InputRequestEvent = JSON.parse(event.data);
+        callbacks.onInputRequest(inputData);
+      } catch {
+        // skip malformed input_request data
       }
       return accumulated;
     }
@@ -244,6 +255,7 @@ export function useSSEStream() {
         onStatus: (t) => callbacksRef.current?.onStatus(t),
         onResult: (u) => callbacksRef.current?.onResult(u),
         onPermissionRequest: (d) => callbacksRef.current?.onPermissionRequest(d),
+        onInputRequest: (d) => callbacksRef.current?.onInputRequest(d),
         onToolTimeout: (n, s) => callbacksRef.current?.onToolTimeout(n, s),
         onHeartbeat: () => callbacksRef.current?.onHeartbeat?.(),
         onError: (a) => callbacksRef.current?.onError(a),

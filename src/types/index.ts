@@ -315,6 +315,7 @@ export type SSEEventType =
   | 'result'             // final result with usage stats
   | 'error'              // error occurred
   | 'permission_request' // permission approval needed
+  | 'input_request'      // AskUserQuestion mid-stream prompt
   | 'heartbeat'          // keepalive signal for connection health
   | 'done';              // stream complete
 
@@ -354,6 +355,28 @@ export interface PermissionResponseRequest {
     behavior: 'deny';
     message?: string;
   };
+}
+
+// ==========================================
+// Input Request Types (AskUserQuestion)
+// ==========================================
+
+export interface InputRequestQuestion {
+  question: string;
+  header: string;
+  options: Array<{ label: string; description: string }>;
+  multiSelect: boolean;
+}
+
+export interface InputRequestEvent {
+  inputRequestId: string;
+  toolUseId: string;
+  questions: InputRequestQuestion[];
+}
+
+export interface InputResponseRequest {
+  inputRequestId: string;
+  answers: Record<string, string>;
 }
 
 // ==========================================
