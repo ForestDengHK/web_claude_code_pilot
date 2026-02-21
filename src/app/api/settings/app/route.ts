@@ -10,6 +10,7 @@ const ALLOWED_KEYS = [
   'anthropic_auth_token',
   'anthropic_base_url',
   'dangerously_skip_permissions',
+  'clone_base_directory',
 ];
 
 export async function GET() {
