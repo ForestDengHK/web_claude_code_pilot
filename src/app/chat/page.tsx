@@ -73,12 +73,27 @@ export default function NewChatPage() {
     } catch { /* silent */ }
   }, [favorites]);
 
-  const selectDirectory = useCallback((dirPath: string) => {
+  const selectDirectory = useCallback(async (dirPath: string) => {
     setWorkingDir(dirPath);
     if (typeof window !== 'undefined') {
       localStorage.setItem('codepilot:last-working-directory', dirPath);
     }
-  }, []);
+    // Create a session immediately and navigate so the file tree is available
+    try {
+      const res = await fetch('/api/chat/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ working_directory: dirPath }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        window.dispatchEvent(new CustomEvent('session-created'));
+        router.push(`/chat/${data.session.id}`);
+      }
+    } catch {
+      // If session creation fails, keep the old behavior (stay on /chat page)
+    }
+  }, [router]);
 
   const stopStreaming = useCallback(() => {
     abortControllerRef.current?.abort();
