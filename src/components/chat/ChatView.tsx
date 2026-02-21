@@ -507,17 +507,14 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     setTimeout(() => {
       setPendingInputRequest(prev => {
         if (prev && prev.inputRequestId !== submittedId) {
-          // A newer input request arrived — don't clear it
-          return prev;
-        }
-        // Same request or already null — safe to clear
-        setInputRequestResolved(false);
-        // If recovery is active, reset status so it doesn't show stale "Waiting for input..."
-        if (recoveryActiveRef.current) {
-          setStatusText('Reconnecting...');
+          return prev; // A newer input request arrived — don't clear it
         }
         return null;
       });
+      setInputRequestResolved(false);
+      if (recoveryActiveRef.current) {
+        setStatusText('Reconnecting...');
+      }
     }, 1000);
   }, [pendingInputRequest]);
 

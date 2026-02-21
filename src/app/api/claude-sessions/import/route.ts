@@ -44,11 +44,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate title from the first user message
+    // Generate title from the first user message (same CJK-aware limit as chat/route.ts)
     const firstUserMsg = messages.find(m => m.role === 'user');
-    const title = firstUserMsg
-      ? firstUserMsg.content.slice(0, 50) + (firstUserMsg.content.length > 50 ? '...' : '')
-      : `Imported: ${info.projectName}`;
+    let title: string;
+    if (firstUserMsg) {
+      const firstLine = firstUserMsg.content.split('\n')[0].trim();
+      const hasCJK = /[\u3000-\u9fff\uac00-\ud7af\uf900-\ufaff]/.test(firstLine);
+      const limit = hasCJK ? 10 : 15;
+      title = firstLine.length > limit
+        ? firstLine.slice(0, limit) + '…'
+        : firstLine || firstUserMsg.content.slice(0, limit);
+    } else {
+      title = `Imported: ${info.projectName}`;
+    }
 
     // Create a new Web Claude Code Pilot session
     const session = createSession(

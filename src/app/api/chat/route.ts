@@ -69,8 +69,8 @@ export async function POST(request: NextRequest) {
     addMessage(session_id, 'user', savedContent);
 
     // Auto-generate title from first message if still default.
-    // Use a short limit: CJK characters are visually wider so we cap at 20 chars,
-    // pure ASCII gets up to 40 chars. This keeps sidebar titles readable on mobile.
+    // CJK characters are visually wider so we cap at 10 chars,
+    // pure ASCII gets up to 15 chars. This keeps sidebar titles readable on mobile.
     if (session.title === 'New Chat') {
       const firstLine = content.split('\n')[0].trim();
       const hasCJK = /[\u3000-\u9fff\uac00-\ud7af\uf900-\ufaff]/.test(firstLine);
