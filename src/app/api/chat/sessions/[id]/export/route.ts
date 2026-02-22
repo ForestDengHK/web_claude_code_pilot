@@ -6,6 +6,13 @@ import type { MessageContentBlock, TokenUsage } from '@/types';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+// UTF-8 BOM — ensures correct encoding in editors/viewers (especially mobile & Windows)
+const UTF8_BOM = '\uFEFF';
+
+// ---------------------------------------------------------------------------
+// Formatting helpers
+// ---------------------------------------------------------------------------
+
 function formatTimestamp(dateStr: string): string {
   try {
     const d = new Date(dateStr);
@@ -28,6 +35,10 @@ function extractFilename(path: string): string {
   const parts = path.split('/');
   return parts[parts.length - 1] || path;
 }
+
+// ---------------------------------------------------------------------------
+// Tool summary — mirrors page ToolActionsGroup display (one-line per tool)
+// ---------------------------------------------------------------------------
 
 function getFilePath(input: unknown): string {
   const inp = input as Record<string, unknown> | undefined;
@@ -52,88 +63,46 @@ function getToolCategory(name: string): string {
     lower === 'find_files' || lower === 'search_files' ||
     lower === 'websearch' || lower === 'web_search'
   ) return 'Search';
+  if (lower === 'skill') return 'Skill';
   return name;
 }
 
-function formatToolUse(block: MessageContentBlock & { type: 'tool_use' }): string {
+function getToolOneLiner(block: MessageContentBlock & { type: 'tool_use' }): string {
   const category = getToolCategory(block.name);
-  const filePath = getFilePath(block.input);
   const inp = block.input as Record<string, unknown> | undefined;
+  const filePath = getFilePath(block.input);
 
-  let summary = '';
-  if (filePath) {
-    summary = filePath;
-  } else if (inp?.command) {
-    summary = String(inp.command);
-  } else if (inp?.pattern || inp?.query || inp?.glob) {
-    summary = String(inp.pattern || inp.query || inp.glob);
-  }
-
-  const header = summary
-    ? `${category} → ${summary}`
-    : category;
-
-  const lines: string[] = [];
-  lines.push(`<details><summary>🔧 ${header}</summary>\n`);
-
-  if (inp) {
-    // For write/edit tools, show content or diff
-    const content = (inp.content || inp.new_source || '') as string;
-    const oldStr = (inp.old_string ?? inp.oldString ?? '') as string;
-    const newStr = (inp.new_string ?? inp.newString ?? '') as string;
-
-    if (oldStr || newStr) {
-      const lang = filePath ? guessLanguage(filePath) : '';
-      lines.push('```' + lang);
-      if (oldStr) {
-        for (const line of oldStr.split('\n')) {
-          lines.push('- ' + line);
-        }
-      }
-      if (newStr) {
-        for (const line of newStr.split('\n')) {
-          lines.push('+ ' + line);
-        }
-      }
-      lines.push('```');
-    } else if (content) {
-      const lang = filePath ? guessLanguage(filePath) : '';
-      const truncated = content.length > 3000 ? content.slice(0, 3000) + '\n... (truncated)' : content;
-      lines.push('```' + lang);
-      lines.push(truncated);
-      lines.push('```');
-    } else if (inp.command) {
-      lines.push('```bash');
-      lines.push(String(inp.command));
-      lines.push('```');
+  let detail = '';
+  switch (category) {
+    case 'Read':
+    case 'Write':
+      detail = filePath ? extractFilename(filePath) : '';
+      break;
+    case 'Bash': {
+      const cmd = (inp?.command || inp?.cmd || '') as string;
+      detail = cmd ? (cmd.length > 60 ? cmd.slice(0, 57) + '...' : cmd) : '';
+      break;
     }
+    case 'Search': {
+      const pattern = (inp?.pattern || inp?.query || inp?.glob || '') as string;
+      detail = pattern ? `"${pattern.length > 50 ? pattern.slice(0, 47) + '...' : pattern}"` : '';
+      break;
+    }
+    case 'Skill': {
+      const skillName = (inp?.skill || inp?.name || inp?.skill_name || '') as string;
+      detail = skillName ? `/${skillName}` : '';
+      break;
+    }
+    default:
+      detail = '';
   }
 
-  lines.push('\n</details>');
-  return lines.join('\n');
+  return detail ? `${category} → ${detail}` : category;
 }
 
-function formatToolResult(content: string, isError?: boolean): string {
-  if (!content) return '';
-  const truncated = content.length > 2000 ? content.slice(0, 2000) + '\n... (truncated)' : content;
-  const prefix = isError ? '❌ Error:\n' : '';
-  return `\n<details><summary>${isError ? '❌' : '✅'} Result</summary>\n\n\`\`\`\n${prefix}${truncated}\n\`\`\`\n\n</details>`;
-}
-
-function guessLanguage(filePath: string): string {
-  const ext = filePath.split('.').pop()?.toLowerCase() || '';
-  const map: Record<string, string> = {
-    ts: 'typescript', tsx: 'tsx', js: 'javascript', jsx: 'jsx',
-    py: 'python', rb: 'ruby', go: 'go', rs: 'rust',
-    java: 'java', kt: 'kotlin', swift: 'swift',
-    css: 'css', scss: 'scss', html: 'html',
-    json: 'json', yaml: 'yaml', yml: 'yaml',
-    md: 'markdown', sql: 'sql', sh: 'bash',
-    toml: 'toml', xml: 'xml', c: 'c', cpp: 'cpp', h: 'c',
-    vue: 'vue', svelte: 'svelte',
-  };
-  return map[ext] || '';
-}
+// ---------------------------------------------------------------------------
+// File attachment parsing (user messages)
+// ---------------------------------------------------------------------------
 
 interface FileAttachment {
   name: string;
@@ -152,6 +121,10 @@ function parseMessageFiles(content: string): { files: FileAttachment[]; text: st
     return { files: [], text: content };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Main export handler
+// ---------------------------------------------------------------------------
 
 export async function GET(
   _request: NextRequest,
@@ -212,7 +185,7 @@ export async function GET(
 
       // Parse content
       if (isUser) {
-        // Handle file attachments in user messages
+        // File attachments
         const { files, text: textWithoutFiles } = parseMessageFiles(msg.content);
         if (files.length > 0) {
           for (const f of files) {
@@ -224,21 +197,27 @@ export async function GET(
           lines.push(textWithoutFiles.trim());
         }
       } else {
-        // Assistant message: parse structured content blocks
+        // Assistant message: text + compact tool summary
         const blocks = parseMessageContent(msg.content);
+        const toolSummaries: string[] = [];
+
         for (const block of blocks) {
-          switch (block.type) {
-            case 'text':
-              if (block.text.trim()) {
-                lines.push(block.text.trim());
-              }
-              break;
-            case 'tool_use':
-              lines.push(formatToolUse(block as MessageContentBlock & { type: 'tool_use' }));
-              break;
-            case 'tool_result':
-              lines.push(formatToolResult(block.content, block.is_error));
-              break;
+          if (block.type === 'text' && block.text.trim()) {
+            lines.push(block.text.trim());
+          } else if (block.type === 'tool_use') {
+            toolSummaries.push(
+              getToolOneLiner(block as MessageContentBlock & { type: 'tool_use' })
+            );
+          }
+          // tool_result: skip — not shown prominently on page
+        }
+
+        // Append compact tool summary block (like the collapsed ToolActionsGroup on page)
+        if (toolSummaries.length > 0) {
+          lines.push('');
+          lines.push(`> 🔧 **${toolSummaries.length} tool calls**`);
+          for (const s of toolSummaries) {
+            lines.push(`> - ${s}`);
           }
         }
       }
@@ -248,16 +227,20 @@ export async function GET(
       lines.push('');
     }
 
-    const markdown = lines.join('\n');
-    const safeTitle = (session.title || 'chat-export')
-      .replace(/[^a-zA-Z0-9\u4e00-\u9fff\s-_]/g, '')
+    const markdown = UTF8_BOM + lines.join('\n');
+    const title = (session.title || 'chat-export')
       .replace(/\s+/g, '-')
       .slice(0, 100);
+
+    // ASCII-only fallback for filename (strip non-ASCII chars)
+    const asciiTitle = title.replace(/[^a-zA-Z0-9\-_]/g, '') || 'chat-export';
+    // RFC 5987 encoded filename for UTF-8 support (Chinese, etc.)
+    const utf8Title = encodeURIComponent(title);
 
     return new Response(markdown, {
       headers: {
         'Content-Type': 'text/markdown; charset=utf-8',
-        'Content-Disposition': `attachment; filename="${safeTitle}.md"`,
+        'Content-Disposition': `attachment; filename="${asciiTitle}.md"; filename*=UTF-8''${utf8Title}.md`,
       },
     });
   } catch (error) {

@@ -11,9 +11,17 @@ import { ResizeHandle } from "./ResizeHandle";
 import { DocPreview } from "./DocPreview";
 import { PanelContext, type PanelContent, type PreviewViewMode } from "@/hooks/usePanel";
 
-/** Polyfill navigator.clipboard.writeText for non-secure contexts (HTTP via Tailscale on mobile). */
+/**
+ * Polyfill navigator.clipboard for non-secure contexts (HTTP via Tailscale on mobile).
+ *
+ * Covers two APIs:
+ *  - writeText(text)  – used by our own CopyButton and code-block copy
+ *  - write([ClipboardItem]) – used by Streamdown's table copy button
+ *    (extracts text/plain from the ClipboardItem and falls back to execCommand)
+ */
 function installClipboardPolyfill() {
   if (window.isSecureContext) return;
+
   const fallbackCopy = (text: string): Promise<void> =>
     new Promise((resolve, reject) => {
       const el = document.createElement("textarea");
@@ -29,11 +37,25 @@ function installClipboardPolyfill() {
       document.body.removeChild(el);
       ok ? resolve() : reject(new Error("execCommand copy failed"));
     });
+
+  // Polyfill clipboard.write: extract text/plain from ClipboardItem, delegate to fallbackCopy
+  const fallbackWrite = async (items: ClipboardItem[]): Promise<void> => {
+    for (const item of items) {
+      if (item.types.includes("text/plain")) {
+        const blob = await item.getType("text/plain");
+        const text = await blob.text();
+        return fallbackCopy(text);
+      }
+    }
+    throw new Error("No text/plain content in ClipboardItem");
+  };
+
   if (navigator.clipboard) {
     navigator.clipboard.writeText = fallbackCopy;
+    navigator.clipboard.write = fallbackWrite;
   } else {
     Object.defineProperty(navigator, "clipboard", {
-      value: { writeText: fallbackCopy } as Clipboard,
+      value: { writeText: fallbackCopy, write: fallbackWrite } as Clipboard,
       configurable: true,
     });
   }

@@ -19,7 +19,7 @@ import { cjk } from "@streamdown/cjk";
 import { code } from "@streamdown/code";
 import { math } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
-import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DownloadIcon } from "lucide-react";
 import {
   createContext,
   memo,
@@ -27,6 +27,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { Streamdown } from "streamdown";
@@ -324,6 +325,153 @@ export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
 const streamdownPlugins = { cjk, code, math, mermaid };
 
+// ---------------------------------------------------------------------------
+// Custom table component — replaces Streamdown's built-in table controls
+// because clipboard.write / ClipboardItem don't work on HTTP (Tailscale).
+// One-tap copy (no dropdown), plus a simple CSV download button.
+// ---------------------------------------------------------------------------
+
+function copyTextFallback(text: string) {
+  // Use polyfilled writeText if available, otherwise execCommand
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).catch(() => {});
+    return;
+  }
+  const el = document.createElement("textarea");
+  el.value = text;
+  el.setAttribute("readonly", "");
+  Object.assign(el.style, { position: "fixed", left: "-9999px" });
+  document.body.appendChild(el);
+  el.select();
+  document.execCommand("copy");
+  document.body.removeChild(el);
+}
+
+function extractTableData(table: HTMLTableElement) {
+  const rows: string[][] = [];
+  for (const tr of table.querySelectorAll("tr")) {
+    const cells: string[] = [];
+    for (const cell of tr.querySelectorAll("th, td")) {
+      cells.push(cell.textContent?.trim() || "");
+    }
+    rows.push(cells);
+  }
+  return rows;
+}
+
+function toTSV(rows: string[][]) {
+  return rows.map(r => r.join("\t")).join("\n");
+}
+
+function toCSV(rows: string[][]) {
+  return rows
+    .map(r =>
+      r
+        .map(c =>
+          c.includes(",") || c.includes('"') || c.includes("\n")
+            ? `"${c.replace(/"/g, '""')}"`
+            : c
+        )
+        .join(",")
+    )
+    .join("\n");
+}
+
+const CustomTable = memo(
+  ({
+    children,
+    className,
+    node: _node,
+    ...props
+  }: {
+    children: React.ReactNode;
+    className?: string;
+    node?: unknown;
+    [key: string]: unknown;
+  }) => {
+    const wrapperRef = useRef<HTMLDivElement>(null);
+    const [copied, setCopied] = useState(false);
+    const timerRef = useRef<ReturnType<typeof setTimeout>>();
+
+    const getTable = useCallback(
+      () => wrapperRef.current?.querySelector("table") as HTMLTableElement | null,
+      []
+    );
+
+    const handleCopy = useCallback(() => {
+      const table = getTable();
+      if (!table) return;
+      copyTextFallback(toTSV(extractTableData(table)));
+      clearTimeout(timerRef.current);
+      setCopied(true);
+      timerRef.current = setTimeout(() => setCopied(false), 2000);
+    }, [getTable]);
+
+    const handleDownload = useCallback(() => {
+      const table = getTable();
+      if (!table) return;
+      const csv = toCSV(extractTableData(table));
+      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "table.csv";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, [getTable]);
+
+    useEffect(() => () => clearTimeout(timerRef.current), []);
+
+    return (
+      <div
+        ref={wrapperRef}
+        className="my-4 flex flex-col space-y-2"
+        data-streamdown="table-wrapper"
+      >
+        <div className="flex items-center justify-end gap-1">
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="inline-flex items-center justify-center rounded-md min-w-[32px] min-h-[32px] p-1 text-muted-foreground transition-all hover:text-foreground hover:bg-muted active:bg-muted/80"
+            title="Copy table"
+          >
+            {copied ? (
+              <CheckIcon className="h-4 w-4 text-green-500" />
+            ) : (
+              <CopyIcon className="h-4 w-4" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={handleDownload}
+            className="inline-flex items-center justify-center rounded-md min-w-[32px] min-h-[32px] p-1 text-muted-foreground transition-all hover:text-foreground hover:bg-muted active:bg-muted/80"
+            title="Download CSV"
+          >
+            <DownloadIcon className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="overflow-x-auto">
+          <table
+            className={cn(
+              "w-full border-collapse border border-border",
+              className
+            )}
+            data-streamdown="table"
+            {...props}
+          >
+            {children}
+          </table>
+        </div>
+      </div>
+    );
+  }
+);
+CustomTable.displayName = "CustomTable";
+
+const streamdownComponents = { table: CustomTable };
+
 export const MessageResponse = memo(
   ({ className, ...props }: MessageResponseProps) => (
     <Streamdown
@@ -331,6 +479,7 @@ export const MessageResponse = memo(
         "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
         className
       )}
+      components={streamdownComponents}
       plugins={streamdownPlugins}
       {...props}
     />

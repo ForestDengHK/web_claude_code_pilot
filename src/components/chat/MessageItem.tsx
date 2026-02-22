@@ -173,29 +173,38 @@ function copyToClipboard(text: string) {
 }
 
 function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
+  // Use a counter so each click always triggers a re-render (even if already showing ✓)
+  const [copyCount, setCopyCount] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const copied = copyCount > 0;
 
   const handleCopy = useCallback(() => {
     try {
       copyToClipboard(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
     } catch {
-      // ignore
+      // ignore clipboard errors
     }
+    // Clear previous timer to prevent stale timeout resetting state
+    clearTimeout(timerRef.current);
+    // Increment counter — always triggers re-render even when ✓ is already shown
+    setCopyCount(c => c + 1);
+    timerRef.current = setTimeout(() => setCopyCount(0), 2000);
   }, [text]);
+
+  // Cleanup on unmount
+  useEffect(() => () => clearTimeout(timerRef.current), []);
 
   return (
     <button
       type="button"
       onClick={handleCopy}
-      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted transition-colors"
+      className="inline-flex items-center justify-center rounded-md min-w-[32px] min-h-[32px] px-1.5 py-1 text-xs text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted active:bg-muted/80 transition-colors"
       title="Copy"
     >
       {copied ? (
-        <CheckIcon className="h-3 w-3 text-green-500" />
+        <CheckIcon key={copyCount} className="h-3.5 w-3.5 text-green-500" />
       ) : (
-        <CopyIcon className="h-3 w-3" />
+        <CopyIcon className="h-3.5 w-3.5" />
       )}
     </button>
   );
