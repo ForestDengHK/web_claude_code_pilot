@@ -338,6 +338,10 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
   return new ReadableStream<string>({
     async start(controller) {
+      // Track whether we received a successful SDK result, so we can
+      // suppress the spurious "exited with code 1" that follows it.
+      let gotResult = false;
+
       // Heartbeat: send periodic keepalive so the client can detect dead connections
       heartbeatInterval = setInterval(() => {
         try {
@@ -421,9 +425,13 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           if (appBaseUrl) {
             sdkEnv.ANTHROPIC_BASE_URL = appBaseUrl;
           }
+          // Pass CLAUDE_CODE_OAUTH_TOKEN for subscription OAuth auth (v2.0+)
+          if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+            sdkEnv.CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+          }
           // If neither legacy settings nor env vars provide a key, log a warning
-          if (!appToken && !sdkEnv.ANTHROPIC_API_KEY && !sdkEnv.ANTHROPIC_AUTH_TOKEN) {
-            console.warn('[claude-client] No API key found: no active provider, no legacy settings, and no ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN in environment');
+          if (!appToken && !sdkEnv.ANTHROPIC_API_KEY && !sdkEnv.ANTHROPIC_AUTH_TOKEN && !sdkEnv.CLAUDE_CODE_OAUTH_TOKEN) {
+            console.warn('[claude-client] No API key found: no active provider, no legacy settings, and no ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN/CLAUDE_CODE_OAUTH_TOKEN in environment');
           }
         }
 
@@ -849,18 +857,24 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             }
 
             case 'result': {
+              gotResult = true;
               const resultMsg = message as SDKResultMessage;
               tokenUsage = extractTokenUsage(resultMsg);
+              const resultPayload: Record<string, unknown> = {
+                subtype: resultMsg.subtype,
+                is_error: resultMsg.is_error,
+                num_turns: resultMsg.num_turns,
+                duration_ms: resultMsg.duration_ms,
+                usage: tokenUsage,
+                session_id: resultMsg.session_id,
+              };
+              // Forward SDK error details so the frontend can show what went wrong
+              if (resultMsg.is_error && 'errors' in resultMsg && Array.isArray((resultMsg as Record<string, unknown>).errors)) {
+                resultPayload.errors = (resultMsg as Record<string, unknown>).errors;
+              }
               controller.enqueue(formatSSE({
                 type: 'result',
-                data: JSON.stringify({
-                  subtype: resultMsg.subtype,
-                  is_error: resultMsg.is_error,
-                  num_turns: resultMsg.num_turns,
-                  duration_ms: resultMsg.duration_ms,
-                  usage: tokenUsage,
-                  session_id: resultMsg.session_id,
-                }),
+                data: JSON.stringify(resultPayload),
               }));
               break;
             }
@@ -873,7 +887,12 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
       } catch (error) {
         clearInterval(heartbeatInterval);
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        controller.enqueue(formatSSE({ type: 'error', data: errorMessage }));
+        // Suppress spurious "exited with code 1" that the SDK throws after a
+        // successful result — the conversation already completed fine.
+        const isSpuriousExit = gotResult && /exited with code 1/i.test(errorMessage);
+        if (!isSpuriousExit) {
+          controller.enqueue(formatSSE({ type: 'error', data: errorMessage }));
+        }
         controller.enqueue(formatSSE({ type: 'done', data: '' }));
         controller.close();
       }

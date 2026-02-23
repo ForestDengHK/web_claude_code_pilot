@@ -106,6 +106,11 @@ function handleSSEEvent(
       try {
         const resultData = JSON.parse(event.data);
         callbacks.onResult(resultData.usage || null);
+        // If the SDK reported an error with details, surface them
+        if (resultData.is_error && Array.isArray(resultData.errors) && resultData.errors.length > 0) {
+          const details = resultData.errors.map((e: unknown) => typeof e === 'string' ? e : JSON.stringify(e)).join('\n');
+          callbacks.onError(accumulated + '\n\n**Error:** ' + details);
+        }
       } catch {
         callbacks.onResult(null);
       }
