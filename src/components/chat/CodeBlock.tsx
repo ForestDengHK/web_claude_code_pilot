@@ -64,20 +64,9 @@ export function CodeBlock({
     return lines.slice(0, maxCollapsedLines).join('\n');
   }, [code, lines, isCollapsible, expanded, maxCollapsedLines]);
 
+  // Relies on AppShell's global polyfill for non-secure contexts (HTTP via Tailscale).
   const copyText = (text: string) => {
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text);
-      return;
-    }
-    // Fallback for non-secure contexts (e.g. HTTP via Tailscale on mobile)
-    const el = document.createElement('textarea');
-    el.value = text;
-    el.setAttribute('readonly', '');
-    Object.assign(el.style, { position: 'fixed', left: '-9999px' });
-    document.body.appendChild(el);
-    el.select();
-    document.execCommand('copy');
-    document.body.removeChild(el);
+    navigator.clipboard.writeText(text);
   };
 
   const handleCopy = () => {

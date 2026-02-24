@@ -331,20 +331,9 @@ const streamdownPlugins = { cjk, code, math, mermaid };
 // One-tap copy (no dropdown), plus a simple CSV download button.
 // ---------------------------------------------------------------------------
 
+// Relies on AppShell's global polyfill for non-secure contexts (HTTP via Tailscale).
 function copyTextFallback(text: string) {
-  // Use polyfilled writeText if available, otherwise execCommand
-  if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(text).catch(() => {});
-    return;
-  }
-  const el = document.createElement("textarea");
-  el.value = text;
-  el.setAttribute("readonly", "");
-  Object.assign(el.style, { position: "fixed", left: "-9999px" });
-  document.body.appendChild(el);
-  el.select();
-  document.execCommand("copy");
-  document.body.removeChild(el);
+  navigator.clipboard.writeText(text).catch(() => {});
 }
 
 function extractTableData(table: HTMLTableElement) {

@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import {
+  CheckIcon,
   ChevronRightIcon,
   CopyIcon,
   DownloadIcon,
@@ -30,24 +31,11 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
-
-function copyToClipboard(text: string) {
-  if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(text);
-    return;
-  }
-  const el = document.createElement("textarea");
-  el.value = text;
-  el.setAttribute("readonly", "");
-  Object.assign(el.style, { position: "fixed", left: "-9999px" });
-  document.body.appendChild(el);
-  el.select();
-  document.execCommand("copy");
-  document.body.removeChild(el);
-}
 
 interface FileTreeContextType {
   expandedPaths: Set<string>;
@@ -360,17 +348,7 @@ export const FileTreeFile = ({
             })()}
             {(onDownload || onDelete || onAdd) && (
               <span className="ml-auto flex shrink-0 items-center">
-                <button
-                  type="button"
-                  className="flex size-8 items-center justify-center rounded transition-opacity hover:bg-muted md:size-5 md:opacity-0 md:group-hover/file:opacity-100"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    copyToClipboard(name);
-                  }}
-                  title="Copy file name"
-                >
-                  <CopyIcon className="size-4 text-muted-foreground md:size-3" />
-                </button>
+                <CopyNameButton name={name} />
                 {(onDownload || onDelete) && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -451,6 +429,39 @@ export const FileTreeName = ({
     {children}
   </span>
 );
+
+// Copy button — mirrors the exact pattern used by CodeBlockCopyButton (which works on mobile HTTP).
+// Key: await the clipboard call, provide own execCommand fallback, show visual feedback.
+function CopyNameButton({ name }: { name: string }) {
+  const [isCopied, setIsCopied] = useState(false);
+  const timeoutRef = useRef<number>(0);
+
+  useEffect(() => () => { window.clearTimeout(timeoutRef.current); }, []);
+
+  const handleCopy = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    // Fire-and-forget — the polyfill's execCommand runs synchronously inside
+    // the Promise constructor, so the copy happens immediately.
+    // Don't await: the promise may reject on HTTP even though the copy succeeded.
+    navigator.clipboard.writeText(name).catch(() => {});
+    setIsCopied(true);
+    window.clearTimeout(timeoutRef.current);
+    timeoutRef.current = window.setTimeout(() => setIsCopied(false), 1500);
+  }, [name]);
+
+  const Icon = isCopied ? CheckIcon : CopyIcon;
+
+  return (
+    <button
+      type="button"
+      className="flex size-8 items-center justify-center rounded transition-opacity hover:bg-muted md:size-5 md:opacity-0 md:group-hover/file:opacity-100"
+      onClick={handleCopy}
+      title="Copy file name"
+    >
+      <Icon className={cn("size-4 md:size-3", isCopied ? "text-green-500" : "text-muted-foreground")} />
+    </button>
+  );
+}
 
 export type FileTreeActionsProps = HTMLAttributes<HTMLDivElement>;
 
