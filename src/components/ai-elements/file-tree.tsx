@@ -13,6 +13,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useLongPress } from "@/hooks/useLongPress";
 import { cn } from "@/lib/utils";
 import {
   CheckIcon,
@@ -26,6 +28,7 @@ import {
   MinusIcon,
   PlusIcon,
   Trash2Icon,
+  XIcon,
 } from "lucide-react";
 import {
   createContext,
@@ -173,6 +176,8 @@ export const FileTreeFolder = ({
     [onAdd, onRemove, path, isAttached]
   );
 
+  const longPress = useLongPress();
+
   const folderContextValue = useMemo(
     () => ({ isExpanded, name, path }),
     [isExpanded, name, path]
@@ -187,9 +192,12 @@ export const FileTreeFolder = ({
           tabIndex={0}
           {...props}
         >
-          <div
-            className="group/folder flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors hover:bg-muted/50"
-          >
+          <Tooltip open={longPress.isTouchDevice ? longPress.isActive : undefined}>
+            <TooltipTrigger asChild>
+              <div
+                className="group/folder flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors hover:bg-muted/50"
+                {...longPress.handlers}
+              >
             <CollapsibleTrigger asChild>
               <button
                 type="button"
@@ -231,7 +239,19 @@ export const FileTreeFolder = ({
                 </button>
               </span>
             )}
-          </div>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="flex max-w-[min(300px,80vw)] items-center gap-2 break-all font-mono">
+              <span className="min-w-0">{name}</span>
+              <button
+                type="button"
+                className="shrink-0 rounded-sm p-0.5 text-background/60 hover:text-background"
+                onClick={longPress.dismiss}
+              >
+                <XIcon className="size-3" />
+              </button>
+            </TooltipContent>
+          </Tooltip>
           <CollapsibleContent>
             <div className="ml-4 border-l pl-2">{children}</div>
           </CollapsibleContent>
@@ -269,9 +289,12 @@ export const FileTreeFile = ({
   const isSelected = selectedPath === path;
   const isAttached = attachedPaths?.has(path) ?? false;
 
+  const longPress = useLongPress();
+
   const handleClick = useCallback(() => {
+    if (longPress.cancelClick()) return;
     onSelect?.(path);
-  }, [onSelect, path]);
+  }, [onSelect, path, longPress.cancelClick]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -314,38 +337,41 @@ export const FileTreeFile = ({
 
   return (
     <FileTreeFileContext.Provider value={fileContextValue}>
-      <div
-        className={cn(
-          "group/file flex cursor-pointer items-center gap-1 rounded px-2 py-1 transition-colors hover:bg-muted/50",
-          isSelected && "bg-muted",
-          className
-        )}
-        onClick={handleClick}
-        onKeyDown={handleKeyDown}
-        role="treeitem"
-        tabIndex={0}
-        {...props}
-      >
-        {children ?? (
-          <>
-            {/* Spacer for alignment */}
-            <span className="size-4" />
-            <FileTreeIcon>
-              {icon ?? <FileIcon className="size-4 text-muted-foreground" />}
-            </FileTreeIcon>
-            {/* Split name into stem + extension so the extension is always visible */}
-            {(() => {
-              const dotIdx = name.lastIndexOf(".");
-              if (dotIdx <= 0) return <FileTreeName title={name}>{name}</FileTreeName>;
-              const stem = name.slice(0, dotIdx);
-              const ext = name.slice(dotIdx);
-              return (
-                <span className="flex min-w-0 items-baseline" title={name}>
-                  <span className="truncate">{stem}</span>
-                  <span className="shrink-0 text-muted-foreground">{ext}</span>
-                </span>
-              );
-            })()}
+      <Tooltip open={longPress.isTouchDevice ? longPress.isActive : undefined}>
+        <TooltipTrigger asChild>
+          <div
+            className={cn(
+              "group/file flex cursor-pointer items-center gap-1 rounded px-2 py-1 transition-colors hover:bg-muted/50",
+              isSelected && "bg-muted",
+              className
+            )}
+            onClick={handleClick}
+            onKeyDown={handleKeyDown}
+            role="treeitem"
+            tabIndex={0}
+            {...props}
+            {...longPress.handlers}
+          >
+            {children ?? (
+              <>
+                {/* Spacer for alignment */}
+                <span className="size-4" />
+                <FileTreeIcon>
+                  {icon ?? <FileIcon className="size-4 text-muted-foreground" />}
+                </FileTreeIcon>
+                {/* Split name into stem + extension so the extension is always visible */}
+                {(() => {
+                  const dotIdx = name.lastIndexOf(".");
+                  if (dotIdx <= 0) return <FileTreeName>{name}</FileTreeName>;
+                  const stem = name.slice(0, dotIdx);
+                  const ext = name.slice(dotIdx);
+                  return (
+                    <span className="flex min-w-0 items-baseline">
+                      <span className="truncate">{stem}</span>
+                      <span className="shrink-0 text-muted-foreground">{ext}</span>
+                    </span>
+                  );
+                })()}
             {(onDownload || onDelete || onAdd) && (
               <span className="ml-auto flex shrink-0 items-center">
                 <CopyNameButton name={name} />
@@ -401,7 +427,19 @@ export const FileTreeFile = ({
             )}
           </>
         )}
-      </div>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="flex max-w-[min(300px,80vw)] items-center gap-2 break-all font-mono">
+          <span className="min-w-0">{name}</span>
+          <button
+            type="button"
+            className="shrink-0 rounded-sm p-0.5 text-background/60 hover:text-background"
+            onClick={longPress.dismiss}
+          >
+            <XIcon className="size-3" />
+          </button>
+        </TooltipContent>
+      </Tooltip>
     </FileTreeFileContext.Provider>
   );
 };
