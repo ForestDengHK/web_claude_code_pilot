@@ -58,12 +58,20 @@ export async function POST(request: NextRequest) {
       title = `Imported: ${info.projectName}`;
     }
 
+    const workingDirectory = info.cwd || info.projectPath;
+    if (!workingDirectory) {
+      return Response.json(
+        { error: 'Cannot import session: no working directory (cwd) found in session data' },
+        { status: 400 },
+      );
+    }
+
     // Create a new Web Claude Code Pilot session
     const session = createSession(
       title,
       undefined, // model — will use default
       undefined, // system prompt
-      info.cwd || info.projectPath,
+      workingDirectory,
       'code',
     );
 

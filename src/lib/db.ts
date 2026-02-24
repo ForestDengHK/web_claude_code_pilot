@@ -245,10 +245,13 @@ export function createSession(
   workingDirectory?: string,
   mode?: string,
 ): ChatSession {
+  if (!workingDirectory?.trim()) {
+    throw new Error('Cannot create session without a working directory');
+  }
   const db = getDb();
   const id = crypto.randomBytes(16).toString('hex');
   const now = new Date().toISOString().replace('T', ' ').split('.')[0];
-  const wd = workingDirectory || '';
+  const wd = workingDirectory;
   const projectName = path.basename(wd);
 
   db.prepare(

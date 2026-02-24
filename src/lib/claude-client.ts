@@ -438,8 +438,12 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // Check if dangerously_skip_permissions is enabled (per-session override or global setting)
         const skipPermissions = skipPermissionsOption ?? (getSetting('dangerously_skip_permissions') === 'true');
 
+        if (!workingDirectory) {
+          throw new Error('workingDirectory is required — refusing to fall back to homedir');
+        }
+
         const queryOptions: Options = {
-          cwd: workingDirectory || os.homedir(),
+          cwd: workingDirectory,
           abortController,
           includePartialMessages: true,
           permissionMode: skipPermissions
@@ -684,7 +688,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           // Uploaded non-image files: saved to disk for Read tool access
           let textPrompt = prompt;
           if (nonImageFiles.length > 0) {
-            const workDir = workingDirectory || os.homedir();
+            const workDir = workingDirectory; // guaranteed non-empty by chat route guard
             const savedPaths = getUploadedFilePaths(nonImageFiles, workDir);
             for (let i = 0; i < savedPaths.length; i++) {
               references.push(`File: ${savedPaths[i]} (${nonImageFiles[i].name})`);

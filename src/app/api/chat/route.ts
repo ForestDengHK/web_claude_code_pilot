@@ -29,6 +29,13 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    if (!session.working_directory) {
+      return new Response(JSON.stringify({ error: 'Session has no working directory. Please set a working directory before sending messages.' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     // Save user message — persist file metadata so attachments survive page reload
     let savedContent = content;
 

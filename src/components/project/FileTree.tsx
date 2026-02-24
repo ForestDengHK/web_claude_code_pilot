@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { RefreshIcon, Search01Icon, SourceCodeIcon, CodeIcon, File01Icon } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
@@ -143,15 +143,26 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  const abortRef = useRef<AbortController | null>(null);
+
   const fetchTree = useCallback(async () => {
+    // Abort any in-flight request to prevent stale responses
+    // from overwriting fresher data (race condition on directory switch)
+    abortRef.current?.abort();
+
     if (!workingDirectory) {
       setTree([]);
       return;
     }
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setLoading(true);
     try {
       const res = await fetch(
-        `/api/files?dir=${encodeURIComponent(workingDirectory)}&baseDir=${encodeURIComponent(workingDirectory)}&depth=4`
+        `/api/files?dir=${encodeURIComponent(workingDirectory)}&baseDir=${encodeURIComponent(workingDirectory)}&depth=4`,
+        { signal: controller.signal }
       );
       if (res.ok) {
         const data = await res.json();
@@ -159,10 +170,14 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
       } else {
         setTree([]);
       }
-    } catch {
+    } catch (e) {
+      // Silently ignore aborted requests
+      if (e instanceof DOMException && e.name === "AbortError") return;
       setTree([]);
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) {
+        setLoading(false);
+      }
     }
   }, [workingDirectory]);
 
