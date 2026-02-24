@@ -859,6 +859,16 @@ export const PromptInputTextarea = ({
         if (e.shiftKey) {
           return;
         }
+
+        // On touch devices (mobile), Enter inserts a newline;
+        // only the send button submits. On desktop, Enter submits.
+        const isTouchDevice =
+          typeof window !== "undefined" &&
+          window.matchMedia("(pointer: coarse)").matches;
+        if (isTouchDevice) {
+          return;
+        }
+
         e.preventDefault();
 
         // Check if the submit button is disabled before submitting
