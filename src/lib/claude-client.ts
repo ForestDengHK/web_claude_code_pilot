@@ -17,7 +17,6 @@ import type {
   PostToolUseHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { ClaudeStreamOptions, SSEEvent, TokenUsage, MCPServerConfig, PermissionRequestEvent, InputRequestEvent, FileAttachment } from '@/types';
-import { isImageFile } from '@/types';
 import { registerPendingPermission } from './permission-registry';
 import { registerPendingInputRequest } from './input-request-registry';
 import { getSetting, getActiveProvider } from './db';
@@ -650,17 +649,18 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         };
 
         // Build the prompt with file attachments.
-        // Path references (from tree +) → injected as @file/@directory style references.
-        // Images → sent as multimodal base64 content blocks (vision).
-        // Other uploaded files → saved to disk and referenced via Read tool.
-        let finalPrompt: string | AsyncIterable<SDKUserMessage> = prompt;
+        // All uploaded files (images included) are saved to disk so Claude Code
+        // can read them via its Read tool. For images this is important because
+        // the CLI's Read tool auto-resizes large images with sharp, avoiding the
+        // 5MB base64 API limit that inline content blocks would hit.
+        // Path references (from file tree +) are injected as @file/@directory
+        // style references — Claude Code reads/explores them directly.
+        let finalPrompt: string = prompt;
 
         if (files && files.length > 0) {
           const PATH_REF_TYPES = new Set(['text/x-directory-ref', 'text/x-file-ref']);
           const pathRefFiles = files.filter(f => PATH_REF_TYPES.has(f.type));
-          const regularFiles = files.filter(f => !PATH_REF_TYPES.has(f.type));
-          const imageFiles = regularFiles.filter(f => isImageFile(f.type));
-          const nonImageFiles = regularFiles.filter(f => !isImageFile(f.type));
+          const uploadedFiles = files.filter(f => !PATH_REF_TYPES.has(f.type));
 
           // Build prompt references
           const references: string[] = [];
@@ -685,56 +685,18 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             queryOptions.additionalDirectories = dirRefs;
           }
 
-          // Uploaded non-image files: saved to disk for Read tool access
-          let textPrompt = prompt;
-          if (nonImageFiles.length > 0) {
+          // All uploaded files (images + documents): saved to disk for Read tool access.
+          // Claude Code's Read tool auto-resizes images via sharp, so no size limit issues.
+          if (uploadedFiles.length > 0) {
             const workDir = workingDirectory; // guaranteed non-empty by chat route guard
-            const savedPaths = getUploadedFilePaths(nonImageFiles, workDir);
+            const savedPaths = getUploadedFilePaths(uploadedFiles, workDir);
             for (let i = 0; i < savedPaths.length; i++) {
-              references.push(`File: ${savedPaths[i]} (${nonImageFiles[i].name})`);
+              references.push(`File: ${savedPaths[i]} (${uploadedFiles[i].name})`);
             }
           }
 
           if (references.length > 0) {
-            textPrompt = `The user has attached the following files/directories for context. Use the Read tool to read files and the Glob/LS tools to explore directories:\n\n${references.join('\n')}\n\n${prompt}`;
-          }
-
-          // If there are images, build a multimodal SDKUserMessage
-          if (imageFiles.length > 0) {
-            const contentBlocks: Array<
-              | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
-              | { type: 'text'; text: string }
-            > = [];
-
-            for (const img of imageFiles) {
-              contentBlocks.push({
-                type: 'image',
-                source: {
-                  type: 'base64',
-                  media_type: img.type || 'image/png',
-                  data: img.data,
-                },
-              });
-            }
-
-            contentBlocks.push({ type: 'text', text: textPrompt });
-
-            const userMessage: SDKUserMessage = {
-              type: 'user',
-              message: {
-                role: 'user',
-                content: contentBlocks,
-              },
-              parent_tool_use_id: null,
-              session_id: sdkSessionId || '',
-            };
-
-            // Create a single-message async iterable
-            finalPrompt = (async function* () {
-              yield userMessage;
-            })();
-          } else {
-            finalPrompt = textPrompt;
+            finalPrompt = `The user has attached the following files/directories for context. Use the Read tool to read files (including images) and the Glob/LS tools to explore directories:\n\n${references.join('\n')}\n\n${prompt}`;
           }
         }
 
@@ -745,6 +707,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         let lastAssistantText = '';
         let tokenUsage: TokenUsage | null = null;
+        let streamedTextLength = 0; // track text sent via stream_event deltas
 
         for await (const message of conversation) {
           if (abortController?.signal.aborted) {
@@ -754,10 +717,16 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           switch (message.type) {
             case 'assistant': {
               const assistantMsg = message as SDKAssistantMessage;
-              // Text deltas are handled by stream_event for real-time streaming.
-              // Only track lastAssistantText here and process tool_use blocks.
+              // Text deltas are normally handled by stream_event for real-time streaming.
+              // However, when the prompt is an AsyncIterable (e.g. multimodal image messages),
+              // the SDK may not emit stream_event deltas. In that case, send the full
+              // assistant text here as a fallback.
               const text = extractTextFromMessage(assistantMsg);
               if (text) {
+                if (streamedTextLength === 0) {
+                  // No deltas were streamed — send the full text now
+                  controller.enqueue(formatSSE({ type: 'text', data: text }));
+                }
                 lastAssistantText = text;
               }
 
@@ -812,6 +781,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
               if (evt.type === 'content_block_delta' && 'delta' in evt) {
                 const delta = evt.delta;
                 if ('text' in delta && delta.text) {
+                  streamedTextLength += delta.text.length;
                   controller.enqueue(formatSSE({ type: 'text', data: delta.text }));
                 }
               }
