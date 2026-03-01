@@ -444,10 +444,13 @@ function RenderedView({
   filePath: string;
 }) {
   if (isHtml(filePath)) {
+    // Serve HTML via path-based URL so relative resources (CSS, JS, images)
+    // resolve naturally against the file's directory.
+    const previewUrl = `/api/preview${filePath}`;
     return (
       <iframe
-        srcDoc={content}
-        sandbox="allow-scripts"
+        src={previewUrl}
+        sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
         className="h-full w-full border-0"
         title="HTML Preview"
       />
