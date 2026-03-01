@@ -169,8 +169,8 @@ function ImagePreview({ filePath }: { filePath: string }) {
 
 type ToolStatus = 'running' | 'success' | 'error';
 
-function getStatus(tool: ToolAction): ToolStatus {
-  if (tool.result === undefined) return 'running';
+function getStatus(tool: ToolAction, isStreaming: boolean): ToolStatus {
+  if (tool.result === undefined) return isStreaming ? 'running' : 'success';
   return tool.isError ? 'error' : 'success';
 }
 
@@ -213,12 +213,12 @@ function DownloadButton({ filePath }: { filePath: string }) {
   );
 }
 
-function ToolActionRow({ tool }: { tool: ToolAction }) {
+function ToolActionRow({ tool, isStreaming }: { tool: ToolAction; isStreaming: boolean }) {
   const category = getToolCategory(tool.name);
   const icon = getToolIcon(category);
   const summary = getToolSummary(tool.name, tool.input, category);
   const filePath = getFilePath(tool.input);
-  const status = getStatus(tool);
+  const status = getStatus(tool, isStreaming);
 
   const label = category === 'bash' ? '' : category === 'skill' ? 'Skill' : tool.name;
 
@@ -270,7 +270,7 @@ export function ToolActionsGroup({
   isStreaming = false,
   streamingToolOutput: _streamingToolOutput,
 }: ToolActionsGroupProps) {
-  const hasRunningTool = tools.some((t) => t.result === undefined);
+  const hasRunningTool = isStreaming && tools.some((t) => t.result === undefined);
   const hasImageWrite = tools.some((t) => {
     const cat = getToolCategory(t.name);
     const fp = getFilePath(t.input);
@@ -285,9 +285,9 @@ export function ToolActionsGroup({
 
   if (tools.length === 0) return null;
 
-  const runningCount = tools.filter((t) => t.result === undefined).length;
+  const runningCount = isStreaming ? tools.filter((t) => t.result === undefined).length : 0;
   const doneCount = tools.length - runningCount;
-  const runningDesc = getRunningDescription(tools);
+  const runningDesc = isStreaming ? getRunningDescription(tools) : '';
 
   const handleToggle = () => {
     setUserExpandedState((prev) => prev !== null ? !prev : !expanded);
@@ -351,11 +351,11 @@ export function ToolActionsGroup({
                 {tools.map((tool, i) => {
                   const category = getToolCategory(tool.name);
                   const filePath = getFilePath(tool.input);
-                  const status = getStatus(tool);
+                  const status = getStatus(tool, isStreaming);
                   const showImage = category === 'write' && filePath && isImagePath(filePath) && status !== 'running';
                   return (
                     <div key={tool.id || `tool-${i}`}>
-                      <ToolActionRow tool={tool} />
+                      <ToolActionRow tool={tool} isStreaming={isStreaming} />
                       {showImage && <ImagePreview filePath={filePath} />}
                     </div>
                   );

@@ -24,6 +24,9 @@ import type { MessageContentBlock } from '@/types';
 /** Maximum file size (50 MB) to prevent memory issues with very large sessions */
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
+/** Default threshold (ms) for considering a session "active" based on file modification time. */
+const DEFAULT_ACTIVE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+
 // ==========================================
 // Types for Claude Code JSONL entries
 // ==========================================
@@ -53,6 +56,8 @@ export interface ClaudeSessionInfo {
   updatedAt: string;
   /** File size in bytes */
   fileSize: number;
+  /** Whether the session appears to be currently active (recently modified) */
+  isActive: boolean;
 }
 
 export interface ParsedMessage {
@@ -161,7 +166,7 @@ export function decodeProjectPath(encodedName: string): string {
  * List all available Claude Code CLI sessions.
  * Scans ~/.claude/projects/ for .jsonl files and extracts metadata.
  */
-export function listClaudeSessions(): ClaudeSessionInfo[] {
+export function listClaudeSessions(activeThresholdMs = DEFAULT_ACTIVE_THRESHOLD_MS): ClaudeSessionInfo[] {
   const projectsDir = getClaudeProjectsDir();
 
   if (!fs.existsSync(projectsDir)) {
@@ -188,7 +193,7 @@ export function listClaudeSessions(): ClaudeSessionInfo[] {
           const sessionId = jsonlFile.replace('.jsonl', '');
 
           try {
-            const info = extractSessionInfo(filePath, sessionId, decodedPath);
+            const info = extractSessionInfo(filePath, sessionId, decodedPath, activeThresholdMs);
             if (info) {
               sessions.push(info);
             }
@@ -232,6 +237,7 @@ function extractSessionInfo(
   filePath: string,
   sessionId: string,
   projectPath: string,
+  activeThresholdMs: number,
 ): ClaudeSessionInfo | null {
   const result = readJsonlLines(filePath);
   if (!result) return null;
@@ -292,6 +298,8 @@ function extractSessionInfo(
   // Use cwd from JSONL (authoritative) for projectName; fall back to decoded folder name
   const effectivePath = cwd || projectPath;
 
+  const isActive = (Date.now() - stat.mtimeMs) < activeThresholdMs;
+
   return {
     sessionId,
     projectPath: effectivePath,
@@ -305,6 +313,7 @@ function extractSessionInfo(
     createdAt: createdAt || stat.birthtime.toISOString(),
     updatedAt: updatedAt || stat.mtime.toISOString(),
     fileSize: stat.size,
+    isActive,
   };
 }
 
@@ -411,6 +420,8 @@ export function parseClaudeSession(sessionId: string): ParsedSession | null {
 
   const effectivePath = cwd || projectPath;
 
+  const isActive = (Date.now() - stat.mtimeMs) < DEFAULT_ACTIVE_THRESHOLD_MS;
+
   const info: ClaudeSessionInfo = {
     sessionId,
     projectPath: effectivePath,
@@ -424,6 +435,7 @@ export function parseClaudeSession(sessionId: string): ParsedSession | null {
     createdAt: createdAt || stat.birthtime.toISOString(),
     updatedAt: updatedAt || stat.mtime.toISOString(),
     fileSize: stat.size,
+    isActive,
   };
 
   return { info, messages };

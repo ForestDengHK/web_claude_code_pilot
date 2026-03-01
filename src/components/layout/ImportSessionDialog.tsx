@@ -38,6 +38,7 @@ interface ClaudeSessionInfo {
   createdAt: string;
   updatedAt: string;
   fileSize: number;
+  isActive: boolean;
 }
 
 interface ImportSessionDialogProps {
@@ -101,7 +102,16 @@ export function ImportSessionDialog({
     }
   }, [open, fetchSessions]);
 
-  const handleImport = async (sessionId: string) => {
+  const handleImport = async (sessionId: string, isActive?: boolean) => {
+    if (isActive) {
+      const confirmed = window.confirm(
+        "This session appears to be running in Claude Code CLI.\n\n" +
+        "Importing and resuming it from CodePilot while the CLI is still active " +
+        "may corrupt the session history (both processes write to the same file).\n\n" +
+        "Stop the CLI session first, or import read-only.\n\nContinue anyway?"
+      );
+      if (!confirmed) return;
+    }
     setImporting(sessionId);
     setError(null);
     try {
@@ -234,6 +244,14 @@ export function ImportSessionDialog({
                           <span className="font-medium text-sm truncate">
                             {session.projectName}
                           </span>
+                          {session.isActive && (
+                            <Badge
+                              variant="destructive"
+                              className="text-[10px] px-1.5 py-0 h-4 shrink-0 animate-pulse"
+                            >
+                              Running
+                            </Badge>
+                          )}
                           {session.gitBranch && (
                             <Badge
                               variant="secondary"
@@ -255,7 +273,7 @@ export function ImportSessionDialog({
                         size="sm"
                         variant="outline"
                         className="shrink-0 h-7 text-xs"
-                        onClick={() => handleImport(session.sessionId)}
+                        onClick={() => handleImport(session.sessionId, session.isActive)}
                         disabled={isImporting}
                       >
                         {isImporting ? (
