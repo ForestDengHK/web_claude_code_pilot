@@ -2,6 +2,14 @@ import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
 import { addMessage, getSession, updateSessionTitle, updateSdkSessionId, getSetting } from '@/lib/db';
 import { registerAbort, unregisterAbort } from '@/lib/abort-registry';
+import {
+  initStreamBuffer,
+  appendStreamText,
+  pushStreamToolUse,
+  pushStreamToolResult,
+  setStreamStatusText,
+  clearStreamBuffer,
+} from '@/lib/streaming-buffer-registry';
 import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment } from '@/types';
 import fs from 'fs/promises';
 import path from 'path';
@@ -192,6 +200,10 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
   let currentText = '';
   let tokenUsage: TokenUsage | null = null;
 
+  // Initialise the in-memory streaming buffer so the recovery-polling
+  // status endpoint can return intermediate output to the client.
+  initStreamBuffer(sessionId);
+
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -202,10 +214,22 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
         if (line.startsWith('data: ')) {
           try {
             const event: SSEEvent = JSON.parse(line.slice(6));
-            if (event.type === 'permission_request' || event.type === 'input_request' || event.type === 'tool_output') {
-              // Skip permission_request, input_request, and tool_output events - not saved as message content
+            if (event.type === 'permission_request' || event.type === 'input_request') {
+              // Skip permission_request and input_request events - not saved as message content
+            } else if (event.type === 'tool_output') {
+              // Not saved as message content, but capture progress for the
+              // streaming buffer so recovery can show "Running bash… (5s)".
+              try {
+                const parsed = JSON.parse(event.data);
+                if (parsed._progress) {
+                  setStreamStatusText(sessionId, `Running ${parsed.tool_name}... (${Math.round(parsed.elapsed_time_seconds)}s)`);
+                }
+              } catch {
+                // raw stderr — ignore for buffer purposes
+              }
             } else if (event.type === 'text') {
               currentText += event.data;
+              appendStreamText(sessionId, event.data);
             } else if (event.type === 'tool_use') {
               // Flush any accumulated text before the tool use block
               if (currentText.trim()) {
@@ -216,6 +240,11 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
                 const toolData = JSON.parse(event.data);
                 contentBlocks.push({
                   type: 'tool_use',
+                  id: toolData.id,
+                  name: toolData.name,
+                  input: toolData.input,
+                });
+                pushStreamToolUse(sessionId, {
                   id: toolData.id,
                   name: toolData.name,
                   input: toolData.input,
@@ -232,6 +261,11 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
                   content: resultData.content,
                   is_error: resultData.is_error || false,
                 });
+                pushStreamToolResult(sessionId, {
+                  tool_use_id: resultData.tool_use_id,
+                  content: resultData.content,
+                  is_error: resultData.is_error || false,
+                });
               } catch {
                 // skip malformed tool_result data
               }
@@ -241,6 +275,9 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
                 const statusData = JSON.parse(event.data);
                 if (statusData.session_id) {
                   updateSdkSessionId(sessionId, statusData.session_id);
+                  setStreamStatusText(sessionId, `Connected (${statusData.model || 'claude'})`);
+                } else if (statusData.notification) {
+                  setStreamStatusText(sessionId, statusData.message || statusData.title || undefined);
                 }
               } catch {
                 // skip malformed status data
@@ -316,5 +353,8 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
         addMessage(sessionId, 'assistant', content);
       }
     }
+  } finally {
+    // Always clean up the streaming buffer when the stream ends
+    clearStreamBuffer(sessionId);
   }
 }

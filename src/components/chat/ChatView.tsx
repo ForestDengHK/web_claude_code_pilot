@@ -200,7 +200,17 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           setStatusText('Connection lost, retrying...');
           return;
         }
-        const status: { isProcessing: boolean; pendingPermission: PermissionRequestEvent | null; pendingInputRequest: InputRequestEvent | null } = await res.json();
+        const status: {
+          isProcessing: boolean;
+          pendingPermission: PermissionRequestEvent | null;
+          pendingInputRequest: InputRequestEvent | null;
+          streamingContent?: {
+            text: string;
+            toolUses: ToolUseInfo[];
+            toolResults: ToolResultInfo[];
+            statusText?: string;
+          } | null;
+        } = await res.json();
 
         if (!status.isProcessing) {
           // Claude has finished — fetch final messages and stop recovery.
@@ -238,8 +248,25 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           return;
         }
 
-        // Still processing — update status and keep polling
-        setStatusText('Reconnecting... Claude is still running');
+        // Still processing — show intermediate output from the streaming buffer
+        if (status.streamingContent) {
+          const sc = status.streamingContent;
+          if (sc.text) {
+            setStreamingContent(sc.text);
+            accumulatedRef.current = sc.text;
+          }
+          if (sc.toolUses?.length) {
+            setToolUses(sc.toolUses);
+            toolUsesRef.current = sc.toolUses;
+          }
+          if (sc.toolResults?.length) {
+            setToolResults(sc.toolResults);
+            toolResultsRef.current = sc.toolResults;
+          }
+          setStatusText(sc.statusText || 'Claude is running...');
+        } else {
+          setStatusText('Reconnecting... Claude is still running');
+        }
       } catch {
         setStatusText('Connection lost, retrying...');
       }

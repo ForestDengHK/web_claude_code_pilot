@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { isSessionActive } from '@/lib/abort-registry';
 import { getPendingPermissionForSession } from '@/lib/permission-registry';
 import { getPendingInputRequestForSession } from '@/lib/input-request-registry';
+import { getStreamBuffer } from '@/lib/streaming-buffer-registry';
 
 export async function GET(
   _request: NextRequest,
@@ -13,5 +14,6 @@ export async function GET(
     isProcessing: isSessionActive(sessionId),
     pendingPermission: getPendingPermissionForSession(sessionId),
     pendingInputRequest: getPendingInputRequestForSession(sessionId),
+    streamingContent: getStreamBuffer(sessionId),
   });
 }
