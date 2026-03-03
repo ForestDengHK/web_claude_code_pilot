@@ -59,7 +59,7 @@ interface ChatViewProps {
 }
 
 export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, initialMode }: ChatViewProps) {
-  const { setStreamingSessionId, workingDirectory, setWorkingDirectory, setPanelOpen, setPendingApprovalSessionId } = usePanel();
+  const { setStreamingSessionId, workingDirectory, setWorkingDirectory, setPanelOpen, setPendingApprovalSessionId, sessionTitle } = usePanel();
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -671,7 +671,14 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
               setStatusText(text);
             }
           },
-          onResult: () => { /* token usage captured by consumeSSEStream */ },
+          onResult: () => {
+            // Notify user when task completes and tab is not visible
+            if (document.visibilityState === "hidden" && window.isSecureContext && "Notification" in window && Notification.permission === "granted") {
+              const title = sessionTitle || "CodePilot";
+              const body = accumulated.length > 100 ? accumulated.slice(0, 100) + "…" : accumulated;
+              new Notification(`✅ ${title}`, { body, tag: `codepilot-${sessionId}` });
+            }
+          },
           onPermissionRequest: (permData) => {
             setPendingPermission(permData);
             setPermissionResolved(null);

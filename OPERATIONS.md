@@ -78,10 +78,66 @@ After clearing, just restart the service. First page load will be slow (cold com
 
 ## Access
 
-| From | URL |
-|------|-----|
-| Local machine | `http://localhost:4000` |
-| Phone via Tailscale | `http://<tailscale-ip>:4000` |
+| From | URL | Secure Context |
+|------|-----|----------------|
+| Local machine | `http://localhost:4000` | ✅ (localhost exempt) |
+| Phone via Tailscale (HTTP) | `http://100.78.243.128:4000` | ❌ |
+| Phone via Tailscale (HTTPS) | `https://partys-mac-mini.tail7bb93b.ts.net` | ✅ |
+
+HTTPS access enables browser APIs that require secure context: Notification, Clipboard, PWA install, Service Worker.
+
+## HTTPS (Caddy Reverse Proxy)
+
+Caddy handles TLS termination, forwarding `https://partys-mac-mini.tail7bb93b.ts.net` → `http://localhost:4000`. CodePilot itself runs unchanged on HTTP.
+
+### How it works
+
+```
+Phone → HTTPS:443 (Caddy, TLS) → HTTP:4000 (CodePilot)
+Phone → HTTP:4000 (direct, still works)
+```
+
+### Service Management
+
+```bash
+# Check status
+launchctl list | grep caddy
+
+# Restart
+launchctl kickstart -k gui/$(id -u)/com.codepilot.caddy
+
+# View logs
+tail -f ~/.codepilot/caddy.log
+```
+
+### TLS Certificate
+
+Certificate is issued by Tailscale (Let's Encrypt), valid ~90 days, **auto-renewed weekly** by `com.codepilot.cert-renew` launchd job.
+
+```bash
+# Check cert expiry
+openssl x509 -in ~/.codepilot/certs/tailscale.crt -noout -dates
+
+# Manual renewal (if needed)
+~/.codepilot/renew-cert.sh
+
+# Check renewal log
+cat ~/.codepilot/cert-renew.log
+```
+
+### Troubleshooting
+
+**HTTPS not working but HTTP works?** → Caddy might have stopped:
+```bash
+launchctl kickstart -k gui/$(id -u)/com.codepilot.caddy
+```
+
+**Certificate expired?** → Run manual renewal:
+```bash
+~/.codepilot/renew-cert.sh
+```
+
+**Tailscale macOS sandbox note:** The Tailscale macOS App runs in a sandbox, so `tailscale cert` can only write to its container directory. The renewal script works around this by outputting to stdout (`--cert-file -`) and redirecting to `~/.codepilot/certs/`.
 
 ## Key Files
 
@@ -91,6 +147,11 @@ After clearing, just restart the service. First page load will be slow (cold com
 | `~/.codepilot/codepilot.db` | Database (chat sessions, settings) |
 | `~/.codepilot/service.log` | Runtime log |
 | `~/.codepilot/service.error.log` | Error log |
+| `~/Library/LaunchAgents/com.codepilot.caddy.plist` | Caddy reverse proxy service |
+| `~/.codepilot/Caddyfile` | Caddy config (HTTPS → port 4000) |
+| `~/.codepilot/certs/tailscale.{crt,key}` | TLS certificate & key |
+| `~/.codepilot/renew-cert.sh` | Certificate auto-renewal script |
+| `~/Library/LaunchAgents/com.codepilot.cert-renew.plist` | Weekly cert renewal job |
 
 ## Production Build (Release Only)
 

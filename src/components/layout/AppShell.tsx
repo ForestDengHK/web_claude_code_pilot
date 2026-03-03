@@ -88,6 +88,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Install clipboard polyfill once on mount (before any user interaction)
   useEffect(installClipboardPolyfill, []);
 
+  // Request notification permission on secure contexts
+  useEffect(() => {
+    if (window.isSecureContext && "Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
   const [chatListOpen, setChatListOpenRaw] = useState(false);
 
   // Panel width state with localStorage persistence
