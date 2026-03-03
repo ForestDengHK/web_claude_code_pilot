@@ -57,6 +57,36 @@ interface FileTreeContextType {
 // oxlint-disable-next-line eslint(no-empty-function)
 const noop = () => {};
 
+function FolderCopyButton({ path }: { path: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(path).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [path]);
+  return (
+    <button type="button" className="shrink-0 rounded-sm p-0.5 text-background/60 hover:text-background" onClick={handleCopy}>
+      {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
+    </button>
+  );
+}
+
+function FileCopyButton({ path }: { path: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(path).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [path]);
+  return (
+    <button type="button" className="shrink-0 rounded-sm p-0.5 text-background/60 hover:text-background" onClick={handleCopy}>
+      {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
+    </button>
+  );
+}
+
 const FileTreeContext = createContext<FileTreeContextType>({
   // oxlint-disable-next-line eslint-plugin-unicorn(no-new-builtin)
   expandedPaths: new Set(),
@@ -195,7 +225,7 @@ export const FileTreeFolder = ({
           <Tooltip open={longPress.isTouchDevice ? longPress.isActive : undefined}>
             <TooltipTrigger asChild>
               <div
-                className="group/folder flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors hover:bg-muted/50"
+                className="group/folder flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors hover:bg-muted/50 select-none"
                 {...longPress.handlers}
               >
             <CollapsibleTrigger asChild>
@@ -243,6 +273,7 @@ export const FileTreeFolder = ({
             </TooltipTrigger>
             <TooltipContent side="top" className="flex max-w-[min(300px,80vw)] items-center gap-2 break-all font-mono">
               <span className="min-w-0">{name}</span>
+              <FolderCopyButton path={path} />
               <button
                 type="button"
                 className="shrink-0 rounded-sm p-0.5 text-background/60 hover:text-background"
@@ -341,7 +372,7 @@ export const FileTreeFile = ({
         <TooltipTrigger asChild>
           <div
             className={cn(
-              "group/file flex cursor-pointer items-center gap-1 rounded px-2 py-1 transition-colors hover:bg-muted/50",
+              "group/file flex cursor-pointer items-center gap-1 rounded px-2 py-1 transition-colors hover:bg-muted/50 select-none",
               isSelected && "bg-muted",
               className
             )}
@@ -430,7 +461,8 @@ export const FileTreeFile = ({
           </div>
         </TooltipTrigger>
         <TooltipContent side="top" className="flex max-w-[min(300px,80vw)] items-center gap-2 break-all font-mono">
-          <span className="min-w-0">{name}</span>
+          <span className="min-w-0">{path}</span>
+          <FileCopyButton path={path} />
           <button
             type="button"
             className="shrink-0 rounded-sm p-0.5 text-background/60 hover:text-background"
