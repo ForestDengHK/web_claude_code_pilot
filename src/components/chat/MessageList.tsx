@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import type { Message, PermissionRequestEvent, InputRequestEvent } from '@/types';
 import {
   Conversation,
@@ -100,6 +101,24 @@ export function MessageList({
   activeMessageId,
   searchQuery,
 }: MessageListProps) {
+  // Highlight message from search navigation (?highlight=<message_id>)
+  const searchParams = useSearchParams();
+  const highlightMessageId = searchParams.get('highlight');
+
+  useEffect(() => {
+    if (!highlightMessageId) return;
+    // Wait for messages to render, then scroll
+    const timer = setTimeout(() => {
+      const el = document.getElementById(`msg-${highlightMessageId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('search-highlight');
+        setTimeout(() => el.classList.remove('search-highlight'), 3000);
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [highlightMessageId]);
+
   // Scroll anchor: preserve position when older messages are prepended
   const anchorIdRef = useRef<string | null>(null);
   const prevMessageCountRef = useRef(messages.length);

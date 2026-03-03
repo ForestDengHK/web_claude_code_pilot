@@ -5,6 +5,35 @@ import fs from 'fs';
 import os from 'os';
 import type { ChatSession, Message, SettingsMap, TaskItem, TaskStatus, ApiProvider, CreateProviderRequest, UpdateProviderRequest } from '@/types';
 
+/**
+ * Extract searchable plain text from a message content string.
+ * Handles both plain text and JSON-encoded MessageContentBlock arrays.
+ */
+function extractTextContent(content: string): string {
+  try {
+    const parsed = JSON.parse(content);
+    if (Array.isArray(parsed)) {
+      const parts: string[] = [];
+      for (const block of parsed) {
+        if (block.type === 'text' && block.text) {
+          parts.push(block.text);
+        } else if (block.type === 'tool_use' && block.input) {
+          if (block.name) parts.push(block.name);
+          const input = block.input as Record<string, unknown>;
+          if (typeof input.command === 'string') parts.push(input.command);
+          if (typeof input.description === 'string') parts.push(input.description);
+        } else if (block.type === 'tool_result' && block.content) {
+          parts.push(block.content);
+        }
+      }
+      return parts.join('\n');
+    }
+  } catch {
+    // Not JSON — plain text message
+  }
+  return content;
+}
+
 const dataDir = process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.codepilot');
 const DB_PATH = path.join(dataDir, 'codepilot.db');
 
@@ -115,6 +144,14 @@ function initDb(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id);
   `);
 
+  // FTS5 full-text search index for messages (standalone storage)
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+      message_id UNINDEXED,
+      text_content
+    );
+  `);
+
   // Run migrations for existing databases
   migrateDb(db);
 }
@@ -206,6 +243,37 @@ function migrateDb(db: Database.Database): void {
       ).run(id, 'Default', 'anthropic', baseUrlRow?.value || '', tokenRow?.value || '', 1, 0, '{}', 'Migrated from settings', now, now);
     }
   }
+
+  // Migrate FTS table: if old schema (external content mode) exists, recreate it
+  try {
+    db.prepare("SELECT message_id FROM messages_fts LIMIT 0").run();
+  } catch {
+    // Old FTS table doesn't have message_id column — drop and recreate
+    console.log('[db] Recreating FTS table with new schema...');
+    db.exec('DROP TABLE IF EXISTS messages_fts');
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+        message_id UNINDEXED,
+        text_content
+      );
+    `);
+  }
+
+  // Backfill FTS index if empty but messages exist
+  const ftsCount = db.prepare('SELECT COUNT(*) as count FROM messages_fts').get() as { count: number };
+  const msgCount = db.prepare('SELECT COUNT(*) as count FROM messages').get() as { count: number };
+  if (ftsCount.count === 0 && msgCount.count > 0) {
+    console.log(`[db] Backfilling FTS index for ${msgCount.count} messages...`);
+    const allMsgs = db.prepare('SELECT id, content FROM messages').all() as { id: string; content: string }[];
+    const insertFts = db.prepare('INSERT INTO messages_fts(message_id, text_content) VALUES (?, ?)');
+    const backfill = db.transaction(() => {
+      for (const msg of allMsgs) {
+        insertFts.run(msg.id, extractTextContent(msg.content));
+      }
+    });
+    backfill();
+    console.log(`[db] FTS index backfill complete`);
+  }
 }
 
 // ==========================================
@@ -263,6 +331,12 @@ export function createSession(
 
 export function deleteSession(id: string): boolean {
   const db = getDb();
+  // Delete FTS entries for this session's messages before cascade
+  const msgIds = db.prepare('SELECT id FROM messages WHERE session_id = ?').all(id) as { id: string }[];
+  const deleteFts = db.prepare('DELETE FROM messages_fts WHERE message_id = ?');
+  for (const msg of msgIds) {
+    deleteFts.run(msg.id);
+  }
   const result = db.prepare('DELETE FROM chat_sessions WHERE id = ?').run(id);
   return result.changes > 0;
 }
@@ -353,6 +427,12 @@ export function addMessage(
     'INSERT INTO messages (id, session_id, role, content, created_at, token_usage) VALUES (?, ?, ?, ?, ?, ?)'
   ).run(id, sessionId, role, content, now, tokenUsage || null);
 
+  // Sync FTS index
+  db.prepare('INSERT INTO messages_fts(message_id, text_content) VALUES (?, ?)').run(
+    id,
+    extractTextContent(content)
+  );
+
   updateSessionTimestamp(sessionId);
 
   return db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as Message;
@@ -367,9 +447,68 @@ export function getAllMessages(sessionId: string): Message[] {
 
 export function clearSessionMessages(sessionId: string): void {
   const db = getDb();
+  // Delete FTS entries for this session's messages
+  const msgIds = db.prepare('SELECT id FROM messages WHERE session_id = ?').all(sessionId) as { id: string }[];
+  const deleteFts = db.prepare('DELETE FROM messages_fts WHERE message_id = ?');
+  for (const { id } of msgIds) {
+    deleteFts.run(id);
+  }
   db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
   // Reset SDK session ID so next message starts fresh
   db.prepare('UPDATE chat_sessions SET sdk_session_id = ? WHERE id = ?').run('', sessionId);
+}
+
+export function searchMessages(query: string, limit = 50): { results: Array<{
+  message_id: string;
+  session_id: string;
+  session_title: string;
+  project_name: string;
+  working_directory: string;
+  role: string;
+  snippet: string;
+  created_at: string;
+}>; total: number } {
+  const db = getDb();
+
+  const safeTerm = query.replace(/['"]/g, '').trim();
+  if (!safeTerm) return { results: [], total: 0 };
+
+  // Use prefix matching for better UX
+  const ftsQuery = safeTerm.split(/\s+/).map(t => `"${t}"*`).join(' ');
+
+  try {
+    const rows = db.prepare(`
+      SELECT f.message_id, m.session_id, m.role, m.created_at,
+             s.title as session_title, s.project_name, s.working_directory,
+             snippet(messages_fts, 1, '<mark>', '</mark>', '...', 40) as snippet
+      FROM messages_fts f
+      JOIN messages m ON f.message_id = m.id
+      JOIN chat_sessions s ON m.session_id = s.id
+      WHERE messages_fts MATCH ?
+      ORDER BY rank
+      LIMIT ?
+    `).all(ftsQuery, limit) as Array<{
+      message_id: string;
+      session_id: string;
+      session_title: string;
+      project_name: string;
+      working_directory: string;
+      role: string;
+      snippet: string;
+      created_at: string;
+    }>;
+
+    const countRow = db.prepare(`
+      SELECT COUNT(*) as total
+      FROM messages_fts f
+      JOIN messages m ON f.message_id = m.id
+      WHERE messages_fts MATCH ?
+    `).get(ftsQuery) as { total: number };
+
+    return { results: rows, total: countRow.total };
+  } catch {
+    return { results: [], total: 0 };
+  }
 }
 
 // ==========================================

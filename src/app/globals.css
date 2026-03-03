@@ -224,6 +224,16 @@
   }
 }
 
+/* Search result highlight animation */
+@keyframes search-highlight-fade {
+  0% { background-color: hsl(var(--accent)); }
+  100% { background-color: transparent; }
+}
+.search-highlight {
+  animation: search-highlight-fade 3s ease-out;
+  border-radius: 0.5rem;
+}
+
 /* Global icon stroke weight — make Hugeicons strokes slightly thicker */
 svg.hugeicons,
 svg.hugeicons path,

@@ -250,6 +250,22 @@ export interface MessagesResponse {
   hasMore?: boolean;
 }
 
+export interface SearchResult {
+  message_id: string;
+  session_id: string;
+  session_title: string;
+  project_name: string;
+  working_directory: string;
+  role: 'user' | 'assistant';
+  snippet: string;
+  created_at: string;
+}
+
+export interface SearchResponse {
+  results: SearchResult[];
+  total: number;
+}
+
 export interface SuccessResponse {
   success: true;
 }

@@ -270,7 +270,7 @@ export function MessageItem({ message, searchQuery }: MessageItemProps) {
   });
 
   return (
-    <AIMessage from={isUser ? 'user' : 'assistant'}>
+    <AIMessage from={isUser ? 'user' : 'assistant'} id={`msg-${message.id}`}>
       <MessageContent>
         {/* File attachments for user messages */}
         {isUser && files.length > 0 && (

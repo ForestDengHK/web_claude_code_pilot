@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   Delete02Icon,
@@ -115,6 +115,20 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [deletingSession, setDeletingSession] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchTab, setSearchTab] = useState<'sessions' | 'content'>('sessions');
+  const [contentResults, setContentResults] = useState<Array<{
+    message_id: string;
+    session_id: string;
+    session_title: string;
+    project_name: string;
+    working_directory: string;
+    role: string;
+    snippet: string;
+    created_at: string;
+  }>>([]);
+  const [contentTotal, setContentTotal] = useState(0);
+  const [isSearchingContent, setIsSearchingContent] = useState(false);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
@@ -273,6 +287,42 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
     }
   };
 
+  // Content search with debounce
+  const searchContent = useCallback(async (query: string) => {
+    if (!query.trim()) {
+      setContentResults([]);
+      setContentTotal(0);
+      return;
+    }
+    setIsSearchingContent(true);
+    try {
+      const res = await fetch(`/api/chat/sessions/search?q=${encodeURIComponent(query)}&limit=50`);
+      if (res.ok) {
+        const data = await res.json();
+        setContentResults(data.results || []);
+        setContentTotal(data.total || 0);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setIsSearchingContent(false);
+    }
+  }, []);
+
+  // Debounced content search when query or tab changes
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    if (searchQuery.trim() && searchTab === 'content') {
+      searchDebounceRef.current = setTimeout(() => searchContent(searchQuery), 300);
+    } else {
+      setContentResults([]);
+      setContentTotal(0);
+    }
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, [searchQuery, searchTab, searchContent]);
+
   const isSearching = searchQuery.length > 0;
 
   const filteredSessions = searchQuery
@@ -356,10 +406,42 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
           <Input
             placeholder="Search threads..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              if (!e.target.value.trim()) setSearchTab('sessions');
+            }}
             className="h-8 pl-7 text-xs"
           />
         </div>
+        {searchQuery.trim() && (
+          <div className="flex mt-1.5 gap-1">
+            <button
+              className={cn(
+                "flex-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+                searchTab === 'sessions'
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+              )}
+              onClick={() => setSearchTab('sessions')}
+            >
+              Sessions
+            </button>
+            <button
+              className={cn(
+                "flex-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+                searchTab === 'content'
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+              )}
+              onClick={() => setSearchTab('content')}
+            >
+              Content
+              {searchTab === 'content' && contentTotal > 0 && (
+                <span className="ml-1 text-[10px] text-muted-foreground">({contentTotal})</span>
+              )}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Import CLI Session */}
@@ -377,169 +459,208 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
 
       {/* Session list grouped by project */}
       <ScrollArea className="flex-1 min-h-0 px-3">
-        <div className="flex flex-col pb-3">
-          {filteredSessions.length === 0 ? (
-            <p className="px-2.5 py-3 text-[11px] text-muted-foreground/60">
-              {searchQuery ? "No matching threads" : "No conversations yet"}
-            </p>
-          ) : (
-            projectGroups.map((group) => {
-              const isCollapsed =
-                !isSearching && collapsedProjects.has(group.workingDirectory);
-              const isFolderHovered =
-                hoveredFolder === group.workingDirectory;
-
-              return (
-                <div key={group.workingDirectory || "__no_project"} className="mt-1 first:mt-0">
-                  {/* Folder header */}
-                  <div
-                    className={cn(
-                      "flex items-center gap-1 rounded-md px-2 py-1 cursor-pointer select-none transition-colors",
-                      "hover:bg-accent/50"
-                    )}
-                    onClick={() => toggleProject(group.workingDirectory)}
-                    onMouseEnter={() =>
-                      setHoveredFolder(group.workingDirectory)
-                    }
-                    onMouseLeave={() => setHoveredFolder(null)}
-                  >
-                    <HugeiconsIcon
-                      icon={isCollapsed ? ArrowRight01Icon : ArrowDown01Icon}
-                      className="h-3 w-3 shrink-0 text-muted-foreground"
-                    />
-                    <HugeiconsIcon
-                      icon={Folder01Icon}
-                      className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-                    />
-                    <span className="flex-1 truncate text-[12px] font-medium text-sidebar-foreground">
-                      {group.displayName}
+        {isSearching && searchTab === 'content' ? (
+          <div className="flex flex-col gap-1 pb-3">
+            {isSearchingContent ? (
+              <p className="px-2.5 py-3 text-[11px] text-muted-foreground/60">
+                Searching...
+              </p>
+            ) : contentResults.length === 0 ? (
+              <p className="px-2.5 py-3 text-[11px] text-muted-foreground/60">
+                No matching content
+              </p>
+            ) : (
+              contentResults.map((result) => (
+                <Link
+                  key={`${result.session_id}-${result.message_id}`}
+                  href={`/chat/${result.session_id}?highlight=${result.message_id}`}
+                  onClick={() => onClose?.()}
+                  className="flex flex-col gap-0.5 rounded-md px-2.5 py-2 transition-colors hover:bg-accent/50"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-[11px] font-medium text-sidebar-foreground">
+                      {result.session_title}
                     </span>
-                    {/* New chat in project button (on hover) */}
-                    {group.workingDirectory !== "" && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            className={cn(
-                              "h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground transition-opacity",
-                              isFolderHovered ? "opacity-100" : "opacity-0"
-                            )}
-                            tabIndex={isFolderHovered ? 0 : -1}
-                            onClick={(e) =>
-                              handleCreateSessionInProject(
-                                e,
-                                group.workingDirectory
-                              )
-                            }
-                          >
-                            <HugeiconsIcon
-                              icon={PlusSignIcon}
-                              className="h-3 w-3"
-                            />
-                            <span className="sr-only">
-                              New chat in {group.displayName}
-                            </span>
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="right">
-                          New chat in {group.displayName}
-                        </TooltipContent>
-                      </Tooltip>
+                    <span className="shrink-0 text-[10px] text-muted-foreground/40">
+                      {formatRelativeTime(result.created_at)}
+                    </span>
+                  </div>
+                  <p
+                    className="text-[11px] leading-relaxed text-muted-foreground line-clamp-2 [&_mark]:bg-yellow-200 [&_mark]:text-foreground dark:[&_mark]:bg-yellow-500/30"
+                    dangerouslySetInnerHTML={{ __html: result.snippet }}
+                  />
+                  <span className="text-[10px] text-muted-foreground/40">
+                    {result.project_name || result.working_directory.split('/').pop()}
+                  </span>
+                </Link>
+              ))
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-col pb-3">
+            {filteredSessions.length === 0 ? (
+              <p className="px-2.5 py-3 text-[11px] text-muted-foreground/60">
+                {searchQuery ? "No matching threads" : "No conversations yet"}
+              </p>
+            ) : (
+              projectGroups.map((group) => {
+                const isCollapsed =
+                  !isSearching && collapsedProjects.has(group.workingDirectory);
+                const isFolderHovered =
+                  hoveredFolder === group.workingDirectory;
+
+                return (
+                  <div key={group.workingDirectory || "__no_project"} className="mt-1 first:mt-0">
+                    {/* Folder header */}
+                    <div
+                      className={cn(
+                        "flex items-center gap-1 rounded-md px-2 py-1 cursor-pointer select-none transition-colors",
+                        "hover:bg-accent/50"
+                      )}
+                      onClick={() => toggleProject(group.workingDirectory)}
+                      onMouseEnter={() =>
+                        setHoveredFolder(group.workingDirectory)
+                      }
+                      onMouseLeave={() => setHoveredFolder(null)}
+                    >
+                      <HugeiconsIcon
+                        icon={isCollapsed ? ArrowRight01Icon : ArrowDown01Icon}
+                        className="h-3 w-3 shrink-0 text-muted-foreground"
+                      />
+                      <HugeiconsIcon
+                        icon={Folder01Icon}
+                        className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                      />
+                      <span className="flex-1 truncate text-[12px] font-medium text-sidebar-foreground">
+                        {group.displayName}
+                      </span>
+                      {/* New chat in project button (on hover) */}
+                      {group.workingDirectory !== "" && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              className={cn(
+                                "h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground transition-opacity",
+                                isFolderHovered ? "opacity-100" : "opacity-0"
+                              )}
+                              tabIndex={isFolderHovered ? 0 : -1}
+                              onClick={(e) =>
+                                handleCreateSessionInProject(
+                                  e,
+                                  group.workingDirectory
+                                )
+                              }
+                            >
+                              <HugeiconsIcon
+                                icon={PlusSignIcon}
+                                className="h-3 w-3"
+                              />
+                              <span className="sr-only">
+                                New chat in {group.displayName}
+                              </span>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="right">
+                            New chat in {group.displayName}
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
+
+                    {/* Session items */}
+                    {!isCollapsed && (
+                      <div className="mt-0.5 flex flex-col gap-0.5">
+                        {group.sessions.map((session) => {
+                          const isActive = pathname === `/chat/${session.id}`;
+                          const isDeleting = deletingSession === session.id;
+                          const isSessionStreaming =
+                            streamingSessionId === session.id;
+                          const needsApproval =
+                            pendingApprovalSessionId === session.id;
+
+                          return (
+                            <div
+                              key={session.id}
+                              className="group relative"
+                            >
+                              <Link
+                                href={`/chat/${session.id}`}
+                                onClick={() => onClose?.()}
+                                className={cn(
+                                  "flex items-center gap-1.5 rounded-md pl-7 pr-2 py-1.5 transition-all duration-150 min-w-0",
+                                  isActive
+                                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                                    : "text-sidebar-foreground hover:bg-accent/50"
+                                )}
+                              >
+                                {/* Streaming pulse indicator */}
+                                {isSessionStreaming && (
+                                  <span className="relative flex h-2 w-2 shrink-0">
+                                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                                    <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+                                  </span>
+                                )}
+                                {/* Approval indicator */}
+                                {needsApproval && (
+                                  <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-amber-500/10">
+                                    <HugeiconsIcon
+                                      icon={Notification02Icon}
+                                      className="h-2.5 w-2.5 text-amber-500"
+                                    />
+                                  </span>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <span className="line-clamp-1 text-[12px] font-medium leading-tight break-all">
+                                    {session.title}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <span className="text-[10px] text-muted-foreground/40">
+                                    {formatRelativeTime(session.updated_at)}
+                                  </span>
+                                </div>
+                              </Link>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    className={cn(
+                                      "absolute right-1 top-1 bg-sidebar text-muted-foreground/60 hover:text-destructive transition-opacity",
+                                      "opacity-100 md:opacity-0 md:group-hover:opacity-100",
+                                      isDeleting && "opacity-100"
+                                    )}
+                                    onClick={(e) =>
+                                      handleDeleteSession(e, session.id)
+                                    }
+                                    disabled={isDeleting}
+                                  >
+                                    <HugeiconsIcon
+                                      icon={Delete02Icon}
+                                      className="h-3 w-3"
+                                    />
+                                    <span className="sr-only">
+                                      Delete session
+                                    </span>
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="right">
+                                  Delete
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
+                          );
+                        })}
+                      </div>
                     )}
                   </div>
-
-                  {/* Session items */}
-                  {!isCollapsed && (
-                    <div className="mt-0.5 flex flex-col gap-0.5">
-                      {group.sessions.map((session) => {
-                        const isActive = pathname === `/chat/${session.id}`;
-                        const isDeleting = deletingSession === session.id;
-                        const isSessionStreaming =
-                          streamingSessionId === session.id;
-                        const needsApproval =
-                          pendingApprovalSessionId === session.id;
-
-                        return (
-                          <div
-                            key={session.id}
-                            className="group relative"
-                          >
-                            <Link
-                              href={`/chat/${session.id}`}
-                              onClick={() => onClose?.()}
-                              className={cn(
-                                "flex items-center gap-1.5 rounded-md pl-7 pr-2 py-1.5 transition-all duration-150 min-w-0",
-                                isActive
-                                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                                  : "text-sidebar-foreground hover:bg-accent/50"
-                              )}
-                            >
-                              {/* Streaming pulse indicator */}
-                              {isSessionStreaming && (
-                                <span className="relative flex h-2 w-2 shrink-0">
-                                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
-                                  <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
-                                </span>
-                              )}
-                              {/* Approval indicator */}
-                              {needsApproval && (
-                                <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-amber-500/10">
-                                  <HugeiconsIcon
-                                    icon={Notification02Icon}
-                                    className="h-2.5 w-2.5 text-amber-500"
-                                  />
-                                </span>
-                              )}
-                              <div className="flex-1 min-w-0">
-                                <span className="line-clamp-1 text-[12px] font-medium leading-tight break-all">
-                                  {session.title}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-1 shrink-0">
-                                <span className="text-[10px] text-muted-foreground/40">
-                                  {formatRelativeTime(session.updated_at)}
-                                </span>
-                              </div>
-                            </Link>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon-xs"
-                                  className={cn(
-                                    "absolute right-1 top-1 bg-sidebar text-muted-foreground/60 hover:text-destructive transition-opacity",
-                                    "opacity-100 md:opacity-0 md:group-hover:opacity-100",
-                                    isDeleting && "opacity-100"
-                                  )}
-                                  onClick={(e) =>
-                                    handleDeleteSession(e, session.id)
-                                  }
-                                  disabled={isDeleting}
-                                >
-                                  <HugeiconsIcon
-                                    icon={Delete02Icon}
-                                    className="h-3 w-3"
-                                  />
-                                  <span className="sr-only">
-                                    Delete session
-                                  </span>
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent side="right">
-                                Delete
-                              </TooltipContent>
-                            </Tooltip>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
-        </div>
+                );
+              })
+            )}
+          </div>
+        )}
       </ScrollArea>
 
       {/* Version */}
