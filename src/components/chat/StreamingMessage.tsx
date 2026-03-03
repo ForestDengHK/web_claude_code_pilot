@@ -333,7 +333,12 @@ export function StreamingMessage({
           />
         )}
 
-        {/* Permission approval confirmation */}
+        {/* Streaming text content rendered via Streamdown */}
+        {content && (
+          <MessageResponse>{content}</MessageResponse>
+        )}
+
+        {/* Permission approval confirmation — rendered after content so it appears near the bottom */}
         {(pendingPermission || permissionResolved) && (
           <Confirmation
             approval={getApproval()}
@@ -389,18 +394,13 @@ export function StreamingMessage({
           </Confirmation>
         )}
 
-        {/* AskUserQuestion input request */}
+        {/* AskUserQuestion input request — rendered after content so it appears at the bottom */}
         {(pendingInputRequest || inputRequestResolved) && onInputResponse && (
           <InputRequestUI
             inputRequest={pendingInputRequest!}
             onSubmit={onInputResponse}
             resolved={!!inputRequestResolved}
           />
-        )}
-
-        {/* Streaming text content rendered via Streamdown */}
-        {content && (
-          <MessageResponse>{content}</MessageResponse>
         )}
 
         {/* Loading indicator when no content yet */}
