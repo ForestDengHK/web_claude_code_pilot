@@ -15,9 +15,27 @@ import {
   CancelCircleIcon,
   Download04Icon,
 } from "@hugeicons/core-free-icons";
-import { ChevronRightIcon } from 'lucide-react';
+import { ChevronRightIcon, CopyIcon, CheckIcon, XIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useLongPress } from '@/hooks/useLongPress';
+import { useCallback } from 'react';
 import { ImageLightbox } from '@/components/chat/ImageLightbox';
+
+function CopyTextButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [text]);
+  return (
+    <button type="button" className="shrink-0 rounded-sm p-0.5 text-background/60 hover:text-background" onClick={handleCopy}>
+      {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
+    </button>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -112,6 +130,25 @@ function getToolSummary(name: string, input: unknown, category: ToolCategory): s
     }
     default:
       return name;
+  }
+}
+
+/** Full untruncated text for tooltip display */
+function getToolFullText(name: string, input: unknown, category: ToolCategory): string {
+  const inp = input as Record<string, unknown> | undefined;
+  if (!inp) return name;
+  switch (category) {
+    case 'bash': return (inp.command || inp.cmd || name) as string;
+    case 'search': {
+      const pattern = (inp.pattern || inp.query || inp.glob || '') as string;
+      return pattern ? `"${pattern}"` : name;
+    }
+    case 'skill': {
+      const skillName = (inp.skill || inp.name || inp.skill_name || '') as string;
+      const args = (inp.args || '') as string;
+      return skillName ? `/${skillName}${args ? ' ' + args : ''}` : name;
+    }
+    default: return getToolSummary(name, input, category);
   }
 }
 
@@ -217,8 +254,10 @@ function ToolActionRow({ tool, isStreaming }: { tool: ToolAction; isStreaming: b
   const category = getToolCategory(tool.name);
   const icon = getToolIcon(category);
   const summary = getToolSummary(tool.name, tool.input, category);
+  const fullText = getToolFullText(tool.name, tool.input, category);
   const filePath = getFilePath(tool.input);
   const status = getStatus(tool, isStreaming);
+  const longPress = useLongPress();
 
   const label = category === 'bash' ? '' : category === 'skill' ? 'Skill' : tool.name;
 
@@ -230,9 +269,26 @@ function ToolActionRow({ tool, isStreaming }: { tool: ToolAction; isStreaming: b
         <span className={cn("font-medium shrink-0", category === 'skill' ? "text-blue-500" : "text-muted-foreground")}>{label}</span>
       )}
 
-      <span className={cn("font-mono truncate flex-1", category === 'skill' ? "text-blue-500/70" : "text-muted-foreground/60")}>
-        {summary}
-      </span>
+      <Tooltip open={longPress.isTouchDevice ? longPress.isActive : undefined}>
+        <TooltipTrigger asChild>
+          <span
+            className={cn("font-mono truncate flex-1 select-none", category === 'skill' ? "text-blue-500/70" : "text-muted-foreground/60")}
+            title={fullText}
+            {...longPress.handlers}
+          >
+            {summary}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" align="start" className="max-w-[90vw] sm:max-w-md">
+          <div className="flex items-start gap-2">
+            <pre className="whitespace-pre-wrap break-all font-mono text-xs flex-1">{fullText}</pre>
+            <CopyTextButton text={fullText} />
+            <button type="button" className="shrink-0 rounded-sm p-0.5 text-background/60 hover:text-background" onClick={longPress.dismiss}>
+              <XIcon className="size-3" />
+            </button>
+          </div>
+        </TooltipContent>
+      </Tooltip>
 
       {filePath && (category === 'read' || category === 'write') && (
         <span className="text-muted-foreground/40 text-[11px] font-mono truncate max-w-[200px] hidden sm:inline">
@@ -253,12 +309,15 @@ function ToolActionRow({ tool, isStreaming }: { tool: ToolAction; isStreaming: b
 // Header summary helper — build running task description
 // ---------------------------------------------------------------------------
 
-function getRunningDescription(tools: ToolAction[]): string {
+function getRunningDescription(tools: ToolAction[]): { summary: string; fullText: string } {
   const running = tools.filter((t) => t.result === undefined);
-  if (running.length === 0) return '';
+  if (running.length === 0) return { summary: '', fullText: '' };
   const last = running[running.length - 1];
   const category = getToolCategory(last.name);
-  return getToolSummary(last.name, last.input, category);
+  return {
+    summary: getToolSummary(last.name, last.input, category),
+    fullText: getToolFullText(last.name, last.input, category),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -287,7 +346,8 @@ export function ToolActionsGroup({
 
   const runningCount = isStreaming ? tools.filter((t) => t.result === undefined).length : 0;
   const doneCount = tools.length - runningCount;
-  const runningDesc = isStreaming ? getRunningDescription(tools) : '';
+  const { summary: runningDesc, fullText: runningFullText } = isStreaming ? getRunningDescription(tools) : { summary: '', fullText: '' };
+  const headerLongPress = useLongPress();
 
   const handleToggle = () => {
     setUserExpandedState((prev) => prev !== null ? !prev : !expanded);
@@ -325,9 +385,27 @@ export function ToolActionsGroup({
 
         {/* Show running task description on the right */}
         {runningDesc && (
-          <span className="ml-auto text-muted-foreground/40 text-[11px] font-mono truncate max-w-[40%]">
-            {runningDesc}
-          </span>
+          <Tooltip open={headerLongPress.isTouchDevice ? headerLongPress.isActive : undefined}>
+            <TooltipTrigger asChild>
+              <span
+                className="ml-auto text-muted-foreground/40 text-[11px] font-mono truncate max-w-[40%] select-none"
+                title={runningFullText}
+                {...headerLongPress.handlers}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {runningDesc}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="end" className="max-w-[90vw] sm:max-w-md">
+              <div className="flex items-start gap-2">
+                <pre className="whitespace-pre-wrap break-all font-mono text-xs flex-1">{runningFullText}</pre>
+                <CopyTextButton text={runningFullText} />
+                <button type="button" className="shrink-0 rounded-sm p-0.5 text-background/60 hover:text-background" onClick={(e) => { e.stopPropagation(); headerLongPress.dismiss(); }}>
+                  <XIcon className="size-3" />
+                </button>
+              </div>
+            </TooltipContent>
+          </Tooltip>
         )}
       </button>
 
