@@ -51,6 +51,7 @@ function formatRelativeTime(dateStr: string): string {
 }
 
 const COLLAPSED_PROJECTS_KEY = "codepilot:collapsed-projects";
+const MAX_VISIBLE_SESSIONS = 5;
 
 function loadCollapsedProjects(): Set<string> {
   if (typeof window === 'undefined') return new Set();
@@ -136,6 +137,7 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
   );
   const [hoveredFolder, setHoveredFolder] = useState<string | null>(null);
   const [creatingChat, setCreatingChat] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   const handleNewChat = useCallback(async () => {
     const lastDir = typeof window !== 'undefined'
@@ -570,91 +572,113 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                     </div>
 
                     {/* Session items */}
-                    {!isCollapsed && (
-                      <div className="mt-0.5 flex flex-col gap-0.5">
-                        {group.sessions.map((session) => {
-                          const isActive = pathname === `/chat/${session.id}`;
-                          const isDeleting = deletingSession === session.id;
-                          const isSessionStreaming =
-                            streamingSessionId === session.id;
-                          const needsApproval =
-                            pendingApprovalSessionId === session.id;
+                    {!isCollapsed && (() => {
+                      const isGroupExpanded = expandedGroups.has(group.workingDirectory);
+                      const hasMore = group.sessions.length > MAX_VISIBLE_SESSIONS;
+                      const visibleSessions = hasMore && !isGroupExpanded
+                        ? group.sessions.slice(0, MAX_VISIBLE_SESSIONS)
+                        : group.sessions;
+                      const hiddenCount = group.sessions.length - MAX_VISIBLE_SESSIONS;
 
-                          return (
-                            <div
-                              key={session.id}
-                              className="group relative"
-                            >
-                              <Link
-                                href={`/chat/${session.id}`}
-                                onClick={() => onClose?.()}
-                                className={cn(
-                                  "flex items-center gap-1.5 rounded-md pl-7 pr-2 py-1.5 transition-all duration-150 min-w-0",
-                                  isActive
-                                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                                    : "text-sidebar-foreground hover:bg-accent/50"
-                                )}
+                      return (
+                        <div className="mt-0.5 flex flex-col gap-0.5">
+                          {visibleSessions.map((session) => {
+                            const isActive = pathname === `/chat/${session.id}`;
+                            const isDeleting = deletingSession === session.id;
+                            const isSessionStreaming =
+                              streamingSessionId === session.id;
+                            const needsApproval =
+                              pendingApprovalSessionId === session.id;
+
+                            return (
+                              <div
+                                key={session.id}
+                                className="group relative"
                               >
-                                {/* Streaming pulse indicator */}
-                                {isSessionStreaming && (
-                                  <span className="relative flex h-2 w-2 shrink-0">
-                                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
-                                    <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
-                                  </span>
-                                )}
-                                {/* Approval indicator */}
-                                {needsApproval && (
-                                  <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-amber-500/10">
-                                    <HugeiconsIcon
-                                      icon={Notification02Icon}
-                                      className="h-2.5 w-2.5 text-amber-500"
-                                    />
-                                  </span>
-                                )}
-                                <div className="flex-1 min-w-0">
-                                  <span className="line-clamp-1 text-[12px] font-medium leading-tight break-all">
-                                    {session.title}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-1 shrink-0">
-                                  <span className="text-[10px] text-muted-foreground/40">
-                                    {formatRelativeTime(session.updated_at)}
-                                  </span>
-                                </div>
-                              </Link>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon-xs"
-                                    className={cn(
-                                      "absolute right-1 top-1 bg-sidebar text-muted-foreground/60 hover:text-destructive transition-opacity",
-                                      "opacity-100 md:opacity-0 md:group-hover:opacity-100",
-                                      isDeleting && "opacity-100"
-                                    )}
-                                    onClick={(e) =>
-                                      handleDeleteSession(e, session.id)
-                                    }
-                                    disabled={isDeleting}
-                                  >
-                                    <HugeiconsIcon
-                                      icon={Delete02Icon}
-                                      className="h-3 w-3"
-                                    />
-                                    <span className="sr-only">
-                                      Delete session
+                                <Link
+                                  href={`/chat/${session.id}`}
+                                  onClick={() => onClose?.()}
+                                  className={cn(
+                                    "flex items-center gap-1.5 rounded-md pl-7 pr-8 md:pr-2 py-1.5 transition-all duration-150 min-w-0",
+                                    isActive
+                                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                                      : "text-sidebar-foreground hover:bg-accent/50"
+                                  )}
+                                >
+                                  {/* Streaming pulse indicator */}
+                                  {isSessionStreaming && (
+                                    <span className="relative flex h-2 w-2 shrink-0">
+                                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+                                      <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
                                     </span>
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent side="right">
-                                  Delete
-                                </TooltipContent>
-                              </Tooltip>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                                  )}
+                                  {/* Approval indicator */}
+                                  {needsApproval && (
+                                    <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-amber-500/10">
+                                      <HugeiconsIcon
+                                        icon={Notification02Icon}
+                                        className="h-2.5 w-2.5 text-amber-500"
+                                      />
+                                    </span>
+                                  )}
+                                  <div className="flex-1 min-w-0">
+                                    <span className="line-clamp-1 text-[12px] font-medium leading-tight break-all">
+                                      {session.title}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    <span className="text-[10px] text-muted-foreground/40">
+                                      {formatRelativeTime(session.updated_at)}
+                                    </span>
+                                  </div>
+                                </Link>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon-xs"
+                                      className={cn(
+                                        "absolute right-1 top-1 bg-sidebar text-muted-foreground/60 hover:text-destructive transition-opacity",
+                                        "opacity-100 md:opacity-0 md:group-hover:opacity-100",
+                                        isDeleting && "opacity-100"
+                                      )}
+                                      onClick={(e) =>
+                                        handleDeleteSession(e, session.id)
+                                      }
+                                      disabled={isDeleting}
+                                    >
+                                      <HugeiconsIcon
+                                        icon={Delete02Icon}
+                                        className="h-3 w-3"
+                                      />
+                                      <span className="sr-only">
+                                        Delete session
+                                      </span>
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="right">
+                                    Delete
+                                  </TooltipContent>
+                                </Tooltip>
+                              </div>
+                            );
+                          })}
+                          {hasMore && (
+                            <button
+                              className="pl-7 py-1 text-[11px] text-muted-foreground/60 hover:text-muted-foreground text-left transition-colors"
+                              onClick={() => setExpandedGroups((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(group.workingDirectory)) next.delete(group.workingDirectory);
+                                else next.add(group.workingDirectory);
+                                return next;
+                              })}
+                            >
+                              {isGroupExpanded ? "Show less" : `${hiddenCount} more...`}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })
