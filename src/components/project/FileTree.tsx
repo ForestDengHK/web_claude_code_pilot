@@ -155,6 +155,7 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [gitStatusMap, setGitStatusMap] = useState<Map<string, string>>(new Map());
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -166,6 +167,7 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
     if (!workingDirectory) {
       setTree([]);
       setGitStatusMap(new Map());
+      setExpandedPaths(new Set());
       return;
     }
 
@@ -180,8 +182,14 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
       );
       if (res.ok) {
         const data = await res.json();
-        setTree(data.tree || []);
-        setGitStatusMap(buildGitStatusMap(data.tree || []));
+        const newTree = data.tree || [];
+        setTree(newTree);
+        setGitStatusMap(buildGitStatusMap(newTree));
+        // Expand first-level directories by default on fresh load
+        setExpandedPaths(prev => prev.size === 0
+          ? new Set(newTree.filter((n: FileTreeNode) => n.type === 'directory').map((n: FileTreeNode) => n.path))
+          : prev
+        );
       } else {
         setTree([]);
         setGitStatusMap(new Map());
@@ -237,11 +245,6 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
       setDeleteTarget(null);
     }
   }, [deleteTarget, workingDirectory, fetchTree]);
-
-  // Build default expanded set from first-level directories
-  const defaultExpanded = new Set(
-    tree.filter((n) => n.type === "directory").map((n) => n.path)
-  );
 
   // Get all directory paths in the tree for expand/collapse all
   const getAllDirectoryPaths = useCallback((nodes: FileTreeNode[]): string[] => {
@@ -320,7 +323,8 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
           </p>
         ) : (
           <AIFileTree
-            defaultExpanded={defaultExpanded}
+            expanded={expandedPaths}
+            onExpandedChange={setExpandedPaths}
             gitStatusMap={gitStatusMap}
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI Elements FileTree onSelect type conflicts with HTMLAttributes.onSelect
             onSelect={onFileSelect as any}
