@@ -446,17 +446,38 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
         )}
       </div>
 
-      {/* Import CLI Session */}
-      <div className="px-3 pb-1">
+      {/* Import CLI Session + Collapse/Expand all */}
+      <div className="flex items-center gap-1 px-3 pb-1">
         <Button
           variant="ghost"
           size="sm"
-          className="w-full justify-start gap-2 h-7 text-xs text-muted-foreground hover:text-foreground"
+          className="flex-1 justify-start gap-2 h-7 text-xs text-muted-foreground hover:text-foreground"
           onClick={() => setImportDialogOpen(true)}
         >
           <HugeiconsIcon icon={FileImportIcon} className="h-3 w-3" />
           Import CLI Session
         </Button>
+        {projectGroups.length > 1 && (
+          <button
+            className="shrink-0 px-1.5 py-0.5 text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors rounded"
+            onClick={() => {
+              const allCollapsed = projectGroups.every((g) => collapsedProjects.has(g.workingDirectory));
+              if (allCollapsed) {
+                setCollapsedProjects(new Set());
+                saveCollapsedProjects(new Set());
+              } else {
+                const all = new Set(projectGroups.map((g) => g.workingDirectory));
+                setCollapsedProjects(all);
+                saveCollapsedProjects(all);
+                setExpandedGroups(new Set());
+              }
+            }}
+          >
+            {projectGroups.every((g) => collapsedProjects.has(g.workingDirectory))
+              ? "Expand all"
+              : "Collapse all"}
+          </button>
+        )}
       </div>
 
       {/* Session list grouped by project */}
