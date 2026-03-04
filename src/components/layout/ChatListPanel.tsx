@@ -135,7 +135,6 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
     () => loadCollapsedProjects()
   );
-  const [hoveredFolder, setHoveredFolder] = useState<string | null>(null);
   const [creatingChat, setCreatingChat] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
@@ -529,22 +528,15 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
               projectGroups.map((group) => {
                 const isCollapsed =
                   !isSearching && collapsedProjects.has(group.workingDirectory);
-                const isFolderHovered =
-                  hoveredFolder === group.workingDirectory;
-
                 return (
                   <div key={group.workingDirectory || "__no_project"} className="mt-1 first:mt-0">
                     {/* Folder header */}
                     <div
                       className={cn(
-                        "flex items-center gap-1 rounded-md px-2 py-1 cursor-pointer select-none transition-colors",
+                        "group/folder flex items-center gap-1 rounded-md px-2 py-1 cursor-pointer select-none transition-colors",
                         "hover:bg-accent/50"
                       )}
                       onClick={() => toggleProject(group.workingDirectory)}
-                      onMouseEnter={() =>
-                        setHoveredFolder(group.workingDirectory)
-                      }
-                      onMouseLeave={() => setHoveredFolder(null)}
                     >
                       <HugeiconsIcon
                         icon={isCollapsed ? ArrowRight01Icon : ArrowDown01Icon}
@@ -557,7 +549,7 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                       <span className="flex-1 truncate text-[12px] font-medium text-sidebar-foreground">
                         {group.displayName}
                       </span>
-                      {/* New chat in project button (on hover) */}
+                      {/* New chat in project button */}
                       {group.workingDirectory !== "" && (
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -566,9 +558,8 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                               size="icon-xs"
                               className={cn(
                                 "h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground transition-opacity",
-                                isFolderHovered ? "opacity-100" : "opacity-0"
+                                "opacity-100 md:opacity-0 md:group-hover/folder:opacity-100"
                               )}
-                              tabIndex={isFolderHovered ? 0 : -1}
                               onClick={(e) =>
                                 handleCreateSessionInProject(
                                   e,
