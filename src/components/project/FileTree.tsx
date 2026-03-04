@@ -243,6 +243,21 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
     tree.filter((n) => n.type === "directory").map((n) => n.path)
   );
 
+  // Get all directory paths in the tree for expand/collapse all
+  const getAllDirectoryPaths = useCallback((nodes: FileTreeNode[]): string[] => {
+    const paths: string[] = [];
+    function walk(ns: FileTreeNode[]) {
+      for (const n of ns) {
+        if (n.type === 'directory') {
+          paths.push(n.path);
+          if (n.children) walk(n.children);
+        }
+      }
+    }
+    walk(nodes);
+    return paths;
+  }, []);
+
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Header */}
@@ -250,6 +265,24 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
         <p className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground" title={workingDirectory}>
           {workingDirectory || 'No directory selected'}
         </p>
+        {tree.length > 0 && (
+          <>
+            <button
+              className="text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors px-1.5 py-0.5 rounded shrink-0"
+              onClick={() => {
+                const allDirs = getAllDirectoryPaths(tree);
+                const allExpanded = allDirs.every(p => expandedPaths.has(p));
+                if (allExpanded) {
+                  setExpandedPaths(new Set());
+                } else {
+                  setExpandedPaths(new Set(allDirs));
+                }
+              }}
+            >
+              {tree.length > 0 && getAllDirectoryPaths(tree).every(p => expandedPaths.has(p)) ? 'Collapse' : 'Expand'}
+            </button>
+          </>
+        )}
         <Button
           variant="ghost"
           size="icon-sm"
