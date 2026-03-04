@@ -813,6 +813,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           recoveryAbortRef.current = false;
           setStatusText(undefined);
           window.dispatchEvent(new CustomEvent('refresh-file-tree'));
+          window.dispatchEvent(new CustomEvent('session-updated'));
         }
       }
     },
