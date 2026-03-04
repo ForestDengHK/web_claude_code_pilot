@@ -36,6 +36,7 @@ export interface FileTreeNode {
   children?: FileTreeNode[];
   size?: number;
   extension?: string;
+  gitStatus?: 'M' | 'A' | '?';
 }
 
 export interface FilePreview {

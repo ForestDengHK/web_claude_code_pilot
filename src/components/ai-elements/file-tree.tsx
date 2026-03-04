@@ -51,6 +51,7 @@ interface FileTreeContextType {
   onDownload?: (path: string) => void;
   onDelete?: (path: string) => void;
   attachedPaths?: Set<string>;
+  gitStatusMap?: Map<string, string>;
 }
 
 // Default noop for context default value
@@ -105,6 +106,7 @@ export type FileTreeProps = HTMLAttributes<HTMLDivElement> & {
   onDelete?: (path: string) => void;
   onExpandedChange?: (expanded: Set<string>) => void;
   attachedPaths?: Set<string>;
+  gitStatusMap?: Map<string, string>;
 };
 
 export const FileTree = ({
@@ -119,6 +121,7 @@ export const FileTree = ({
   onDelete,
   onExpandedChange,
   attachedPaths,
+  gitStatusMap,
   className,
   children,
   ...props
@@ -141,8 +144,8 @@ export const FileTree = ({
   );
 
   const contextValue = useMemo(
-    () => ({ attachedPaths, expandedPaths, onAdd, onDelete, onDownload, onPreview, onRemove, onSelect, selectedPath, togglePath }),
-    [attachedPaths, expandedPaths, onAdd, onDelete, onDownload, onPreview, onRemove, onSelect, selectedPath, togglePath]
+    () => ({ attachedPaths, expandedPaths, gitStatusMap, onAdd, onDelete, onDownload, onPreview, onRemove, onSelect, selectedPath, togglePath }),
+    [attachedPaths, expandedPaths, gitStatusMap, onAdd, onDelete, onDownload, onPreview, onRemove, onSelect, selectedPath, togglePath]
   );
 
   return (
@@ -185,10 +188,11 @@ export const FileTreeFolder = ({
   children,
   ...props
 }: FileTreeFolderProps) => {
-  const { expandedPaths, togglePath, onAdd, onRemove, attachedPaths } =
+  const { expandedPaths, togglePath, onAdd, onRemove, attachedPaths, gitStatusMap } =
     useContext(FileTreeContext);
   const isExpanded = expandedPaths.has(path);
   const isAttached = attachedPaths?.has(path) ?? false;
+  const gitStatus = gitStatusMap?.get(path);
 
   const handleToggle = useCallback(() => {
     togglePath(path);
@@ -242,6 +246,7 @@ export const FileTreeFolder = ({
                 />
               </button>
             </CollapsibleTrigger>
+            {gitStatus && <span className="size-1.5 rounded-full bg-yellow-500 shrink-0" />}
             <FileTreeIcon>
               {isExpanded ? (
                 <FolderOpenIcon className="size-4 text-blue-500" />
@@ -316,9 +321,18 @@ export const FileTreeFile = ({
   children,
   ...props
 }: FileTreeFileProps) => {
-  const { selectedPath, onSelect, onAdd, onRemove, onDownload, onDelete, attachedPaths } = useContext(FileTreeContext);
+  const { selectedPath, onSelect, onAdd, onRemove, onDownload, onDelete, attachedPaths, gitStatusMap } = useContext(FileTreeContext);
   const isSelected = selectedPath === path;
   const isAttached = attachedPaths?.has(path) ?? false;
+  const gitStatus = gitStatusMap?.get(path);
+
+  const gitDotColor = gitStatus === 'M' ? 'bg-yellow-500'
+    : (gitStatus === 'A' || gitStatus === '?') ? 'bg-green-500'
+    : undefined;
+
+  const gitTextClass = gitStatus === 'M' ? 'text-yellow-600 dark:text-yellow-400'
+    : (gitStatus === 'A' || gitStatus === '?') ? 'text-green-600 dark:text-green-400'
+    : undefined;
 
   const longPress = useLongPress();
 
@@ -385,21 +399,23 @@ export const FileTreeFile = ({
           >
             {children ?? (
               <>
-                {/* Spacer for alignment */}
-                <span className="size-4" />
+                {/* Git status dot / alignment spacer */}
+                <span className="flex size-4 items-center justify-center shrink-0">
+                  {gitDotColor && <span className={cn("size-1.5 rounded-full", gitDotColor)} />}
+                </span>
                 <FileTreeIcon>
                   {icon ?? <FileIcon className="size-4 text-muted-foreground" />}
                 </FileTreeIcon>
                 {/* Split name into stem + extension so the extension is always visible */}
                 {(() => {
                   const dotIdx = name.lastIndexOf(".");
-                  if (dotIdx <= 0) return <FileTreeName>{name}</FileTreeName>;
+                  if (dotIdx <= 0) return <FileTreeName className={gitTextClass}>{name}</FileTreeName>;
                   const stem = name.slice(0, dotIdx);
                   const ext = name.slice(dotIdx);
                   return (
                     <span className="flex min-w-0 items-baseline">
-                      <span className="truncate">{stem}</span>
-                      <span className="shrink-0 text-muted-foreground">{ext}</span>
+                      <span className={cn("truncate", gitTextClass)}>{stem}</span>
+                      <span className={cn("shrink-0", gitTextClass || "text-muted-foreground")}>{ext}</span>
                     </span>
                   );
                 })()}

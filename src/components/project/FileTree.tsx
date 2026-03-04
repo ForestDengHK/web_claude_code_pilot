@@ -107,6 +107,18 @@ function filterTree(nodes: FileTreeNode[], query: string): FileTreeNode[] {
     }));
 }
 
+function buildGitStatusMap(nodes: FileTreeNode[]): Map<string, string> {
+  const map = new Map<string, string>();
+  function walk(ns: FileTreeNode[]) {
+    for (const n of ns) {
+      if (n.gitStatus) map.set(n.path, n.gitStatus);
+      if (n.children) walk(n.children);
+    }
+  }
+  walk(nodes);
+  return map;
+}
+
 function RenderTreeNodes({ nodes, searchQuery }: { nodes: FileTreeNode[]; searchQuery: string }) {
   const filtered = searchQuery ? filterTree(nodes, searchQuery) : nodes;
 
@@ -142,6 +154,7 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
   const [attachedPaths, setAttachedPaths] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [gitStatusMap, setGitStatusMap] = useState<Map<string, string>>(new Map());
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -152,6 +165,7 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
 
     if (!workingDirectory) {
       setTree([]);
+      setGitStatusMap(new Map());
       return;
     }
 
@@ -167,13 +181,16 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
       if (res.ok) {
         const data = await res.json();
         setTree(data.tree || []);
+        setGitStatusMap(buildGitStatusMap(data.tree || []));
       } else {
         setTree([]);
+        setGitStatusMap(new Map());
       }
     } catch (e) {
       // Silently ignore aborted requests
       if (e instanceof DOMException && e.name === "AbortError") return;
       setTree([]);
+      setGitStatusMap(new Map());
     } finally {
       if (!controller.signal.aborted) {
         setLoading(false);
@@ -271,6 +288,7 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
         ) : (
           <AIFileTree
             defaultExpanded={defaultExpanded}
+            gitStatusMap={gitStatusMap}
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI Elements FileTree onSelect type conflicts with HTMLAttributes.onSelect
             onSelect={onFileSelect as any}
             onAdd={onFileAdd}

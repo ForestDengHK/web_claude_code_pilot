@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
-import { scanDirectory, isPathSafe, isRootPath } from '@/lib/files';
+import { scanDirectory, isPathSafe, isRootPath, getGitStatusMap, annotateTreeWithGitStatus } from '@/lib/files';
 import type { FileTreeResponse, ErrorResponse } from '@/types';
 
 export async function GET(request: NextRequest) {
@@ -53,7 +53,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const tree = await scanDirectory(resolvedDir, Math.min(depth, 5));
+    const [tree, statusMap] = await Promise.all([
+      scanDirectory(resolvedDir, Math.min(depth, 5)),
+      getGitStatusMap(resolvedDir),
+    ]);
+    annotateTreeWithGitStatus(tree, statusMap);
     return NextResponse.json<FileTreeResponse>({ tree, root: resolvedDir });
   } catch (error) {
     return NextResponse.json<ErrorResponse>(

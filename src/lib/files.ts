@@ -1,6 +1,10 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { execFile as execFileCb } from 'child_process';
+import { promisify } from 'util';
 import type { FileTreeNode, FilePreview } from '@/types';
+
+const execFileAsync = promisify(execFileCb);
 
 const IGNORED_DIRS = new Set([
   'node_modules',
@@ -182,4 +186,103 @@ export async function readFilePreview(filePath: string, maxLines: number = 200):
     language,
     line_count: lines.length,
   };
+}
+
+// ==========================================
+// Git Status
+// ==========================================
+
+/**
+ * Parse `git status --porcelain` output into a Map of absolute paths to status codes.
+ * Exported for testing.
+ */
+export function parseGitStatusOutput(output: string, repoRoot: string): Map<string, string> {
+  const statusMap = new Map<string, string>();
+  if (!output.trim()) return statusMap;
+
+  for (const line of output.split('\n')) {
+    if (!line || line.length < 4) continue;
+
+    const xy = line.slice(0, 2);
+    let filePath = line.slice(3);
+
+    // Skip deleted files — they don't exist on disk
+    if (xy[0] === 'D' || xy[1] === 'D') continue;
+
+    // Handle renamed: "R  old -> new" — use the new path
+    if (xy[0] === 'R') {
+      const arrowIdx = filePath.indexOf(' -> ');
+      if (arrowIdx !== -1) {
+        filePath = filePath.slice(arrowIdx + 4);
+      }
+      statusMap.set(path.join(repoRoot, filePath), 'M');
+      continue;
+    }
+
+    // Untracked
+    if (xy === '??') {
+      statusMap.set(path.join(repoRoot, filePath), '?');
+      continue;
+    }
+
+    // Added (staged)
+    if (xy[0] === 'A') {
+      statusMap.set(path.join(repoRoot, filePath), 'A');
+      continue;
+    }
+
+    // Modified (staged or unstaged)
+    if (xy[0] === 'M' || xy[1] === 'M') {
+      statusMap.set(path.join(repoRoot, filePath), 'M');
+      continue;
+    }
+  }
+
+  return statusMap;
+}
+
+/**
+ * Run `git status` in a directory and return a Map of absolute file paths to status codes.
+ * Returns empty map if not a git repo or git is unavailable.
+ * Uses execFile (not exec) to prevent shell injection — same pattern as platform.ts.
+ */
+export async function getGitStatusMap(dir: string): Promise<Map<string, string>> {
+  try {
+    const { stdout: root } = await execFileAsync('git', ['-C', dir, 'rev-parse', '--show-toplevel']);
+    const repoRoot = root.trim();
+
+    const { stdout } = await execFileAsync('git', ['-C', dir, 'status', '--porcelain', '-uall']);
+    return parseGitStatusOutput(stdout, repoRoot);
+  } catch {
+    return new Map();
+  }
+}
+
+/**
+ * Annotate a file tree with git status. Mutates nodes in place.
+ * Returns true if any descendant has a status (used for recursive propagation to parents).
+ */
+export function annotateTreeWithGitStatus(
+  nodes: FileTreeNode[],
+  statusMap: Map<string, string>,
+): boolean {
+  if (statusMap.size === 0) return false;
+
+  let anyChanged = false;
+  for (const node of nodes) {
+    if (node.type === 'directory' && node.children) {
+      const childrenChanged = annotateTreeWithGitStatus(node.children, statusMap);
+      if (childrenChanged) {
+        node.gitStatus = 'M';
+        anyChanged = true;
+      }
+    } else {
+      const status = statusMap.get(node.path);
+      if (status) {
+        node.gitStatus = status as FileTreeNode['gitStatus'];
+        anyChanged = true;
+      }
+    }
+  }
+  return anyChanged;
 }
