@@ -49,7 +49,9 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const preview = await readFilePreview(resolvedPath, Math.min(maxLines, 1000));
+    // maxLines=0 means no limit; otherwise cap at 10000 lines
+    const effectiveMaxLines = maxLines === 0 ? 0 : Math.min(maxLines, 10000);
+    const preview = await readFilePreview(resolvedPath, effectiveMaxLines);
     return NextResponse.json<FilePreviewResponse>({ preview });
   } catch (error) {
     return NextResponse.json<ErrorResponse>(

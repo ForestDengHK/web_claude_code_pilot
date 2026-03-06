@@ -50,6 +50,7 @@ export abstract class BaseChannelAdapter {
   async answerCallback(_callbackQueryId: string, _text?: string): Promise<void> {}
   onMessageStart?(_chatId: string): void;
   onMessageEnd?(_chatId: string): void;
+  deleteMessages?(_chatId: string, _messageIds: string[]): Promise<number>;
   acknowledgeUpdate?(_updateId: number): void;
   getPreviewCapabilities?(_chatId: string): PreviewCapabilities | null;
   sendPreview?(_chatId: string, _text: string, _draftId: number): Promise<'sent' | 'skip' | 'degrade'>;

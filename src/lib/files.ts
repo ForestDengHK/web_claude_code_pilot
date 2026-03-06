@@ -172,17 +172,17 @@ export async function readFilePreview(filePath: string, maxLines: number = 200):
     throw new Error(`Not a file: ${filePath}`);
   }
 
-  // Read the file content, limiting to maxLines
+  // Read the file content, optionally limiting to maxLines (0 = no limit)
   const content = await fs.readFile(resolvedPath, 'utf-8');
   const lines = content.split('\n');
-  const truncated = lines.slice(0, maxLines).join('\n');
+  const finalContent = maxLines > 0 ? lines.slice(0, maxLines).join('\n') : content;
 
   const ext = path.extname(resolvedPath).replace(/^\./, '');
   const language = getFileLanguage(ext);
 
   return {
     path: resolvedPath,
-    content: truncated,
+    content: finalContent,
     language,
     line_count: lines.length,
   };

@@ -59,6 +59,9 @@ next-env.d.ts
 # Playwright MCP
 .playwright-mcp/
 
+# git worktrees
+.worktrees/
+
 # screenshots from testing
 *.png
 

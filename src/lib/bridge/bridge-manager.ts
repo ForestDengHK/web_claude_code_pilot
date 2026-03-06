@@ -18,7 +18,7 @@ import type {
 } from './types';
 import type { BaseChannelAdapter } from './channel-adapter';
 import { createAdapter, getRegisteredTypes } from './channel-adapter';
-import { resolve, bindSession, updateSession, listSessions } from './channel-router';
+import { resolve, bindSession, updateSession, listSessions, removeSession } from './channel-router';
 import { processMessage } from './conversation-engine';
 import type { ConversationCallbacks } from './conversation-engine';
 import { deliver } from './delivery-layer';
@@ -27,14 +27,14 @@ import {
   handlePermissionCallback,
   parsePermissionCallback,
 } from './permission-broker';
-import { insertAuditLog } from './bridge-db';
+import { insertAuditLog, getAuditMessageIds, clearAuditLogs, clearOutboundRefs } from './bridge-db';
 import {
   validateWorkingDirectory,
   sanitizeInput,
   isDangerousInput,
   validateMode,
 } from './security/validators';
-import { getSetting } from '../../lib/db';
+import { getSetting, clearSessionMessages, deleteSession as deleteCodepilotSession, getAllSessions, getFavoriteDirectories, getRecentDirectories } from '../../lib/db';
 import crypto from 'crypto';
 
 // ==========================================
@@ -253,7 +253,12 @@ export async function dispatchMessage(
       );
       return;
     }
-    // Non-permission callback — ignore for now
+    // Command callback (e.g. directory selection)
+    if (message.callbackData.startsWith('cmd:')) {
+      await handleCommandCallback(adapter, message);
+      return;
+    }
+    // Unknown callback — ignore
     return;
   }
 
@@ -266,6 +271,45 @@ export async function dispatchMessage(
 
   // Regular message — route to conversation
   await routeToConversation(adapter, message);
+}
+
+// ==========================================
+// Command callback handling (inline button presses)
+// ==========================================
+
+async function handleCommandCallback(
+  adapter: BaseChannelAdapter,
+  message: InboundMessage,
+): Promise<void> {
+  const data = message.callbackData!;
+  const { address } = message;
+
+  // Answer the callback to remove loading spinner
+  if (adapter.answerCallback) {
+    await adapter.answerCallback(message.messageId);
+  }
+
+  // Format: cmd:<command>:<payload>
+  const parts = data.split(':');
+  const command = parts[1];
+  const payload = parts.slice(2).join(':');
+
+  switch (command) {
+    case 'cwd':
+      await cmdCwd(adapter, address, payload);
+      break;
+    case 'new':
+      await cmdNew(adapter, address, payload);
+      break;
+    case 'bind':
+      await cmdBind(adapter, address, payload);
+      break;
+    case 'mode':
+      await cmdMode(adapter, address, payload);
+      break;
+    default:
+      break;
+  }
 }
 
 // ==========================================
@@ -310,6 +354,15 @@ export async function handleCommand(
     case '/stop':
       await cmdStop(adapter, address);
       break;
+    case '/clear':
+      await cmdClear(adapter, address);
+      break;
+    case '/unbind':
+      await cmdUnbind(adapter, address);
+      break;
+    case '/delete':
+      await cmdDelete(adapter, address);
+      break;
     case '/help':
       await cmdHelp(adapter, address);
       break;
@@ -328,6 +381,21 @@ async function cmdNew(
 ): Promise<void> {
   const defaultWorkDir = getSetting('bridge_default_work_dir') || '/tmp';
   const defaultModel = getSetting('bridge_default_model') || '';
+
+  // No args — show directory picker
+  if (!args.trim()) {
+    const buttons = buildDirectoryButtons('new');
+    if (buttons.length > 0) {
+      // Add default dir as first option if not already there
+      await deliver(adapter, {
+        address,
+        text: `Select a project directory:`,
+        parseMode: 'plain',
+        inlineButtons: buttons,
+      });
+      return;
+    }
+  }
 
   let workDir = args.trim() || defaultWorkDir;
 
@@ -348,7 +416,7 @@ async function cmdNew(
     await sendText(
       adapter,
       address,
-      `New session created.\nSession: ${binding.codepilotSessionId.slice(0, 8)}...\nDirectory: ${binding.workingDirectory}\nMode: ${binding.mode}`,
+      `New session created.\nSession: ${binding.codepilotSessionId}\nDirectory: ${binding.workingDirectory}\nMode: ${binding.mode}`,
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -363,7 +431,33 @@ async function cmdBind(
 ): Promise<void> {
   const sessionId = args.trim();
   if (!sessionId) {
-    await sendText(adapter, address, 'Usage: /bind <session-id>');
+    // Show available sessions as a list with buttons
+    const allSessions = getAllSessions().slice(0, 8);
+    if (allSessions.length > 0) {
+      const lines = ['<b>Select a session:</b>'];
+      const buttons = allSessions.map((s, i) => {
+        const num = i + 1;
+        const title = s.title || '(untitled)';
+        const parts = s.working_directory.split('/').filter(Boolean);
+        const dirLabel = parts.length > 1 ? parts.slice(-2).join('/') : (s.working_directory || '—');
+        const mode = s.mode || 'code';
+        const date = s.updated_at?.slice(0, 10) || '';
+
+        lines.push('');
+        lines.push(`<b>${num}.</b> ${title}`);
+        lines.push(`   📁 ${dirLabel} · ${mode} · ${date}`);
+
+        return [{ text: `${num}. ${title}`, callbackData: `cmd:bind:${s.id}` }];
+      });
+      await deliver(adapter, {
+        address,
+        text: lines.join('\n'),
+        parseMode: 'HTML',
+        inlineButtons: buttons,
+      });
+    } else {
+      await sendText(adapter, address, 'No sessions found. Use /new to create one.');
+    }
     return;
   }
 
@@ -372,7 +466,7 @@ async function cmdBind(
     await sendText(
       adapter,
       address,
-      `Bound to session: ${binding.codepilotSessionId.slice(0, 8)}...`,
+      `Bound to session: ${binding.codepilotSessionId}`,
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -393,7 +487,18 @@ async function cmdCwd(
 
   const newPath = args.trim();
   if (!newPath) {
-    await sendText(adapter, address, `Current directory: ${binding.workingDirectory}`);
+    // Show current dir + directory picker
+    const buttons = buildDirectoryButtons('cwd');
+    if (buttons.length > 0) {
+      await deliver(adapter, {
+        address,
+        text: `Current: ${binding.workingDirectory}\n\nSelect a directory:`,
+        parseMode: 'plain',
+        inlineButtons: buttons,
+      });
+    } else {
+      await sendText(adapter, address, `Current directory: ${binding.workingDirectory}`);
+    }
     return;
   }
 
@@ -425,7 +530,18 @@ async function cmdMode(
 
   const mode = args.trim().toLowerCase();
   if (!mode) {
-    await sendText(adapter, address, `Current mode: ${binding.mode}`);
+    // Show mode picker with current mode highlighted
+    const modes = ['code', 'plan', 'ask'];
+    const buttons = modes.map((m) => [{
+      text: m === binding.mode ? `✓ ${m}` : m,
+      callbackData: `cmd:mode:${m}`,
+    }]);
+    await deliver(adapter, {
+      address,
+      text: `Current mode: ${binding.mode}\n\nSelect a mode:`,
+      parseMode: 'plain',
+      inlineButtons: [buttons.map((b) => b[0])], // single row
+    });
     return;
   }
 
@@ -455,7 +571,7 @@ async function cmdStatus(
 
   const lines = [
     'Session Status:',
-    `  Session: ${binding.codepilotSessionId.slice(0, 8)}...`,
+    `  Session: ${binding.codepilotSessionId}`,
     `  Directory: ${binding.workingDirectory}`,
     `  Model: ${binding.model || '(default)'}`,
     `  Mode: ${binding.mode}`,
@@ -469,20 +585,51 @@ async function cmdSessions(
   adapter: BaseChannelAdapter,
   address: ChannelAddress,
 ): Promise<void> {
-  const sessions = listSessions(adapter.channelType);
-  if (sessions.length === 0) {
-    await sendText(adapter, address, 'No sessions found.');
+  const bindings = listSessions(adapter.channelType);
+  const boundSessionIds = new Set(bindings.map((b) => b.codepilotSessionId));
+
+  const lines: string[] = [];
+
+  // Show bound sessions
+  if (bindings.length > 0) {
+    lines.push('<b>Bound Sessions:</b>');
+    for (const s of bindings) {
+      const status = s.active ? '🟢' : '⚪';
+      lines.push('');
+      lines.push(`${status} <code>${s.codepilotSessionId}</code>`);
+      lines.push(`   ${s.workingDirectory} · ${s.mode}`);
+    }
+  }
+
+  // Show recent unbound CodePilot sessions (up to 5)
+  const allSessions = getAllSessions();
+  const unbound = allSessions
+    .filter((s) => !boundSessionIds.has(s.id))
+    .slice(0, 10);
+
+  if (unbound.length > 0) {
+    if (lines.length > 0) lines.push('');
+    lines.push('<b>Recent CodePilot Sessions:</b>');
+    for (const s of unbound) {
+      lines.push('');
+      lines.push(`📎 <code>${s.id}</code>`);
+      const parts = [s.title || '(untitled)', s.working_directory || ''].filter(Boolean);
+      lines.push(`   ${parts.join(' · ')}`);
+    }
+    lines.push('');
+    lines.push('Use /bind &lt;id&gt; to connect');
+  }
+
+  if (lines.length === 0) {
+    await sendText(adapter, address, 'No sessions found. Use /new to create one.');
     return;
   }
 
-  const lines = ['Sessions:'];
-  for (const s of sessions) {
-    const shortId = s.codepilotSessionId.slice(0, 8);
-    const status = s.active ? 'active' : 'inactive';
-    lines.push(`  ${shortId}... [${status}] ${s.workingDirectory} (${s.mode})`);
-  }
-
-  await sendText(adapter, address, lines.join('\n'));
+  await deliver(adapter, {
+    address,
+    text: lines.join('\n'),
+    parseMode: 'HTML',
+  });
 }
 
 async function cmdStop(
@@ -504,6 +651,80 @@ async function cmdStop(
   }
 }
 
+async function cmdClear(
+  adapter: BaseChannelAdapter,
+  address: ChannelAddress,
+): Promise<void> {
+  const binding = resolve(address);
+  if (!binding) {
+    await sendText(adapter, address, 'No active session. Use /new to create one.');
+    return;
+  }
+
+  try {
+    // Delete messages from the chat window (Telegram side)
+    if (adapter.deleteMessages) {
+      const messageIds = getAuditMessageIds(adapter.channelType, address.chatId);
+      // Filter out non-numeric IDs (e.g. bridge-generated IDs)
+      const platformIds = messageIds.filter((id) => /^\d+$/.test(id));
+      if (platformIds.length > 0) {
+        await adapter.deleteMessages(address.chatId, platformIds);
+      }
+    }
+
+    // Clear CodePilot conversation history
+    clearSessionMessages(binding.codepilotSessionId);
+
+    // Clear bridge tracking data for this chat
+    clearAuditLogs(adapter.channelType, address.chatId);
+    clearOutboundRefs(adapter.channelType, address.chatId);
+
+    await sendText(adapter, address, 'Chat cleared.');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await sendText(adapter, address, `Failed to clear: ${msg}`);
+  }
+}
+
+async function cmdUnbind(
+  adapter: BaseChannelAdapter,
+  address: ChannelAddress,
+): Promise<void> {
+  const binding = resolve(address);
+  if (!binding) {
+    await sendText(adapter, address, 'No active session. Nothing to unbind.');
+    return;
+  }
+
+  try {
+    updateSession(binding.id, { active: false });
+    await sendText(adapter, address, `Unbound from session ${binding.codepilotSessionId}\nUse /sessions to see it, /bind to reconnect.`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await sendText(adapter, address, `Failed to unbind: ${msg}`);
+  }
+}
+
+async function cmdDelete(
+  adapter: BaseChannelAdapter,
+  address: ChannelAddress,
+): Promise<void> {
+  const binding = resolve(address);
+  if (!binding) {
+    await sendText(adapter, address, 'No active session. Nothing to delete.');
+    return;
+  }
+
+  try {
+    removeSession(binding.id);
+    deleteCodepilotSession(binding.codepilotSessionId);
+    await sendText(adapter, address, `Session deleted: ${binding.codepilotSessionId}\nRemoved from both Telegram and CodePilot.`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await sendText(adapter, address, `Failed to delete: ${msg}`);
+  }
+}
+
 async function cmdHelp(
   adapter: BaseChannelAdapter,
   address: ChannelAddress,
@@ -516,6 +737,9 @@ async function cmdHelp(
     '  /mode <mode>   — Switch mode (code, plan, ask)',
     '  /status        — Show current session status',
     '  /sessions      — List all sessions',
+    '  /clear         — Clear conversation history',
+    '  /unbind        — Disconnect from session (keeps it)',
+    '  /delete        — Delete session entirely',
     '  /stop          — Deactivate current session',
     '  /help          — Show this help message',
   ].join('\n');
@@ -633,6 +857,35 @@ export async function routeToConversation(
 /**
  * Send a plain text message via the delivery layer.
  */
+/**
+ * Build inline keyboard rows with directory options for /cwd or /new.
+ */
+function buildDirectoryButtons(command: 'cwd' | 'new'): { text: string; callbackData: string }[][] {
+  const favorites = getFavoriteDirectories();
+  const recent = getRecentDirectories(10);
+
+  // Dedupe: favorites first, then recent that aren't in favorites
+  const favPaths = new Set(favorites.map((f) => f.path));
+  const dirs: { label: string; path: string }[] = [];
+
+  for (const f of favorites) {
+    dirs.push({ label: `⭐ ${f.name || f.path}`, path: f.path });
+  }
+  for (const r of recent) {
+    if (!favPaths.has(r)) {
+      // Show last 2 path components as label
+      const parts = r.split('/').filter(Boolean);
+      const label = parts.length > 1 ? parts.slice(-2).join('/') : r;
+      dirs.push({ label, path: r });
+    }
+  }
+
+  // Telegram: max 64 bytes per callback_data, 1 button per row for readability
+  return dirs.slice(0, 8).map((d) => [
+    { text: d.label, callbackData: `cmd:${command}:${d.path}` },
+  ]);
+}
+
 async function sendText(
   adapter: BaseChannelAdapter,
   address: ChannelAddress,

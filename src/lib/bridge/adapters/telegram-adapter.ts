@@ -75,6 +75,25 @@ export class TelegramAdapter extends BaseChannelAdapter {
 
   async start(): Promise<void> {
     this.running = true;
+    // Register bot commands with Telegram for / menu hints
+    const token = getSetting('telegram_bot_token');
+    if (token) {
+      callTelegramApi(token, 'setMyCommands', {
+        commands: [
+          { command: 'new', description: 'Start new session (optional: /new /path/to/project)' },
+          { command: 'bind', description: 'Bind to existing session by ID' },
+          { command: 'cwd', description: 'Change working directory' },
+          { command: 'mode', description: 'Set mode: code, plan, or ask' },
+          { command: 'status', description: 'Show current session info' },
+          { command: 'sessions', description: 'List all bound sessions' },
+          { command: 'clear', description: 'Clear conversation history' },
+          { command: 'unbind', description: 'Disconnect from session (keeps it)' },
+          { command: 'delete', description: 'Delete session entirely' },
+          { command: 'stop', description: 'Deactivate current session' },
+          { command: 'help', description: 'Show all available commands' },
+        ],
+      }).catch(() => { /* best-effort */ });
+    }
   }
 
   async stop(): Promise<void> {
@@ -362,6 +381,30 @@ export class TelegramAdapter extends BaseChannelAdapter {
     }
 
     await callTelegramApi(token, 'answerCallbackQuery', params);
+  }
+
+  // ── Delete messages from chat ─────────────────────────────
+
+  async deleteMessages(chatId: string, messageIds: string[]): Promise<number> {
+    const token = getSetting('telegram_bot_token');
+    if (!token || messageIds.length === 0) return 0;
+
+    let deleted = 0;
+    // Telegram deleteMessage works one at a time
+    for (const msgId of messageIds) {
+      const numId = parseInt(msgId, 10);
+      if (isNaN(numId)) continue;
+      try {
+        const result = await callTelegramApi(token, 'deleteMessage', {
+          chat_id: chatId,
+          message_id: numId,
+        });
+        if (result.ok) deleted++;
+      } catch {
+        // Message may already be deleted or older than 48h — skip
+      }
+    }
+    return deleted;
   }
 }
 

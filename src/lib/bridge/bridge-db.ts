@@ -160,6 +160,7 @@ export function upsertChannelBinding(params: {
       codepilot_session_id = excluded.codepilot_session_id,
       working_directory = COALESCE(excluded.working_directory, channel_bindings.working_directory),
       model = COALESCE(excluded.model, channel_bindings.model),
+      active = 1,
       updated_at = datetime('now')
   `).run(
     id,
@@ -234,6 +235,13 @@ export function listChannelBindings(channelType?: ChannelType): ChannelBinding[]
   return rows.map(rowToBinding);
 }
 
+export function deleteChannelBinding(id: string): boolean {
+  ensureBridgeTables();
+  const db = getDb();
+  const result = db.prepare('DELETE FROM channel_bindings WHERE id = ?').run(id);
+  return result.changes > 0;
+}
+
 // ==========================================
 // Channel Offsets
 // ==========================================
@@ -287,6 +295,27 @@ export function cleanupExpiredDedup(): number {
 // ==========================================
 // Audit Logs
 // ==========================================
+
+export function getAuditMessageIds(channelType: string, chatId: string): string[] {
+  ensureBridgeTables();
+  const db = getDb();
+  const rows = db.prepare(
+    'SELECT DISTINCT message_id FROM channel_audit_logs WHERE channel_type = ? AND chat_id = ? ORDER BY created_at'
+  ).all(channelType, chatId) as { message_id: string }[];
+  return rows.map((r) => r.message_id);
+}
+
+export function clearAuditLogs(channelType: string, chatId: string): void {
+  ensureBridgeTables();
+  const db = getDb();
+  db.prepare('DELETE FROM channel_audit_logs WHERE channel_type = ? AND chat_id = ?').run(channelType, chatId);
+}
+
+export function clearOutboundRefs(channelType: string, chatId: string): void {
+  ensureBridgeTables();
+  const db = getDb();
+  db.prepare('DELETE FROM channel_outbound_refs WHERE channel_type = ? AND chat_id = ?').run(channelType, chatId);
+}
 
 export function insertAuditLog(params: {
   channelType: string;

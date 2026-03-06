@@ -27,8 +27,9 @@ interface BridgeSettings {
 }
 
 interface ModelOption {
-  id: string;
-  name: string;
+  value: string;
+  displayName: string;
+  description?: string;
 }
 
 export default function BridgeSection() {
@@ -285,8 +286,8 @@ export default function BridgeSection() {
                 </SelectTrigger>
                 <SelectContent>
                   {models.map((model) => (
-                    <SelectItem key={model.id} value={model.id}>
-                      {model.name || model.id}
+                    <SelectItem key={model.value} value={model.value}>
+                      {model.displayName || model.value}
                     </SelectItem>
                   ))}
                 </SelectContent>

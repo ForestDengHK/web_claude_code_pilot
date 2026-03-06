@@ -132,7 +132,7 @@ export function DocPreview({
       setError(null);
       try {
         const res = await fetch(
-          `/api/files/preview?path=${encodeURIComponent(filePath)}&maxLines=500${workingDirectory ? `&baseDir=${encodeURIComponent(workingDirectory)}` : ''}`
+          `/api/files/preview?path=${encodeURIComponent(filePath)}&maxLines=0${workingDirectory ? `&baseDir=${encodeURIComponent(workingDirectory)}` : ''}`
         );
         if (!res.ok) {
           const data = await res.json();

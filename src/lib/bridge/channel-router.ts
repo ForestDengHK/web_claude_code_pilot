@@ -11,6 +11,7 @@ import {
   upsertChannelBinding,
   updateChannelBinding,
   listChannelBindings,
+  deleteChannelBinding,
 } from './bridge-db';
 import { validateSessionId, validateWorkingDirectory } from './security/validators';
 
@@ -63,7 +64,8 @@ export async function processWithSessionLock<T>(
  */
 export function resolve(address: ChannelAddress): ChannelBinding | null {
   const binding = getChannelBinding(address.channelType, address.chatId);
-  return binding ?? null;
+  if (!binding || !binding.active) return null;
+  return binding;
 }
 
 /**
@@ -121,4 +123,11 @@ export function updateSession(
  */
 export function listSessions(channelType?: ChannelType): ChannelBinding[] {
   return listChannelBindings(channelType);
+}
+
+/**
+ * Remove a channel binding entirely.
+ */
+export function removeSession(bindingId: string): boolean {
+  return deleteChannelBinding(bindingId);
 }

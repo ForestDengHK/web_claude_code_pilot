@@ -36,11 +36,11 @@ export default function TelegramBridgeSection() {
         const data = await res.json();
         const all = data.settings || {};
         setSettings({
-          bridge_telegram_enabled: all.bridge_telegram_enabled,
-          telegram_bot_token: all.telegram_bot_token,
-          telegram_bridge_allowed_users: all.telegram_bridge_allowed_users,
-          bridge_telegram_image_enabled: all.bridge_telegram_image_enabled,
-          bridge_telegram_stream_enabled: all.bridge_telegram_stream_enabled,
+          bridge_telegram_enabled: all.bridge_telegram_enabled ?? '',
+          telegram_bot_token: all.telegram_bot_token ?? '',
+          telegram_bridge_allowed_users: all.telegram_bridge_allowed_users ?? '',
+          bridge_telegram_image_enabled: all.bridge_telegram_image_enabled ?? '',
+          bridge_telegram_stream_enabled: all.bridge_telegram_stream_enabled ?? '',
         });
       }
     } catch {
