@@ -12,6 +12,7 @@ import {
   Moon02Icon,
   Sun02Icon,
   StructureFolderIcon,
+  BridgeIcon,
 } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
 import { usePanel } from "@/hooks/usePanel";
@@ -24,6 +25,7 @@ interface BottomNavProps {
 const navItems = [
   { href: "/chat", label: "Chats", icon: Message02Icon },
   { href: "/extensions", label: "Extensions", icon: GridIcon },
+  { href: "/bridge", label: "Bridge", icon: BridgeIcon },
   { href: "/settings", label: "Settings", icon: Settings02Icon },
 ] as const;
 
