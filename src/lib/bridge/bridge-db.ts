@@ -167,8 +167,8 @@ export function upsertChannelBinding(params: {
     params.channelType,
     params.chatId,
     params.codepilotSessionId,
-    params.workingDirectory ?? '',
-    params.model ?? '',
+    params.workingDirectory || null,
+    params.model || null,
   );
 
   return getChannelBinding(params.channelType, params.chatId)!;

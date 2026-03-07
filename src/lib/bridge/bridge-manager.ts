@@ -34,7 +34,7 @@ import {
   isDangerousInput,
   validateMode,
 } from './security/validators';
-import { getSetting, clearSessionMessages, deleteSession as deleteCodepilotSession, getAllSessions, getFavoriteDirectories, getRecentDirectories } from '../../lib/db';
+import { getSetting, getSession, clearSessionMessages, deleteSession as deleteCodepilotSession, getAllSessions, getFavoriteDirectories, getRecentDirectories } from '../../lib/db';
 import crypto from 'crypto';
 
 // ==========================================
@@ -462,11 +462,15 @@ async function cmdBind(
   }
 
   try {
-    const binding = bindSession(address, sessionId);
+    // Look up the target session to get its working directory
+    const session = getSession(sessionId);
+    const binding = bindSession(address, sessionId, {
+      workingDirectory: session?.working_directory || undefined,
+    });
     await sendText(
       adapter,
       address,
-      `Bound to session: ${binding.codepilotSessionId}`,
+      `Bound to session: ${binding.codepilotSessionId}\nDirectory: ${binding.workingDirectory}`,
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
