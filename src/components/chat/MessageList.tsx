@@ -7,6 +7,7 @@ import {
   Conversation,
   ConversationContent,
   ConversationScrollButton,
+  ConversationScrollTopButton,
   ConversationEmptyState,
 } from '@/components/ai-elements/conversation';
 import { useStickToBottomContext } from 'use-stick-to-bottom';
@@ -204,6 +205,7 @@ export function MessageList({
         )}
       </ConversationContent>
       <ScrollOnSend isStreaming={isStreaming} messageIds={messages.length > 0 ? messages[0].id : ''} />
+      <ConversationScrollTopButton />
       <ConversationScrollButton />
     </Conversation>
   );

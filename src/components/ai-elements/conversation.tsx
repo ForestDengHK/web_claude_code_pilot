@@ -4,8 +4,8 @@ import type { ComponentProps } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { ArrowDownIcon, DownloadIcon } from "lucide-react";
-import { useCallback } from "react";
+import { ArrowDownIcon, ArrowUpIcon, DownloadIcon } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 
 export type ConversationProps = ComponentProps<typeof StickToBottom>;
@@ -95,6 +95,48 @@ export const ConversationScrollButton = ({
         {...props}
       >
         <ArrowDownIcon className="size-4" />
+      </Button>
+    )
+  );
+};
+
+export type ConversationScrollTopButtonProps = ComponentProps<typeof Button>;
+
+export const ConversationScrollTopButton = ({
+  className,
+  ...props
+}: ConversationScrollTopButtonProps) => {
+  const { scrollRef } = useStickToBottomContext();
+  const [isAtTop, setIsAtTop] = useState(true);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const handleScroll = () => {
+      setIsAtTop(el.scrollTop < 100);
+    };
+    el.addEventListener("scroll", handleScroll, { passive: true });
+    return () => el.removeEventListener("scroll", handleScroll);
+  }, [scrollRef]);
+
+  const handleScrollToTop = useCallback(() => {
+    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, [scrollRef]);
+
+  return (
+    !isAtTop && (
+      <Button
+        className={cn(
+          "absolute top-4 left-[50%] translate-x-[-50%] rounded-full dark:bg-background dark:hover:bg-muted",
+          className
+        )}
+        onClick={handleScrollToTop}
+        size="icon"
+        type="button"
+        variant="outline"
+        {...props}
+      >
+        <ArrowUpIcon className="size-4" />
       </Button>
     )
   );
