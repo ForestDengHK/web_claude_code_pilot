@@ -11,6 +11,11 @@ const ALLOWED_KEYS = [
   'anthropic_base_url',
   'dangerously_skip_permissions',
   'clone_base_directory',
+  'stt_provider',
+  'stt_api_key',
+  'stt_endpoint',
+  'stt_model',
+  'stt_deployment',
 ];
 
 export async function GET() {
@@ -20,7 +25,7 @@ export async function GET() {
       const value = getSetting(key);
       if (value !== undefined) {
         // Mask token for security (only return last 8 chars)
-        if (key === 'anthropic_auth_token' && value.length > 8) {
+        if ((key === 'anthropic_auth_token' || key === 'stt_api_key') && value.length > 8) {
           result[key] = '***' + value.slice(-8);
         } else {
           result[key] = value;
@@ -48,7 +53,7 @@ export async function PUT(request: NextRequest) {
       const strValue = String(value ?? '').trim();
       if (strValue) {
         // Don't overwrite token if user sent the masked version back
-        if (key === 'anthropic_auth_token' && strValue.startsWith('***')) {
+        if ((key === 'anthropic_auth_token' || key === 'stt_api_key') && strValue.startsWith('***')) {
           continue;
         }
         setSetting(key, strValue);
