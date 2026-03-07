@@ -11,7 +11,7 @@ import type { ChannelBinding, ChannelType, PermissionLink } from './types';
 const MIGRATION_KEY = '__bridge_db_migrated__';
 
 function ensureBridgeTables(): void {
-  const g = globalThis as Record<string, boolean>;
+  const g = globalThis as unknown as Record<string, boolean>;
   if (g[MIGRATION_KEY]) return;
   const db = getDb();
 
@@ -395,6 +395,6 @@ export function markPermissionLinkResolved(permissionRequestId: string): boolean
 
 /** @internal — reset migration flag so tables are re-checked */
 export function _resetMigrationFlag(): void {
-  const g = globalThis as Record<string, boolean>;
+  const g = globalThis as unknown as Record<string, boolean>;
   delete g[MIGRATION_KEY];
 }

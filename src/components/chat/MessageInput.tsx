@@ -986,7 +986,7 @@ export function MessageInput({
               className="min-h-10"
             />
             <PromptInputFooter>
-              <PromptInputTools>
+              <PromptInputTools className="gap-0 sm:gap-1">
                 {/* Attach file button */}
                 <AttachFileButton />
 
@@ -1045,8 +1045,8 @@ export function MessageInput({
                   <PromptInputButton
                     onClick={() => setModelMenuOpen((prev) => !prev)}
                   >
-                    <span className="text-xs font-mono max-w-[72px] truncate sm:max-w-none">{getShortModelName(currentModelOption.label)}</span>
-                    <HugeiconsIcon icon={ArrowDown01Icon} className={cn("h-2.5 w-2.5 transition-transform duration-200", modelMenuOpen && "rotate-180")} />
+                    <span className="text-xs font-mono max-w-[5ch] truncate sm:max-w-none">{getShortModelName(currentModelOption.label)}</span>
+                    <HugeiconsIcon icon={ArrowDown01Icon} className={cn("h-2.5 w-2.5 shrink-0 transition-transform duration-200", modelMenuOpen && "rotate-180")} />
                   </PromptInputButton>
 
                   {modelMenuOpen && (
@@ -1079,6 +1079,7 @@ export function MessageInput({
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <PromptInputButton
+                      className=""
                       onClick={toggleSkipPermissions}
                     >
                       <div className="relative flex items-center">

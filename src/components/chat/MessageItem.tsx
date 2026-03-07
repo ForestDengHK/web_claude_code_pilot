@@ -164,7 +164,7 @@ function copyToClipboard(text: string) {
 function CopyButton({ text }: { text: string }) {
   // Use a counter so each click always triggers a re-render (even if already showing ✓)
   const [copyCount, setCopyCount] = useState(0);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const copied = copyCount > 0;
 
   const handleCopy = useCallback(() => {

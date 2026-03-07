@@ -373,14 +373,14 @@ const CustomTable = memo(
     node: _node,
     ...props
   }: {
-    children: React.ReactNode;
+    children?: React.ReactNode;
     className?: string;
     node?: unknown;
     [key: string]: unknown;
   }) => {
     const wrapperRef = useRef<HTMLDivElement>(null);
     const [copied, setCopied] = useState(false);
-    const timerRef = useRef<ReturnType<typeof setTimeout>>();
+    const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
     const getTable = useCallback(
       () => wrapperRef.current?.querySelector("table") as HTMLTableElement | null,
@@ -459,7 +459,8 @@ const CustomTable = memo(
 );
 CustomTable.displayName = "CustomTable";
 
-const streamdownComponents = { table: CustomTable };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const streamdownComponents = { table: CustomTable as any };
 
 export const MessageResponse = memo(
   ({ className, ...props }: MessageResponseProps) => (
