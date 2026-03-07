@@ -35,9 +35,12 @@ export function useVoiceInput({ onTranscript, onError }: UseVoiceInputOptions): 
   useEffect(() => { onTranscriptRef.current = onTranscript; }, [onTranscript]);
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
 
-  const isAvailable = typeof window !== 'undefined'
-    && window.isSecureContext
-    && !!navigator.mediaDevices?.getUserMedia;
+  // Deferred to useEffect to avoid SSR/client hydration mismatch
+  // (localhost is a secure context even over HTTP, but server has no window)
+  const [isAvailable, setIsAvailable] = useState(false);
+  useEffect(() => {
+    setIsAvailable(window.isSecureContext && !!navigator.mediaDevices?.getUserMedia);
+  }, []);
 
   const cleanup = useCallback(() => {
     if (timerRef.current) {
