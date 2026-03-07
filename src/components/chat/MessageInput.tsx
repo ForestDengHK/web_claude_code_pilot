@@ -21,6 +21,8 @@ import {
   BrainIcon,
   GlobalIcon,
   Shield01Icon,
+  Mic01Icon,
+  Loading02Icon,
 } from "@hugeicons/core-free-icons";
 import { cn } from '@/lib/utils';
 import {
@@ -41,6 +43,7 @@ import {
 import type { ChatStatus } from 'ai';
 import type { FileAttachment } from '@/types';
 import { nanoid } from 'nanoid';
+import { useVoiceInput } from '@/hooks/useVoiceInput';
 
 // Max file size — generous limit since files are saved to disk and read by Claude Code tools
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
@@ -233,6 +236,67 @@ function AttachFileButton() {
     >
       <HugeiconsIcon icon={PlusSignIcon} className="h-3.5 w-3.5" />
     </PromptInputButton>
+  );
+}
+
+/**
+ * Mic button for voice input. Must be rendered inside MessageInput
+ * where it can access setInputValue and textareaRef via props.
+ */
+function VoiceInputButton({
+  onTranscript,
+}: {
+  onTranscript: (text: string) => void;
+}) {
+  const { isRecording, isTranscribing, duration, toggleRecording, isAvailable } = useVoiceInput({
+    onTranscript,
+    onError: (msg) => console.warn('[VoiceInput]', msg),
+  });
+
+  if (!isAvailable) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PromptInputButton disabled>
+            <HugeiconsIcon icon={Mic01Icon} className="h-3.5 w-3.5 opacity-30" />
+          </PromptInputButton>
+        </TooltipTrigger>
+        <TooltipContent side="top">HTTPS required for voice input</TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <PromptInputButton onClick={toggleRecording} disabled={isTranscribing}>
+          {isTranscribing ? (
+            <HugeiconsIcon icon={Loading02Icon} className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <div className="relative flex items-center">
+              <HugeiconsIcon
+                icon={Mic01Icon}
+                className={cn("h-3.5 w-3.5", isRecording && "text-red-500")}
+              />
+              {isRecording && (
+                <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
+                </span>
+              )}
+            </div>
+          )}
+          {isRecording && (
+            <span className="text-[10px] text-red-500 tabular-nums ml-0.5">
+              {Math.floor(duration / 60)}:{String(duration % 60).padStart(2, '0')}
+            </span>
+          )}
+        </PromptInputButton>
+      </TooltipTrigger>
+      <TooltipContent side="top">
+        {isRecording ? 'Stop recording' : isTranscribing ? 'Transcribing...' : 'Voice input'}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -925,6 +989,14 @@ export function MessageInput({
               <PromptInputTools>
                 {/* Attach file button */}
                 <AttachFileButton />
+
+                {/* Voice input button */}
+                <VoiceInputButton
+                  onTranscript={(text) => {
+                    setInputValue(prev => prev ? `${prev} ${text}` : text);
+                    setTimeout(() => textareaRef.current?.focus(), 0);
+                  }}
+                />
 
                 {/* Mode selector */}
                 <div className="relative" ref={modeMenuRef}>

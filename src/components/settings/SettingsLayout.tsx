@@ -6,14 +6,16 @@ import type { IconSvgElement } from "@hugeicons/react";
 import {
   Settings02Icon,
   CodeIcon,
+  Mic01Icon,
 } from "@hugeicons/core-free-icons";
 import { Plug01Icon } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
 import { GeneralSection } from "./GeneralSection";
 import { ProviderManager } from "./ProviderManager";
 import { CliSettingsSection } from "./CliSettingsSection";
+import { SttSection } from "./SttSection";
 
-type Section = "general" | "providers" | "cli";
+type Section = "general" | "providers" | "cli" | "stt";
 
 interface SidebarItem {
   id: Section;
@@ -25,6 +27,7 @@ const sidebarItems: SidebarItem[] = [
   { id: "general", label: "General", icon: Settings02Icon },
   { id: "providers", label: "Providers", icon: Plug01Icon },
   { id: "cli", label: "Claude CLI", icon: CodeIcon },
+  { id: "stt", label: "Voice Input", icon: Mic01Icon },
 ];
 
 export function SettingsLayout() {
@@ -103,6 +106,7 @@ export function SettingsLayout() {
           {activeSection === "general" && <GeneralSection />}
           {activeSection === "providers" && <ProviderManager />}
           {activeSection === "cli" && <CliSettingsSection />}
+          {activeSection === "stt" && <SttSection />}
         </div>
       </div>
     </div>
