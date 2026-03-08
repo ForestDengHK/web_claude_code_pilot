@@ -5,6 +5,10 @@
 
 set -e
 
+# Force production environment — prevent dev server's NODE_ENV from leaking in
+# (next build fails on /_global-error prerendering without this)
+export NODE_ENV=production
+
 PROJECT_DIR="/Users/party/working/CodePilot"
 BUILD_DIR="/tmp/codepilot-build"
 STANDALONE_DIR="$PROJECT_DIR/.next/standalone"
@@ -20,7 +24,7 @@ rsync -a --exclude='.next' --exclude='.git' \
 
 echo "Building production..."
 cd "$BUILD_DIR"
-NODE_ENV=production npx next build
+npx next build
 
 echo "Deploying standalone output..."
 rm -rf "$STANDALONE_DIR"
