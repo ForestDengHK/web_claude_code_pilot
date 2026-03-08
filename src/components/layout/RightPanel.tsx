@@ -46,16 +46,13 @@ export function RightPanel({ width }: RightPanelProps) {
       setPreviewFile(null);
     } else {
       setPreviewFile(path);
-      // On mobile, close the file panel so the preview is visible
-      if (window.innerWidth < 768) setPanelOpen(false);
     }
-  }, [previewFile, setPreviewFile, setPanelOpen]);
+  }, [previewFile, setPreviewFile]);
 
   const handleFilePreview = useCallback((path: string) => {
     setPreviewFile(path);
     setPreviewViewMode("rendered");
-    if (window.innerWidth < 768) setPanelOpen(false);
-  }, [setPreviewFile, setPreviewViewMode, setPanelOpen]);
+  }, [setPreviewFile, setPreviewViewMode]);
 
   if (!panelOpen) {
     return (

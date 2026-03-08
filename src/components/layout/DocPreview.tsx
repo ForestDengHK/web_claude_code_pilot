@@ -229,7 +229,7 @@ export function DocPreview({
       data-mobile-overlay=""
       className={cn(
         "flex flex-col overflow-hidden bg-background",
-        "fixed inset-0 z-50",
+        "fixed inset-0 z-[60]",
         expanded
           ? ""
           : "md:static md:inset-auto md:z-auto md:h-full md:shrink-0 md:border-l md:border-border/40"
