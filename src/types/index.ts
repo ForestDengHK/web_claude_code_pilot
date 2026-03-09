@@ -16,6 +16,8 @@ export interface ChatSession {
   mode?: 'code' | 'plan' | 'ask';
   skip_permissions?: number;
   needs_approval?: boolean;
+  backend: 'claude' | 'codex';
+  codex_thread_id?: string | null;
 }
 
 // ==========================================

@@ -190,6 +190,12 @@ function migrateDb(db: Database.Database): void {
   if (!colNames.includes('skip_permissions')) {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN skip_permissions INTEGER NOT NULL DEFAULT 0");
   }
+  if (!colNames.includes('backend')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN backend TEXT NOT NULL DEFAULT 'claude'");
+  }
+  if (!colNames.includes('codex_thread_id')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN codex_thread_id TEXT");
+  }
 
   const msgColumns = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[];
   const msgColNames = msgColumns.map(c => c.name);
@@ -355,6 +361,16 @@ export function updateSessionTitle(id: string, title: string): void {
 export function updateSdkSessionId(id: string, sdkSessionId: string): void {
   const db = getDb();
   db.prepare('UPDATE chat_sessions SET sdk_session_id = ? WHERE id = ?').run(sdkSessionId, id);
+}
+
+export function updateCodexThreadId(id: string, codexThreadId: string): void {
+  const db = getDb();
+  db.prepare('UPDATE chat_sessions SET codex_thread_id = ? WHERE id = ?').run(codexThreadId, id);
+}
+
+export function updateSessionBackend(id: string, backend: 'claude' | 'codex'): void {
+  const db = getDb();
+  db.prepare('UPDATE chat_sessions SET backend = ? WHERE id = ?').run(backend, id);
 }
 
 export function updateSessionWorkingDirectory(id: string, workingDirectory: string): void {
