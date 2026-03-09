@@ -165,6 +165,7 @@ export interface CreateSessionRequest {
   system_prompt?: string;
   working_directory?: string;
   mode?: string;
+  backend?: 'claude' | 'codex';
 }
 
 export interface SendMessageRequest {

@@ -22,6 +22,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const [sessionTitle, setSessionTitle] = useState<string>('');
   const [sessionModel, setSessionModel] = useState<string>('');
   const [sessionMode, setSessionMode] = useState<string>('');
+  const [sessionBackend, setSessionBackend] = useState<'claude' | 'codex'>('claude');
   const [projectName, setProjectName] = useState<string>('');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editTitle, setEditTitle] = useState('');
@@ -92,6 +93,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           setPanelSessionTitle(title);
           setSessionModel(data.session.model || '');
           setSessionMode(data.session.mode || 'code');
+          setSessionBackend(data.session.backend || 'claude');
           setProjectName(data.session.project_name || '');
         }
       } catch {
@@ -208,7 +210,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           )}
         </div>
       )}
-      <ChatView key={id} sessionId={id} initialMessages={messages} initialHasMore={hasMore} modelName={sessionModel} initialMode={sessionMode} />
+      <ChatView key={id} sessionId={id} initialMessages={messages} initialHasMore={hasMore} modelName={sessionModel} initialMode={sessionMode} backend={sessionBackend} />
     </div>
   );
 }

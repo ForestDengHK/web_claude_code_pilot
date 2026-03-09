@@ -56,9 +56,10 @@ interface ChatViewProps {
   initialHasMore?: boolean;
   modelName?: string;
   initialMode?: string;
+  backend?: 'claude' | 'codex';
 }
 
-export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, initialMode }: ChatViewProps) {
+export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, initialMode, backend = 'claude' }: ChatViewProps) {
   const { setStreamingSessionId, workingDirectory, setWorkingDirectory, setPanelOpen, setPendingApprovalSessionId, sessionTitle } = usePanel();
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [hasMore, setHasMore] = useState(initialHasMore);
@@ -492,7 +493,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     setPendingApprovalSessionId('');
 
     try {
-      await fetch('/api/chat/permission', {
+      const permEndpoint = backend === 'codex' ? '/api/codex/permission' : '/api/chat/permission';
+      await fetch(permEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -506,7 +508,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       setPendingPermission(null);
       setPermissionResolved(null);
     }, 1000);
-  }, [pendingPermission, setPendingApprovalSessionId]);
+  }, [pendingPermission, setPendingApprovalSessionId, backend]);
 
   const handleInputResponse = useCallback(async (answers: Record<string, string>) => {
     if (!pendingInputRequest) return;
@@ -596,7 +598,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       let toolCount = 0;
 
       try {
-        const response = await fetch('/api/chat', {
+        const chatEndpoint = backend === 'codex' ? '/api/codex/chat' : '/api/chat';
+        const response = await fetch(chatEndpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -817,7 +820,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         }
       }
     },
-    [sessionId, isStreaming, setStreamingSessionId, setPendingApprovalSessionId, mode, currentModel, stopRecovery, startRecovery]
+    [sessionId, isStreaming, setStreamingSessionId, setPendingApprovalSessionId, mode, currentModel, stopRecovery, startRecovery, backend]
   );
 
   // Keep sendMessageRef in sync so timeout auto-retry can call it
@@ -950,6 +953,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         workingDirectory={workingDirectory}
         mode={mode}
         onModeChange={handleModeChange}
+        backend={backend}
       />
     </div>
   );

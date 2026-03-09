@@ -60,6 +60,7 @@ interface MessageInputProps {
   workingDirectory?: string;
   mode?: string;
   onModeChange?: (mode: string) => void;
+  backend?: 'claude' | 'codex';
 }
 
 interface PopoverItem {
@@ -447,6 +448,7 @@ export function MessageInput({
   workingDirectory,
   mode = 'code',
   onModeChange,
+  backend = 'claude',
 }: MessageInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -481,7 +483,8 @@ export function MessageInput({
 
   // Fetch supported models from SDK and default to the first one
   useEffect(() => {
-    fetch('/api/models')
+    const modelsEndpoint = backend === 'codex' ? '/api/codex/models' : '/api/models';
+    fetch(modelsEndpoint)
       .then((r) => r.json())
       .then((data) => {
         if (data.models && data.models.length > 0) {
@@ -503,7 +506,8 @@ export function MessageInput({
         }
       })
       .catch(() => {});
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- re-fetch when backend changes
+  }, [backend]);
 
   const MODEL_OPTIONS = dynamicModels || FALLBACK_MODEL_OPTIONS;
 

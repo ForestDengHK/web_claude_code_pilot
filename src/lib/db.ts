@@ -318,6 +318,7 @@ export function createSession(
   systemPrompt?: string,
   workingDirectory?: string,
   mode?: string,
+  backend?: 'claude' | 'codex',
 ): ChatSession {
   if (!workingDirectory?.trim()) {
     throw new Error('Cannot create session without a working directory');
@@ -329,8 +330,8 @@ export function createSession(
   const projectName = path.basename(wd);
 
   db.prepare(
-    'INSERT INTO chat_sessions (id, title, created_at, updated_at, model, system_prompt, working_directory, sdk_session_id, project_name, status, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, title || 'New Chat', now, now, model || '', systemPrompt || '', wd, '', projectName, 'active', mode || 'code');
+    'INSERT INTO chat_sessions (id, title, created_at, updated_at, model, system_prompt, working_directory, sdk_session_id, project_name, status, mode, backend) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, title || 'New Chat', now, now, model || '', systemPrompt || '', wd, '', projectName, 'active', mode || 'code', backend || 'claude');
 
   return getSession(id)!;
 }
