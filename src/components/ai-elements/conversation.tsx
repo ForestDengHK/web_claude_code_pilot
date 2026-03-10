@@ -5,30 +5,25 @@ import type { ComponentProps } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ArrowDownIcon, ArrowUpIcon, DownloadIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
+import { useCallback } from "react";
 
-export type ConversationProps = ComponentProps<typeof StickToBottom>;
+export type ConversationProps = ComponentProps<"div">;
 
 export const Conversation = ({ className, ...props }: ConversationProps) => (
-  <StickToBottom
+  <div
     className={cn("relative flex-1 overflow-y-hidden", className)}
-    initial="smooth"
-    resize="instant"
     role="log"
     {...props}
   />
 );
 
-export type ConversationContentProps = ComponentProps<
-  typeof StickToBottom.Content
->;
+export type ConversationContentProps = ComponentProps<"div">;
 
 export const ConversationContent = ({
   className,
   ...props
 }: ConversationContentProps) => (
-  <StickToBottom.Content
+  <div
     className={cn("flex flex-col gap-8 p-4", className)}
     {...props}
   />
@@ -69,17 +64,20 @@ export const ConversationEmptyState = ({
   </div>
 );
 
-export type ConversationScrollButtonProps = ComponentProps<typeof Button>;
+export type ConversationScrollButtonProps = ComponentProps<typeof Button> & {
+  isAtBottom?: boolean;
+  onScrollToBottom?: () => void;
+};
 
 export const ConversationScrollButton = ({
   className,
+  isAtBottom = true,
+  onScrollToBottom,
   ...props
 }: ConversationScrollButtonProps) => {
-  const { isAtBottom, scrollToBottom } = useStickToBottomContext();
-
   const handleScrollToBottom = useCallback(() => {
-    scrollToBottom();
-  }, [scrollToBottom]);
+    onScrollToBottom?.();
+  }, [onScrollToBottom]);
 
   return (
     !isAtBottom && (
@@ -100,28 +98,20 @@ export const ConversationScrollButton = ({
   );
 };
 
-export type ConversationScrollTopButtonProps = ComponentProps<typeof Button>;
+export type ConversationScrollTopButtonProps = ComponentProps<typeof Button> & {
+  isAtTop?: boolean;
+  onScrollToTop?: () => void;
+};
 
 export const ConversationScrollTopButton = ({
   className,
+  isAtTop = true,
+  onScrollToTop,
   ...props
 }: ConversationScrollTopButtonProps) => {
-  const { scrollRef } = useStickToBottomContext();
-  const [isAtTop, setIsAtTop] = useState(true);
-
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const handleScroll = () => {
-      setIsAtTop(el.scrollTop < 100);
-    };
-    el.addEventListener("scroll", handleScroll, { passive: true });
-    return () => el.removeEventListener("scroll", handleScroll);
-  }, [scrollRef]);
-
   const handleScrollToTop = useCallback(() => {
-    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-  }, [scrollRef]);
+    onScrollToTop?.();
+  }, [onScrollToTop]);
 
   return (
     !isAtTop && (
