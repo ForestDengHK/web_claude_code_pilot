@@ -67,12 +67,12 @@ function getToolCategory(name: string): ToolCategory {
   if (lower === 'skill') return 'skill';
   if (lower === 'read' || lower === 'readfile' || lower === 'read_file') return 'read';
   if (
-    lower === 'write' || lower === 'edit' || lower === 'writefile' ||
+    lower === 'write' || lower === 'edit' || lower === 'file_edit' || lower === 'writefile' ||
     lower === 'write_file' || lower === 'create_file' || lower === 'createfile' ||
     lower === 'notebookedit' || lower === 'notebook_edit'
   ) return 'write';
   if (
-    lower === 'bash' || lower === 'execute' || lower === 'run' ||
+    lower === 'bash' || lower === 'command' || lower === 'execute' || lower === 'run' ||
     lower === 'shell' || lower === 'execute_command'
   ) return 'bash';
   if (

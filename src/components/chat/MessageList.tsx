@@ -92,6 +92,7 @@ const virtuosoComponents = {
 interface MessageListProps {
   messages: Message[];
   streamingContent: string;
+  thinkingContent?: string;
   isStreaming: boolean;
   toolUses?: ToolUseInfo[];
   toolResults?: ToolResultInfo[];
@@ -115,6 +116,7 @@ interface MessageListProps {
 export function MessageList({
   messages,
   streamingContent,
+  thinkingContent,
   isStreaming,
   toolUses = [],
   toolResults = [],

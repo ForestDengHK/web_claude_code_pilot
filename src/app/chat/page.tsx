@@ -537,35 +537,6 @@ export default function NewChatPage() {
               </div>
             )}
 
-            {/* Backend picker */}
-            <div className="flex items-center justify-center gap-2">
-              <span className="text-xs text-muted-foreground">Backend:</span>
-              <div className="inline-flex rounded-md border border-border overflow-hidden text-xs">
-                <button
-                  type="button"
-                  className={`px-3 py-1.5 transition-colors ${
-                    selectedBackend === 'claude'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-background text-muted-foreground hover:bg-muted'
-                  }`}
-                  onClick={() => setSelectedBackend('claude')}
-                >
-                  Claude
-                </button>
-                <button
-                  type="button"
-                  className={`px-3 py-1.5 transition-colors ${
-                    selectedBackend === 'codex'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-background text-muted-foreground hover:bg-muted'
-                  }`}
-                  onClick={() => setSelectedBackend('codex')}
-                >
-                  Codex
-                </button>
-              </div>
-            </div>
-
             {!workingDir && (favorites.length > 0 || filteredRecent.length > 0) && (
               <p className="text-center text-xs text-muted-foreground">
                 Select a project directory to start chatting
@@ -598,6 +569,8 @@ export default function NewChatPage() {
         workingDirectory={workingDir}
         mode={mode}
         onModeChange={setMode}
+        backend={selectedBackend}
+        onBackendChange={setSelectedBackend}
       />
 
     </div>

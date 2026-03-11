@@ -26,9 +26,10 @@ interface ToolBlock {
   is_error?: boolean;
 }
 
-function parseToolBlocks(content: string): { text: string; tools: ToolBlock[] } {
+function parseToolBlocks(content: string): { text: string; tools: ToolBlock[]; thinking: string } {
   const tools: ToolBlock[] = [];
   let text = '';
+  let thinking = '';
 
   // Try to parse as JSON array (new format from chat API)
   if (content.startsWith('[')) {
@@ -43,11 +44,13 @@ function parseToolBlocks(content: string): { text: string; tools: ToolBlock[] } 
         content?: string;
         is_error?: boolean;
       }>;
-      
+
       for (const block of blocks) {
         if (block.type === 'text' && block.text) {
           if (text) text += '\n\n';
           text += block.text;
+        } else if (block.type === 'thinking' && block.text) {
+          thinking += block.text;
         } else if (block.type === 'tool_use') {
           tools.push({
             type: 'tool_use',
@@ -65,7 +68,7 @@ function parseToolBlocks(content: string): { text: string; tools: ToolBlock[] } 
         }
       }
       
-      return { text: text.trim(), tools };
+      return { text: text.trim(), tools, thinking };
     } catch {
       // Not valid JSON, fall through to legacy parsing
     }
@@ -96,7 +99,7 @@ function parseToolBlocks(content: string): { text: string; tools: ToolBlock[] } 
     text = text.replace(match[0], '');
   }
 
-  return { text: text.trim(), tools };
+  return { text: text.trim(), tools, thinking: '' };
 }
 
 function pairTools(tools: ToolBlock[]): Array<{
@@ -231,11 +234,50 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
   );
 }
 
+function formatThinkingContent(raw: string): string {
+  return raw
+    .replace(/\*\*\*\*/g, '\n')
+    .replace(/\*\*/g, '')
+    .replace(/^\n+/, '')
+    .trim();
+}
+
+function StoredThinkingBlock({ content }: { content: string }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const formatted = formatThinkingContent(content);
+
+  return (
+    <div className="mb-2">
+      <button
+        type="button"
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors py-1"
+      >
+        <span className="text-sm">{'\u{1F4AD}'}</span>
+        <span>{isExpanded ? 'Thinking' : 'Thinking (tap to expand)'}</span>
+        <svg
+          className={`h-3 w-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {isExpanded && (
+        <div className="pl-6 text-xs text-muted-foreground/70 whitespace-pre-wrap break-words border-l-2 border-muted-foreground/20 ml-1 max-h-[50vh] overflow-y-auto">
+          {formatted}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const COLLAPSE_HEIGHT = 300;
 
 export function MessageItem({ message, searchQuery, isLatestMessage }: MessageItemProps) {
   const isUser = message.role === 'user';
-  const { text, tools } = parseToolBlocks(message.content);
+  const { text, tools, thinking } = parseToolBlocks(message.content);
   const pairedTools = pairTools(tools);
 
   // Parse file attachments from user messages
@@ -276,6 +318,11 @@ export function MessageItem({ message, searchQuery, isLatestMessage }: MessageIt
         {/* File attachments for user messages */}
         {isUser && files.length > 0 && (
           <FileAttachmentDisplay files={files} />
+        )}
+
+        {/* Thinking block for Codex messages */}
+        {!isUser && thinking && (
+          <StoredThinkingBlock content={thinking} />
         )}
 
         {/* Tool calls for assistant messages — compact collapsible group */}

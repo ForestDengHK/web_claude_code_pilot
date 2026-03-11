@@ -5,10 +5,17 @@ import type { JsonRpcMessage } from '@/lib/codex-jsonrpc';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+interface ReasoningEffortOption {
+  value: string;
+  label: string;
+}
+
 interface CachedModel {
   value: string;
   displayName: string;
   description: string;
+  reasoningEfforts?: ReasoningEffortOption[];
+  defaultEffort?: string;
 }
 
 // Cache models to avoid spawning a Codex process on every request
@@ -48,15 +55,36 @@ export async function GET() {
               return;
             }
 
-            const result = msg.result as { models?: Array<{ id?: string; name?: string; description?: string }> } | undefined;
-            const modelList = result?.models || [];
+            // Codex model/list returns { data: [...] } not { models: [...] }
+            const result = msg.result as {
+              data?: Array<{
+                id?: string;
+                displayName?: string;
+                description?: string;
+                supportedReasoningEfforts?: Array<{ reasoningEffort: string; description?: string }>;
+                defaultReasoningEffort?: string;
+              }>;
+            } | undefined;
+            const modelList = result?.data || [];
 
             resolve(
-              modelList.map((m) => ({
-                value: m.id || m.name || '',
-                displayName: m.name || m.id || '',
-                description: m.description || '',
-              })),
+              modelList.map((m) => {
+                const efforts = m.supportedReasoningEfforts;
+                const hasEfforts = efforts && efforts.length > 1;
+                return {
+                  value: m.id || '',
+                  displayName: m.displayName || m.id || '',
+                  description: m.description || '',
+                  // Only include reasoning efforts if the model has more than one option
+                  ...(hasEfforts ? {
+                    reasoningEfforts: efforts.map((e) => ({
+                      value: e.reasoningEffort,
+                      label: e.description || e.reasoningEffort,
+                    })),
+                    defaultEffort: m.defaultReasoningEffort || efforts[0].reasoningEffort,
+                  } : {}),
+                };
+              }),
             );
           }
         };

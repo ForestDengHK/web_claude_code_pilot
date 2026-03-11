@@ -8,7 +8,7 @@
  * No LLM call — purely text extraction for speed and cost.
  */
 
-import { getAllMessages } from '@/lib/db';
+import { getAllMessages, getMessagesSince, getSession, getLastAssistantBackend, updateLastBridgedMsgId } from '@/lib/db';
 import { parseMessageContent } from '@/types';
 import type { Message } from '@/types';
 
@@ -192,6 +192,125 @@ export async function buildContextBridge(
 
   parts.push('');
   parts.push('Please continue from where the previous assistant left off.');
+
+  return parts.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Incremental Context Bridge
+// ---------------------------------------------------------------------------
+
+/**
+ * Determine whether a cross-vendor backend switch is happening.
+ * Returns the source backend if a switch is detected, null otherwise.
+ *
+ * Rules:
+ * - Only Claude↔Codex switches need a bridge (cross-vendor).
+ * - Same-vendor model changes (e.g. Sonnet→Opus) need no bridge.
+ * - If there are no previous assistant messages, no bridge needed.
+ */
+export function detectBackendSwitch(
+  sessionId: string,
+  targetBackend: 'claude' | 'codex',
+): 'claude' | 'codex' | null {
+  const lastBackend = getLastAssistantBackend(sessionId);
+  if (!lastBackend) return null; // No previous assistant messages
+  if (lastBackend === targetBackend) return null; // Same vendor
+  return lastBackend; // Cross-vendor switch detected
+}
+
+/**
+ * Build an incremental context bridge prompt.
+ *
+ * Only includes messages the target backend hasn't seen yet — the "gap"
+ * between the last time it received context and the current conversation head.
+ *
+ * After building, updates the session's bridged marker so subsequent switches
+ * won't re-send these messages.
+ *
+ * @returns The bridge prompt string, or empty string if no gap exists.
+ */
+export function buildIncrementalBridge(
+  sessionId: string,
+  targetBackend: 'claude' | 'codex',
+  sourceBackend: 'claude' | 'codex',
+  options?: { maxRecentTurns?: number },
+): string {
+  const maxRecentTurns = options?.maxRecentTurns ?? 10;
+  const session = getSession(sessionId);
+  if (!session) return '';
+
+  // Determine the marker: where did this target backend's context window end?
+  const lastBridgedMsgId = targetBackend === 'claude'
+    ? session.last_claude_bridged_msg_id
+    : session.last_codex_bridged_msg_id;
+
+  // Get only the gap messages (after the last bridged point)
+  const gapMessages = getMessagesSince(sessionId, lastBridgedMsgId || null);
+
+  if (gapMessages.length === 0) return '';
+
+  // Exclude the current user message (just saved, will be sent as the prompt)
+  // The last message should be the user's current message
+  const lastMsg = gapMessages[gapMessages.length - 1];
+  const messagesForBridge = (lastMsg.role === 'user')
+    ? gapMessages.slice(0, -1)
+    : gapMessages;
+
+  if (messagesForBridge.length === 0) return '';
+
+  // Convert to SimpleMessage
+  const simple: SimpleMessage[] = messagesForBridge.map((m: Message) => ({
+    role: m.role,
+    content: m.content,
+  }));
+
+  // Split into summary + recent verbatim
+  const recentCount = maxRecentTurns * 2;
+  const splitIndex = Math.max(0, simple.length - recentCount);
+  const oldMessages = simple.slice(0, splitIndex);
+  const recentMessages = simple.slice(splitIndex);
+
+  const sourceName = sourceBackend === 'claude' ? 'Claude' : 'Codex';
+  const parts: string[] = [];
+
+  parts.push(`[Context from recent conversation with ${sourceName} that you haven't seen]`);
+
+  // Summary of older gap messages (if any)
+  if (oldMessages.length > 0) {
+    const { topics, filePaths } = summarizeOlderMessages(oldMessages);
+
+    parts.push('');
+    parts.push('Summary of earlier gap messages:');
+
+    if (topics.length > 0) {
+      parts.push(`Topics discussed: ${topics.join('; ')}`);
+    }
+
+    if (filePaths.length > 0) {
+      parts.push(`Files referenced: ${filePaths.join(', ')}`);
+    }
+  }
+
+  // Recent gap messages verbatim
+  if (recentMessages.length > 0) {
+    const formatted = formatMessagesForContext(recentMessages);
+    if (formatted) {
+      parts.push('');
+      parts.push(`Recent messages you missed (${recentMessages.length} messages):`);
+      parts.push('---');
+      parts.push(formatted);
+      parts.push('---');
+    }
+  }
+
+  parts.push('');
+  parts.push('Please continue the conversation with this context in mind.');
+
+  // Update the bridged marker to the last gap message
+  // so this context won't be re-sent on subsequent switches
+  const lastGapMsg = messagesForBridge[messagesForBridge.length - 1];
+  updateLastBridgedMsgId(sessionId, targetBackend, lastGapMsg.id);
 
   return parts.join('\n');
 }

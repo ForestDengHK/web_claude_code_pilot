@@ -26,6 +26,12 @@ import { updateCodexThreadId } from '@/lib/db';
 // Types
 // ---------------------------------------------------------------------------
 
+/** Skill reference resolved by the frontend from `$skill-name` in user input. */
+export interface CodexSkillRef {
+  name: string;
+  path: string;
+}
+
 export interface CodexStreamOptions {
   prompt: string;
   sessionId: string;
@@ -35,13 +41,18 @@ export interface CodexStreamOptions {
   abortController?: AbortController;
   files?: FileAttachment[];
   contextBridgePrompt?: string;
+  /** Reasoning effort override (e.g. "low", "medium", "high", "xhigh"). */
+  effort?: string;
+  /** Reasoning summary style: "auto", "concise", "detailed", "none". */
+  summary?: string;
+  /** Codex skills resolved from `$skill-name` references in the prompt. */
+  skills?: CodexSkillRef[];
 }
 
-interface CodexUserInput {
-  type: 'text';
-  text: string;
-  text_elements?: unknown[];
-}
+// Codex app-server UserInput union (v2 protocol)
+type CodexUserInput =
+  | { type: 'text'; text: string; text_elements?: unknown[] }
+  | { type: 'skill'; name: string; path: string };
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -56,18 +67,32 @@ function generateApprovalId(): string {
 }
 
 /**
- * Build UserInput[] from prompt, optional context bridge prompt, and file refs.
+ * Build UserInput[] from prompt, optional context bridge prompt, file refs,
+ * and Codex skill references.
+ *
+ * Skill refs (`$skill-name`) are extracted and sent as structured
+ * `{ type: 'skill', name, path }` items so the Codex app-server loads
+ * the skill's SKILL.md content into the agent's context.
  */
 function buildUserInputs(
   prompt: string,
   contextBridgePrompt?: string,
   files?: FileAttachment[],
+  skills?: CodexSkillRef[],
 ): CodexUserInput[] {
   const inputs: CodexUserInput[] = [];
 
   // Context bridge prompt first (provides Claude conversation context)
   if (contextBridgePrompt) {
     inputs.push({ type: 'text', text: contextBridgePrompt });
+  }
+
+  // Codex skill references — emitted before the text prompt so the
+  // app-server injects skill instructions into context first.
+  if (skills && skills.length > 0) {
+    for (const skill of skills) {
+      inputs.push({ type: 'skill', name: skill.name, path: skill.path });
+    }
   }
 
   // File references
@@ -116,6 +141,9 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
     abortController,
     files,
     contextBridgePrompt,
+    effort,
+    summary,
+    skills,
   } = options;
 
   let heartbeatInterval: ReturnType<typeof setInterval>;
@@ -146,7 +174,7 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
         // 2. Thread lifecycle: start or resume
         if (isNewThread) {
           // Start a new thread
-          threadId = await startThread(codexProcess, sessionId, model, workingDirectory);
+          threadId = await startThread(codexProcess, sessionId, model, workingDirectory, effort);
         } else if (isResumedThread && threadId) {
           // Resume an existing thread on a new process
           await resumeThread(codexProcess, threadId);
@@ -158,7 +186,7 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
         }
 
         // 3. Build user inputs
-        const userInputs = buildUserInputs(prompt, contextBridgePrompt, files);
+        const userInputs = buildUserInputs(prompt, contextBridgePrompt, files, skills);
 
         // 4. Set up abort handling
         if (abortController) {
@@ -186,7 +214,22 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
           };
           if (workingDirectory) turnStartParams.cwd = workingDirectory;
           if (model) turnStartParams.model = model;
+          // Always send reasoning effort to override ~/.codex/config.toml global default.
+          // Schema field name is "effort" (NOT "modelReasoningEffort" — that was wrong).
+          {
+            const requestedEffort = effort || 'high';
+            const isMini = model && /mini/i.test(model);
+            // Mini models only support low/medium/high (not xhigh)
+            const validEffort = isMini && requestedEffort === 'xhigh' ? 'high' : requestedEffort;
+            turnStartParams.effort = validEffort;
+          }
+          // Reasoning summary: mini only supports 'detailed'; others default to 'concise'
+          {
+            const isMini = model && /mini/i.test(model);
+            turnStartParams.summary = isMini ? 'detailed' : (summary || 'concise');
+          }
 
+          console.log('[codex-client] turn/start params:', JSON.stringify({ model: turnStartParams.model, effort: turnStartParams.effort, summary: turnStartParams.summary }));
           codexProcess.send(
             formatJsonRpcRequest('turn/start', turnStartParams),
           );
@@ -241,6 +284,7 @@ function startThread(
   sessionId: string,
   model?: string,
   cwd?: string,
+  effort?: string,
 ): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -271,12 +315,13 @@ function startThread(
 
     codexProcess.onMessage(handler);
 
-    const params: Record<string, unknown> = {
-      experimentalRawEvents: false,
-      persistExtendedHistory: false,
-    };
+    const params: Record<string, unknown> = {};
     if (model) params.model = model;
     if (cwd) params.cwd = cwd;
+    // Pass effort via config to override config.toml default at thread creation
+    if (effort) {
+      params.config = { model_reasoning_effort: effort };
+    }
 
     codexProcess.send(formatJsonRpcRequest('thread/start', params));
   });
@@ -363,12 +408,34 @@ function handleCodexMessage(
         break;
       }
 
-      // Reasoning summary — render as regular text
+      // Raw reasoning delta — show as status so the user sees thinking progress
+      case 'item/reasoning/textDelta': {
+        const delta = msg.params.delta as string;
+        if (delta) {
+          // Extract a brief snippet for the status bar (last ~60 chars)
+          const snippet = delta.replace(/\n/g, ' ').trim();
+          if (snippet) {
+            controller.enqueue(formatSSE({
+              type: 'status',
+              data: JSON.stringify({ notification: true, message: `Thinking: ${snippet.slice(0, 80)}${snippet.length > 80 ? '…' : ''}` }),
+            }));
+          }
+        }
+        break;
+      }
+
+      // Reasoning summary — stream as thinking block, separate from response
       case 'item/reasoning/summaryTextDelta': {
         const delta = msg.params.delta as string;
         if (delta) {
-          controller.enqueue(formatSSE({ type: 'text', data: delta }));
+          controller.enqueue(formatSSE({ type: 'thinking', data: delta }));
         }
+        break;
+      }
+
+      // Reasoning summary part added — signal thinking phase completed
+      case 'item/reasoning/summaryPartAdded': {
+        // No-op: the summary text has already been streamed via summaryTextDelta
         break;
       }
 

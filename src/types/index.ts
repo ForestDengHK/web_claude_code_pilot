@@ -18,6 +18,8 @@ export interface ChatSession {
   needs_approval?: boolean;
   backend: 'claude' | 'codex';
   codex_thread_id?: string | null;
+  last_claude_bridged_msg_id?: string | null;
+  last_codex_bridged_msg_id?: string | null;
 }
 
 // ==========================================
@@ -71,6 +73,7 @@ export interface Message {
   content: string; // JSON string of MessageContentBlock[] for structured content
   created_at: string;
   token_usage: string | null; // JSON string of TokenUsage
+  backend?: 'claude' | 'codex' | null; // Which backend handled this message
   status?: 'streaming' | 'complete';  // draft checkpointing
   _rowid?: number;                     // pagination cursor
 }
@@ -78,6 +81,7 @@ export interface Message {
 // Structured message content blocks (stored as JSON in messages.content)
 export type MessageContentBlock =
   | { type: 'text'; text: string }
+  | { type: 'thinking'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown }
   | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
   | { type: 'code'; language: string; code: string };
@@ -329,6 +333,7 @@ export interface SkillResponse {
 
 export type SSEEventType =
   | 'text'               // text content delta
+  | 'thinking'           // reasoning/thinking content delta (Codex)
   | 'tool_use'           // tool invocation info
   | 'tool_result'        // tool execution result
   | 'tool_output'        // streaming tool output (stderr from SDK process)

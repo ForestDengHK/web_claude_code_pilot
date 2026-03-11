@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
-import { streamCodex } from '@/lib/codex-client';
-import { buildContextBridge } from '@/lib/context-bridge';
-import { addMessage, getSession, getAllMessages, updateSessionTitle } from '@/lib/db';
+import { streamCodex, type CodexSkillRef } from '@/lib/codex-client';
+import { detectBackendSwitch, buildIncrementalBridge } from '@/lib/context-bridge';
+import { addMessage, getSession, updateSessionTitle } from '@/lib/db';
 import { registerAbort, unregisterAbort } from '@/lib/abort-registry';
 import {
   initStreamBuffer,
@@ -20,8 +20,10 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
-    const body: SendMessageRequest & { files?: FileAttachment[]; toolTimeout?: number } = await request.json();
-    const { session_id, content, prompt, model, files } = body;
+    const body: SendMessageRequest & { files?: FileAttachment[]; toolTimeout?: number; effort?: string; codexSkills?: CodexSkillRef[] } = await request.json();
+    const { session_id, content, prompt, model, files, effort, codexSkills } = body;
+
+    console.log('[codex/chat] Received effort:', JSON.stringify(effort), 'model:', model);
 
     if (!session_id || !content) {
       return new Response(JSON.stringify({ error: 'session_id and content are required' }), {
@@ -82,7 +84,7 @@ export async function POST(request: NextRequest) {
       ];
       savedContent = `<!--files:${JSON.stringify(allMeta)}-->${content}`;
     }
-    addMessage(session_id, 'user', savedContent);
+    addMessage(session_id, 'user', savedContent, null, 'codex');
 
     // Auto-generate title from first message if still default.
     if (session.title === 'New Chat') {
@@ -98,13 +100,13 @@ export async function POST(request: NextRequest) {
     // Determine model: request override > session model
     const effectiveModel = model || session.model || undefined;
 
-    // Build context bridge if this is the first Codex turn in a session that had Claude messages
+    // Build incremental context bridge if switching from Claude → Codex
     let contextBridgePrompt: string | undefined;
-    if (!session.codex_thread_id) {
-      const allMessages = getAllMessages(session_id);
-      // allMessages includes the user message we just saved, so check for > 1
-      if (allMessages.length > 1 && session.backend === 'codex') {
-        contextBridgePrompt = await buildContextBridge(session_id, 'claude');
+    const switchSource = detectBackendSwitch(session_id, 'codex');
+    if (switchSource) {
+      const bridge = buildIncrementalBridge(session_id, 'codex', switchSource);
+      if (bridge) {
+        contextBridgePrompt = bridge;
       }
     }
 
@@ -148,6 +150,8 @@ export async function POST(request: NextRequest) {
       abortController,
       files: fileAttachments,
       contextBridgePrompt,
+      effort: effort || undefined,
+      skills: codexSkills,
     });
 
     // Tee the stream: one for client, one for collecting the response
@@ -178,6 +182,7 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
   const reader = stream.getReader();
   const contentBlocks: MessageContentBlock[] = [];
   let currentText = '';
+  let currentThinking = '';
   let tokenUsage: TokenUsage | null = null;
 
   // Initialise the in-memory streaming buffer so the recovery-polling
@@ -210,6 +215,8 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
             } else if (event.type === 'text') {
               currentText += event.data;
               appendStreamText(sessionId, event.data);
+            } else if (event.type === 'thinking') {
+              currentThinking += event.data;
             } else if (event.type === 'tool_use') {
               // Flush any accumulated text before the tool use block
               if (currentText.trim()) {
@@ -278,6 +285,11 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
       }
     }
 
+    // Flush any accumulated thinking
+    if (currentThinking.trim()) {
+      contentBlocks.unshift({ type: 'thinking', text: currentThinking });
+    }
+
     // Flush any remaining text
     if (currentText.trim()) {
       contentBlocks.push({ type: 'text', text: currentText });
@@ -287,11 +299,11 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
       // If the message is text-only (no tool calls), store as plain text
       // for backward compatibility with existing message rendering.
       // If it contains tool calls, store as structured JSON.
-      const hasToolBlocks = contentBlocks.some(
-        (b) => b.type === 'tool_use' || b.type === 'tool_result'
+      const hasStructuredBlocks = contentBlocks.some(
+        (b) => b.type === 'tool_use' || b.type === 'tool_result' || b.type === 'thinking'
       );
 
-      const content = hasToolBlocks
+      const content = hasStructuredBlocks
         ? JSON.stringify(contentBlocks)
         : contentBlocks
             .filter((b): b is Extract<MessageContentBlock, { type: 'text' }> => b.type === 'text')
@@ -305,19 +317,23 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
           'assistant',
           content,
           tokenUsage ? JSON.stringify(tokenUsage) : null,
+          'codex',
         );
       }
     }
   } catch {
     // Stream reading error - best effort save
+    if (currentThinking.trim()) {
+      contentBlocks.unshift({ type: 'thinking', text: currentThinking });
+    }
     if (currentText.trim()) {
       contentBlocks.push({ type: 'text', text: currentText });
     }
     if (contentBlocks.length > 0) {
-      const hasToolBlocks = contentBlocks.some(
-        (b) => b.type === 'tool_use' || b.type === 'tool_result'
+      const hasStructuredBlocks = contentBlocks.some(
+        (b) => b.type === 'tool_use' || b.type === 'tool_result' || b.type === 'thinking'
       );
-      const content = hasToolBlocks
+      const content = hasStructuredBlocks
         ? JSON.stringify(contentBlocks)
         : contentBlocks
             .filter((b): b is Extract<MessageContentBlock, { type: 'text' }> => b.type === 'text')
@@ -325,7 +341,7 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
             .join('')
             .trim();
       if (content) {
-        addMessage(sessionId, 'assistant', content);
+        addMessage(sessionId, 'assistant', content, null, 'codex');
       }
     }
   } finally {
