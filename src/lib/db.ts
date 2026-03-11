@@ -204,6 +204,10 @@ function migrateDb(db: Database.Database): void {
     db.exec("ALTER TABLE messages ADD COLUMN token_usage TEXT");
   }
 
+  if (!msgColNames.includes('status')) {
+    db.exec("ALTER TABLE messages ADD COLUMN status TEXT NOT NULL DEFAULT 'complete'");
+  }
+
   // Ensure tasks table exists for databases created before this migration
   db.exec(`
     CREATE TABLE IF NOT EXISTS tasks (
@@ -453,6 +457,69 @@ export function addMessage(
   updateSessionTimestamp(sessionId);
 
   return db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as Message;
+}
+
+/**
+ * Insert a draft assistant message with status='streaming'.
+ * Called once when the first content event arrives during streaming.
+ */
+export function addDraftMessage(
+  sessionId: string,
+  content: string,
+): Message {
+  const db = getDb();
+  const id = crypto.randomBytes(16).toString('hex');
+  const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+
+  db.prepare(
+    "INSERT INTO messages (id, session_id, role, content, created_at, status) VALUES (?, ?, 'assistant', ?, ?, 'streaming')"
+  ).run(id, sessionId, content, now);
+
+  // FTS index — even draft content should be searchable
+  db.prepare('INSERT INTO messages_fts(message_id, text_content) VALUES (?, ?)').run(
+    id,
+    extractTextContent(content)
+  );
+
+  updateSessionTimestamp(sessionId);
+  return db.prepare('SELECT *, rowid as _rowid FROM messages WHERE id = ?').get(id) as Message;
+}
+
+/**
+ * Update a draft message's content (periodic checkpoint during streaming).
+ */
+export function updateDraftMessage(messageId: string, content: string): void {
+  const db = getDb();
+  db.prepare('UPDATE messages SET content = ? WHERE id = ?').run(content, messageId);
+
+  // Update FTS index
+  db.prepare('DELETE FROM messages_fts WHERE message_id = ?').run(messageId);
+  db.prepare('INSERT INTO messages_fts(message_id, text_content) VALUES (?, ?)').run(
+    messageId,
+    extractTextContent(content)
+  );
+}
+
+/**
+ * Finalize a draft message: set status='complete', update content, add token usage.
+ * Called when streaming ends normally.
+ */
+export function finalizeDraftMessage(
+  messageId: string,
+  content: string,
+  tokenUsage?: string | null,
+): void {
+  const db = getDb();
+  db.prepare(
+    "UPDATE messages SET content = ?, token_usage = ?, status = 'complete' WHERE id = ?"
+  ).run(content, tokenUsage || null, messageId);
+
+  // Update FTS index with final content
+  db.prepare('DELETE FROM messages_fts WHERE message_id = ?').run(messageId);
+  db.prepare('INSERT INTO messages_fts(message_id, text_content) VALUES (?, ?)').run(
+    messageId,
+    extractTextContent(content)
+  );
 }
 
 export function getAllMessages(sessionId: string): Message[] {

@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
-import { addMessage, getSession, updateSessionTitle, updateSdkSessionId, getSetting } from '@/lib/db';
+import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getSession, updateSessionTitle, updateSdkSessionId, getSetting } from '@/lib/db';
 import { registerAbort, unregisterAbort } from '@/lib/abort-registry';
 import {
   initStreamBuffer,
@@ -199,10 +199,42 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
   const contentBlocks: MessageContentBlock[] = [];
   let currentText = '';
   let tokenUsage: TokenUsage | null = null;
+  let draftMessageId: string | null = null;
+  let lastCheckpointTime = 0;
+  const CHECKPOINT_INTERVAL_MS = 10_000; // Save draft every 10s
 
   // Initialise the in-memory streaming buffer so the recovery-polling
   // status endpoint can return intermediate output to the client.
   initStreamBuffer(sessionId);
+
+  /** Build the content string from current accumulated blocks. */
+  function buildContent(): string {
+    const blocks = [...contentBlocks];
+    if (currentText.trim()) {
+      blocks.push({ type: 'text', text: currentText });
+    }
+    if (blocks.length === 0) return '';
+    const hasToolBlocks = blocks.some(b => b.type === 'tool_use' || b.type === 'tool_result');
+    if (hasToolBlocks) return JSON.stringify(blocks);
+    return blocks
+      .filter((b): b is Extract<MessageContentBlock, { type: 'text' }> => b.type === 'text')
+      .map(b => b.text)
+      .join('')
+      .trim();
+  }
+
+  /** Save or update draft in DB. */
+  function checkpoint(): void {
+    const content = buildContent();
+    if (!content) return;
+    if (!draftMessageId) {
+      const draft = addDraftMessage(sessionId, content);
+      draftMessageId = draft.id;
+    } else {
+      updateDraftMessage(draftMessageId, content);
+    }
+    lastCheckpointTime = Date.now();
+  }
 
   try {
     while (true) {
@@ -230,6 +262,12 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
             } else if (event.type === 'text') {
               currentText += event.data;
               appendStreamText(sessionId, event.data);
+              // Create draft on first content, then checkpoint periodically
+              if (!draftMessageId) {
+                checkpoint();
+              } else if (Date.now() - lastCheckpointTime > CHECKPOINT_INTERVAL_MS) {
+                checkpoint();
+              }
             } else if (event.type === 'tool_use') {
               // Flush any accumulated text before the tool use block
               if (currentText.trim()) {
@@ -266,6 +304,8 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
                   content: resultData.content,
                   is_error: resultData.is_error || false,
                 });
+                // Always checkpoint after a tool result completes
+                checkpoint();
               } catch {
                 // skip malformed tool_result data
               }
@@ -309,9 +349,6 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
     }
 
     if (contentBlocks.length > 0) {
-      // If the message is text-only (no tool calls), store as plain text
-      // for backward compatibility with existing message rendering.
-      // If it contains tool calls, store as structured JSON.
       const hasToolBlocks = contentBlocks.some(
         (b) => b.type === 'tool_use' || b.type === 'tool_result'
       );
@@ -325,16 +362,24 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
             .trim();
 
       if (content) {
-        addMessage(
-          sessionId,
-          'assistant',
-          content,
-          tokenUsage ? JSON.stringify(tokenUsage) : null,
-        );
+        if (draftMessageId) {
+          finalizeDraftMessage(
+            draftMessageId,
+            content,
+            tokenUsage ? JSON.stringify(tokenUsage) : null,
+          );
+        } else {
+          addMessage(
+            sessionId,
+            'assistant',
+            content,
+            tokenUsage ? JSON.stringify(tokenUsage) : null,
+          );
+        }
       }
     }
   } catch {
-    // Stream reading error - best effort save
+    // Stream reading error — best effort save
     if (currentText.trim()) {
       contentBlocks.push({ type: 'text', text: currentText });
     }
@@ -350,7 +395,11 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
             .join('')
             .trim();
       if (content) {
-        addMessage(sessionId, 'assistant', content);
+        if (draftMessageId) {
+          finalizeDraftMessage(draftMessageId, content);
+        } else {
+          addMessage(sessionId, 'assistant', content);
+        }
       }
     }
   } finally {

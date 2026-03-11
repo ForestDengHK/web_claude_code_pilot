@@ -14,6 +14,7 @@ import { FileAttachmentDisplay } from './FileAttachmentDisplay';
 interface MessageItemProps {
   message: Message;
   searchQuery?: string;
+  isLatestMessage?: boolean;
 }
 
 interface ToolBlock {
@@ -232,7 +233,7 @@ function HighlightedText({ text, query }: { text: string; query: string }) {
 
 const COLLAPSE_HEIGHT = 300;
 
-export function MessageItem({ message, searchQuery }: MessageItemProps) {
+export function MessageItem({ message, searchQuery, isLatestMessage }: MessageItemProps) {
   const isUser = message.role === 'user';
   const { text, tools } = parseToolBlocks(message.content);
   const pairedTools = pairTools(tools);
@@ -287,6 +288,7 @@ export function MessageItem({ message, searchQuery }: MessageItemProps) {
               result: tool.result,
               isError: tool.isError,
             }))}
+            isLatestMessage={isLatestMessage}
           />
         )}
 

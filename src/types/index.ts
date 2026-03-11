@@ -71,6 +71,8 @@ export interface Message {
   content: string; // JSON string of MessageContentBlock[] for structured content
   created_at: string;
   token_usage: string | null; // JSON string of TokenUsage
+  status?: 'streaming' | 'complete';  // draft checkpointing
+  _rowid?: number;                     // pagination cursor
 }
 
 // Structured message content blocks (stored as JSON in messages.content)

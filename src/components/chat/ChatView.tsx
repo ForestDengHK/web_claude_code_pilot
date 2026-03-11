@@ -150,9 +150,10 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       const data: MessagesResponse = await res.json();
       setMessages(data.messages);
       setHasMore(data.hasMore ?? false);
-      // Backend is done if the last message is from the assistant
+      // Backend is done if the last message is a complete assistant message.
+      // Draft messages (status='streaming') mean Claude is still running.
       const lastMsg = data.messages[data.messages.length - 1];
-      return lastMsg?.role === 'assistant';
+      return lastMsg?.role === 'assistant' && lastMsg.status !== 'streaming';
     } catch {
       return false;
     }

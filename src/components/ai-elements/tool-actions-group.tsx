@@ -53,6 +53,7 @@ interface ToolActionsGroupProps {
   tools: ToolAction[];
   isStreaming?: boolean;
   streamingToolOutput?: string;
+  isLatestMessage?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -328,6 +329,7 @@ export function ToolActionsGroup({
   tools,
   isStreaming = false,
   streamingToolOutput: _streamingToolOutput,
+  isLatestMessage = false,
 }: ToolActionsGroupProps) {
   const hasRunningTool = isStreaming && tools.some((t) => t.result === undefined);
   const hasImageWrite = tools.some((t) => {
@@ -340,7 +342,7 @@ export function ToolActionsGroup({
   const [userExpandedState, setUserExpandedState] = useState<boolean | null>(null);
 
   // Derived: if user has toggled, use their choice; otherwise auto-expand based on streaming state or image writes
-  const expanded = userExpandedState !== null ? userExpandedState : (hasRunningTool || isStreaming || hasImageWrite);
+  const expanded = userExpandedState !== null ? userExpandedState : (hasRunningTool || isStreaming || hasImageWrite || isLatestMessage);
 
   if (tools.length === 0) return null;
 
