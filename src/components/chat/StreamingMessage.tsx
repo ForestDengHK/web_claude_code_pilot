@@ -34,6 +34,7 @@ interface ToolResultInfo {
 
 interface StreamingMessageProps {
   content: string;
+  thinkingContent?: string;
   isStreaming: boolean;
   toolUses?: ToolUseInfo[];
   toolResults?: ToolResultInfo[];
@@ -249,8 +250,67 @@ function StreamingStatusBar({ statusText, onForceStop }: { statusText?: string; 
   );
 }
 
+/**
+ * Format Codex thinking content for display.
+ * Codex reasoning summaries arrive as **bold items** concatenated without line breaks,
+ * e.g. "**Planning research****Selecting sources****Evaluating data**"
+ * This splits them into separate lines for readability.
+ */
+function formatThinkingContent(raw: string): string {
+  // Split on "****" boundaries (end of one bold block + start of next)
+  // then clean up remaining ** markers and trim
+  return raw
+    .replace(/\*\*\*\*/g, '\n')  // ****  →  newline (between adjacent bold items)
+    .replace(/\*\*/g, '')         // strip remaining ** markers
+    .replace(/^\n+/, '')          // trim leading newlines
+    .trim();
+}
+
+function ThinkingBlock({ content, isStreaming }: { content: string; isStreaming: boolean }) {
+  const [isExpanded, setIsExpanded] = useState(true);
+
+  // Auto-collapse when streaming finishes
+  useEffect(() => {
+    if (!isStreaming && content) {
+      setIsExpanded(false);
+    }
+  }, [isStreaming, content]);
+
+  if (!content) return null;
+
+  const formatted = formatThinkingContent(content);
+
+  return (
+    <div className="mb-2">
+      <button
+        type="button"
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors py-1"
+      >
+        <span className="text-sm">{'\uD83D\uDCAD'}</span>
+        <span>{isExpanded ? 'Thinking' : 'Thinking (tap to expand)'}</span>
+        <svg
+          className={`h-3 w-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {isExpanded && (
+        <div className="pl-6 text-xs text-muted-foreground/70 whitespace-pre-wrap break-words border-l-2 border-muted-foreground/20 ml-1 max-h-[50vh] overflow-y-auto">
+          {formatted}
+          {isStreaming && <span className="animate-pulse">{'\u2588'}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function StreamingMessage({
   content,
+  thinkingContent,
   isStreaming,
   toolUses = [],
   toolResults = [],
@@ -331,6 +391,11 @@ export function StreamingMessage({
             isStreaming={isStreaming}
             streamingToolOutput={streamingToolOutput}
           />
+        )}
+
+        {/* Thinking block — separate from response text (Codex only) */}
+        {thinkingContent && (
+          <ThinkingBlock content={thinkingContent} isStreaming={isStreaming} />
         )}
 
         {/* Streaming text content rendered via Streamdown */}

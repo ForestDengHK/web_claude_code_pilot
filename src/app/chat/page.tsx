@@ -37,6 +37,7 @@ export default function NewChatPage() {
   const [workingDir, setWorkingDir] = useState('');
   const [mode, setMode] = useState('code');
   const [currentModel, setCurrentModel] = useState('sonnet');
+  const [selectedBackend, setSelectedBackend] = useState<'claude' | 'codex'>('claude');
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
   const [streamingToolOutput, setStreamingToolOutput] = useState('');
@@ -83,7 +84,7 @@ export default function NewChatPage() {
       const res = await fetch('/api/chat/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ working_directory: dirPath }),
+        body: JSON.stringify({ working_directory: dirPath, backend: selectedBackend }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -93,7 +94,7 @@ export default function NewChatPage() {
     } catch {
       // If session creation fails, keep the old behavior (stay on /chat page)
     }
-  }, [router]);
+  }, [router, selectedBackend]);
 
   const stopStreaming = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -119,7 +120,8 @@ export default function NewChatPage() {
     setPendingApprovalSessionId('');
 
     try {
-      await fetch('/api/chat/permission', {
+      const permEndpoint = selectedBackend === 'codex' ? '/api/codex/permission' : '/api/chat/permission';
+      await fetch(permEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -132,7 +134,7 @@ export default function NewChatPage() {
       setPendingPermission(null);
       setPermissionResolved(null);
     }, 1000);
-  }, [pendingPermission, setPendingApprovalSessionId]);
+  }, [pendingPermission, setPendingApprovalSessionId, selectedBackend]);
 
   const sendFirstMessage = useCallback(
     async (content: string, _files?: unknown, skillInfo?: { name: string; content: string }) => {
@@ -176,6 +178,7 @@ export default function NewChatPage() {
           title: content.slice(0, 50),
           mode,
           working_directory: workingDir.trim(),
+          backend: selectedBackend,
         };
 
         const createRes = await fetch('/api/chat/sessions', {
@@ -207,7 +210,8 @@ export default function NewChatPage() {
         setMessages([userMessage]);
 
         // Send the message via streaming API (prompt includes skill wrapper if applicable)
-        const response = await fetch('/api/chat', {
+        const chatEndpoint = selectedBackend === 'codex' ? '/api/codex/chat' : '/api/chat';
+        const response = await fetch(chatEndpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -387,7 +391,7 @@ export default function NewChatPage() {
         abortControllerRef.current = null;
       }
     },
-    [isStreaming, router, workingDir, mode, currentModel, setPendingApprovalSessionId]
+    [isStreaming, router, workingDir, mode, currentModel, setPendingApprovalSessionId, selectedBackend]
   );
 
   const handleCommand = useCallback((command: string) => {
@@ -565,6 +569,8 @@ export default function NewChatPage() {
         workingDirectory={workingDir}
         mode={mode}
         onModeChange={setMode}
+        backend={selectedBackend}
+        onBackendChange={setSelectedBackend}
       />
 
     </div>

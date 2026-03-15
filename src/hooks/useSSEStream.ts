@@ -15,6 +15,7 @@ interface ToolResultInfo {
 
 export interface SSECallbacks {
   onText: (accumulated: string) => void;
+  onThinking: (delta: string) => void;
   onToolUse: (tool: ToolUseInfo) => void;
   onToolResult: (result: ToolResultInfo) => void;
   onToolOutput: (data: string) => void;
@@ -42,6 +43,11 @@ function handleSSEEvent(
       const next = accumulated + event.data;
       callbacks.onText(next);
       return next;
+    }
+
+    case 'thinking': {
+      callbacks.onThinking(event.data);
+      return accumulated;
     }
 
     case 'tool_use': {
@@ -253,6 +259,7 @@ export function useSSEStream() {
       // Proxy through ref so callers always hit the latest callbacks
       const proxied: SSECallbacks = {
         onText: (a) => callbacksRef.current?.onText(a),
+        onThinking: (d) => callbacksRef.current?.onThinking(d),
         onToolUse: (t) => callbacksRef.current?.onToolUse(t),
         onToolResult: (r) => callbacksRef.current?.onToolResult(r),
         onToolOutput: (d) => callbacksRef.current?.onToolOutput(d),

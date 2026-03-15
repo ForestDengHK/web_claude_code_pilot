@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
-import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getSession, updateSessionTitle, updateSdkSessionId, getSetting } from '@/lib/db';
+import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting } from '@/lib/db';
+import { detectBackendSwitch, buildIncrementalBridge } from '@/lib/context-bridge';
 import { registerAbort, unregisterAbort } from '@/lib/abort-registry';
 import {
   initStreamBuffer,
@@ -81,7 +82,7 @@ export async function POST(request: NextRequest) {
       ];
       savedContent = `<!--files:${JSON.stringify(allMeta)}-->${content}`;
     }
-    addMessage(session_id, 'user', savedContent);
+    addMessage(session_id, 'user', savedContent, null, 'claude');
 
     // Auto-generate title from first message if still default.
     // CJK characters are visually wider so we cap at 10 chars,
@@ -109,6 +110,16 @@ export async function POST(request: NextRequest) {
       default: // 'code'
         permissionMode = 'acceptEdits';
         break;
+    }
+
+    // Build incremental context bridge if switching from Codex → Claude
+    let contextBridgePrompt: string | undefined;
+    const switchSource = detectBackendSwitch(session_id, 'claude');
+    if (switchSource) {
+      const bridge = buildIncrementalBridge(session_id, 'claude', switchSource);
+      if (bridge) {
+        contextBridgePrompt = bridge;
+      }
     }
 
     // Skill content is now injected directly into the user message as <command-name> blocks
@@ -156,8 +167,13 @@ export async function POST(request: NextRequest) {
 
     // Stream Claude response, using SDK session ID for resume if available.
     // Use `prompt` (skill-injected content) if provided, otherwise plain `content`.
+    // If a context bridge is needed, prepend it to the prompt.
+    let effectivePrompt = prompt || content;
+    if (contextBridgePrompt) {
+      effectivePrompt = `${contextBridgePrompt}\n\n---\n\n${effectivePrompt}`;
+    }
     const stream = streamClaude({
-      prompt: prompt || content,
+      prompt: effectivePrompt,
       sessionId: session_id,
       sdkSessionId: session.sdk_session_id || undefined,
       model: effectiveModel,
@@ -228,7 +244,7 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
     const content = buildContent();
     if (!content) return;
     if (!draftMessageId) {
-      const draft = addDraftMessage(sessionId, content);
+      const draft = addDraftMessage(sessionId, content, 'claude');
       draftMessageId = draft.id;
     } else {
       updateDraftMessage(draftMessageId, content);
@@ -374,6 +390,7 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
             'assistant',
             content,
             tokenUsage ? JSON.stringify(tokenUsage) : null,
+            'claude',
           );
         }
       }
@@ -398,12 +415,28 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
         if (draftMessageId) {
           finalizeDraftMessage(draftMessageId, content);
         } else {
-          addMessage(sessionId, 'assistant', content);
+          addMessage(sessionId, 'assistant', content, null, 'claude');
         }
       }
     }
   } finally {
     // Always clean up the streaming buffer when the stream ends
     clearStreamBuffer(sessionId);
+
+    // Safety net: if a draft was created but never finalized (e.g. abort before
+    // any text arrived, or content was empty), finalize it now so it doesn't
+    // remain stuck in 'streaming' status and trigger infinite recovery polling.
+    if (draftMessageId) {
+      try {
+        // Only finalize if still in streaming status (avoid overwriting already-finalized content)
+        const db = getDb();
+        const row = db.prepare("SELECT status FROM messages WHERE id = ?").get(draftMessageId) as { status?: string } | undefined;
+        if (row?.status === 'streaming') {
+          finalizeDraftMessage(draftMessageId, '(interrupted)');
+        }
+      } catch {
+        // Best effort — don't let cleanup errors propagate
+      }
+    }
   }
 }

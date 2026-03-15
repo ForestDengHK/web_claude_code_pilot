@@ -190,12 +190,32 @@ function migrateDb(db: Database.Database): void {
   if (!colNames.includes('skip_permissions')) {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN skip_permissions INTEGER NOT NULL DEFAULT 0");
   }
+  if (!colNames.includes('backend')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN backend TEXT NOT NULL DEFAULT 'claude'");
+  }
+  if (!colNames.includes('codex_thread_id')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN codex_thread_id TEXT");
+  }
+
+  // Context bridge: track which backend's context window ends where
+  if (!colNames.includes('last_claude_bridged_msg_id')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN last_claude_bridged_msg_id TEXT");
+  }
+  if (!colNames.includes('last_codex_bridged_msg_id')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN last_codex_bridged_msg_id TEXT");
+  }
 
   const msgColumns = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[];
   const msgColNames = msgColumns.map(c => c.name);
 
   if (!msgColNames.includes('token_usage')) {
     db.exec("ALTER TABLE messages ADD COLUMN token_usage TEXT");
+  }
+  if (!msgColNames.includes('backend')) {
+    db.exec("ALTER TABLE messages ADD COLUMN backend TEXT");
+  }
+  if (!msgColNames.includes('status')) {
+    db.exec("ALTER TABLE messages ADD COLUMN status TEXT NOT NULL DEFAULT 'complete'");
   }
 
   if (!msgColNames.includes('status')) {
@@ -316,6 +336,7 @@ export function createSession(
   systemPrompt?: string,
   workingDirectory?: string,
   mode?: string,
+  backend?: 'claude' | 'codex',
 ): ChatSession {
   if (!workingDirectory?.trim()) {
     throw new Error('Cannot create session without a working directory');
@@ -327,8 +348,8 @@ export function createSession(
   const projectName = path.basename(wd);
 
   db.prepare(
-    'INSERT INTO chat_sessions (id, title, created_at, updated_at, model, system_prompt, working_directory, sdk_session_id, project_name, status, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, title || 'New Chat', now, now, model || '', systemPrompt || '', wd, '', projectName, 'active', mode || 'code');
+    'INSERT INTO chat_sessions (id, title, created_at, updated_at, model, system_prompt, working_directory, sdk_session_id, project_name, status, mode, backend) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, title || 'New Chat', now, now, model || '', systemPrompt || '', wd, '', projectName, 'active', mode || 'code', backend || 'claude');
 
   return getSession(id)!;
 }
@@ -359,6 +380,16 @@ export function updateSessionTitle(id: string, title: string): void {
 export function updateSdkSessionId(id: string, sdkSessionId: string): void {
   const db = getDb();
   db.prepare('UPDATE chat_sessions SET sdk_session_id = ? WHERE id = ?').run(sdkSessionId, id);
+}
+
+export function updateCodexThreadId(id: string, codexThreadId: string): void {
+  const db = getDb();
+  db.prepare('UPDATE chat_sessions SET codex_thread_id = ? WHERE id = ?').run(codexThreadId, id);
+}
+
+export function updateSessionBackend(id: string, backend: 'claude' | 'codex'): void {
+  const db = getDb();
+  db.prepare('UPDATE chat_sessions SET backend = ? WHERE id = ?').run(backend, id);
 }
 
 export function updateSessionWorkingDirectory(id: string, workingDirectory: string): void {
@@ -422,14 +453,15 @@ export function addMessage(
   role: 'user' | 'assistant',
   content: string,
   tokenUsage?: string | null,
+  backend?: 'claude' | 'codex' | null,
 ): Message {
   const db = getDb();
   const id = crypto.randomBytes(16).toString('hex');
   const now = new Date().toISOString().replace('T', ' ').split('.')[0];
 
   db.prepare(
-    'INSERT INTO messages (id, session_id, role, content, created_at, token_usage) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(id, sessionId, role, content, now, tokenUsage || null);
+    'INSERT INTO messages (id, session_id, role, content, created_at, token_usage, backend) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, sessionId, role, content, now, tokenUsage || null, backend || null);
 
   // Sync FTS index
   db.prepare('INSERT INTO messages_fts(message_id, text_content) VALUES (?, ?)').run(
@@ -449,14 +481,15 @@ export function addMessage(
 export function addDraftMessage(
   sessionId: string,
   content: string,
+  backend?: 'claude' | 'codex' | null,
 ): Message {
   const db = getDb();
   const id = crypto.randomBytes(16).toString('hex');
   const now = new Date().toISOString().replace('T', ' ').split('.')[0];
 
   db.prepare(
-    "INSERT INTO messages (id, session_id, role, content, created_at, status) VALUES (?, ?, 'assistant', ?, ?, 'streaming')"
-  ).run(id, sessionId, content, now);
+    "INSERT INTO messages (id, session_id, role, content, created_at, status, backend) VALUES (?, ?, 'assistant', ?, ?, 'streaming', ?)"
+  ).run(id, sessionId, content, now, backend || null);
 
   // FTS index — even draft content should be searchable
   db.prepare('INSERT INTO messages_fts(message_id, text_content) VALUES (?, ?)').run(
@@ -505,11 +538,70 @@ export function finalizeDraftMessage(
   );
 }
 
+export function getLastMessageInfo(sessionId: string): { role: string; created_at: string } | null {
+  const db = getDb();
+  const row = db.prepare(
+    'SELECT role, created_at FROM messages WHERE session_id = ? ORDER BY rowid DESC LIMIT 1'
+  ).get(sessionId) as { role: string; created_at: string } | undefined;
+  return row ?? null;
+}
+
 export function getAllMessages(sessionId: string): Message[] {
   const db = getDb();
   return db.prepare(
     'SELECT * FROM messages WHERE session_id = ? ORDER BY rowid ASC'
   ).all(sessionId) as Message[];
+}
+
+/**
+ * Get messages added after the given message ID (by rowid order).
+ * Used by the incremental context bridge to find the "gap" messages
+ * that a backend hasn't seen yet.
+ */
+export function getMessagesSince(sessionId: string, afterMsgId: string | null): Message[] {
+  const db = getDb();
+  if (!afterMsgId) {
+    // No previous bridge — return all messages
+    return db.prepare(
+      'SELECT * FROM messages WHERE session_id = ? ORDER BY rowid ASC'
+    ).all(sessionId) as Message[];
+  }
+
+  // Get the rowid of the marker message
+  const marker = db.prepare('SELECT rowid FROM messages WHERE id = ?').get(afterMsgId) as { rowid: number } | undefined;
+  if (!marker) {
+    // Marker message was deleted — return all messages
+    return db.prepare(
+      'SELECT * FROM messages WHERE session_id = ? ORDER BY rowid ASC'
+    ).all(sessionId) as Message[];
+  }
+
+  return db.prepare(
+    'SELECT * FROM messages WHERE session_id = ? AND rowid > ? ORDER BY rowid ASC'
+  ).all(sessionId, marker.rowid) as Message[];
+}
+
+/**
+ * Update the "last bridged message ID" marker for a backend.
+ * This tracks up to which message a backend has received context.
+ */
+export function updateLastBridgedMsgId(sessionId: string, backend: 'claude' | 'codex', msgId: string): void {
+  const db = getDb();
+  const col = backend === 'claude' ? 'last_claude_bridged_msg_id' : 'last_codex_bridged_msg_id';
+  db.prepare(`UPDATE chat_sessions SET ${col} = ? WHERE id = ?`).run(msgId, sessionId);
+}
+
+/**
+ * Get the backend that handled the last assistant message in a session.
+ * Returns null if there are no assistant messages or no backend is recorded.
+ */
+export function getLastAssistantBackend(sessionId: string): 'claude' | 'codex' | null {
+  const db = getDb();
+  const row = db.prepare(
+    "SELECT backend FROM messages WHERE session_id = ? AND role = 'assistant' ORDER BY rowid DESC LIMIT 1"
+  ).get(sessionId) as { backend: string | null } | undefined;
+  if (!row?.backend) return null;
+  return row.backend as 'claude' | 'codex';
 }
 
 export function clearSessionMessages(sessionId: string): void {

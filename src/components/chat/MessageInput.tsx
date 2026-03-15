@@ -48,8 +48,14 @@ import { useVoiceInput } from '@/hooks/useVoiceInput';
 // Max file size — generous limit since files are saved to disk and read by Claude Code tools
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
+/** Codex skill reference resolved from `$skill-name` in user input. */
+interface CodexSkillRef {
+  name: string;
+  path: string;
+}
+
 interface MessageInputProps {
-  onSend: (content: string, files?: FileAttachment[], skillInfo?: { name: string; content: string }) => void;
+  onSend: (content: string, files?: FileAttachment[], skillInfo?: { name: string; content: string }, codexSkills?: CodexSkillRef[]) => void;
   onCommand?: (command: string) => void;
   onStop?: () => void;
   disabled?: boolean;
@@ -60,6 +66,17 @@ interface MessageInputProps {
   workingDirectory?: string;
   mode?: string;
   onModeChange?: (mode: string) => void;
+  backend?: 'claude' | 'codex';
+  onBackendChange?: (backend: 'claude' | 'codex') => void;
+  effort?: string;
+  onEffortChange?: (effort: string) => void;
+}
+
+interface CodexModelInfo {
+  value: string;
+  label: string;
+  reasoningEfforts?: Array<{ value: string; label: string }>;
+  defaultEffort?: string;
 }
 
 interface PopoverItem {
@@ -70,9 +87,11 @@ interface PopoverItem {
   immediate?: boolean;
   installedSource?: "agents" | "claude";
   icon?: typeof CommandLineIcon;
+  /** Codex skill metadata — present only for items from /api/codex/skills */
+  codexSkillPath?: string;
 }
 
-type PopoverMode = 'file' | 'skill' | null;
+type PopoverMode = 'file' | 'skill' | 'codexSkill' | null;
 
 // Expansion prompts for CLI-only commands (not natively supported by SDK).
 // SDK-native commands (/compact, /init, /review) are sent as-is — the SDK handles them directly.
@@ -107,10 +126,10 @@ const MODE_OPTIONS: ModeOption[] = [
 ];
 
 // Fallback model options used when the API is unavailable
-const FALLBACK_MODEL_OPTIONS = [
-  { value: 'sonnet', label: 'Sonnet' },
-  { value: 'opus', label: 'Opus' },
-  { value: 'haiku', label: 'Haiku' },
+const FALLBACK_MODEL_OPTIONS: Array<{ value: string; label: string; group?: 'claude' | 'codex' }> = [
+  { value: 'sonnet', label: 'Sonnet', group: 'claude' },
+  { value: 'opus', label: 'Opus', group: 'claude' },
+  { value: 'haiku', label: 'Haiku', group: 'claude' },
 ];
 
 /**
@@ -447,6 +466,10 @@ export function MessageInput({
   workingDirectory,
   mode = 'code',
   onModeChange,
+  backend = 'claude',
+  onBackendChange,
+  effort,
+  onEffortChange,
 }: MessageInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -462,8 +485,11 @@ export function MessageInput({
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [inputValue, setInputValue] = useState('');
-  const [dynamicModels, setDynamicModels] = useState<Array<{ value: string; label: string }> | null>(null);
+  const [dynamicModels, setDynamicModels] = useState<Array<{ value: string; label: string; group?: 'claude' | 'codex' }> | null>(null);
+  const [codexModelInfo, setCodexModelInfo] = useState<Map<string, CodexModelInfo>>(new Map());
   const skillsCacheRef = useRef<Map<string, string>>(new Map());
+  /** Cache of Codex skill metadata (name → path), populated from /api/codex/skills */
+  const codexSkillsCacheRef = useRef<Map<string, string>>(new Map());
   const [skipPermissions, setSkipPermissions] = useState(false);
 
   // Fetch per-session skip_permissions on mount / sessionId change
@@ -479,30 +505,58 @@ export function MessageInput({
       .catch(() => {});
   }, [sessionId]);
 
-  // Fetch supported models from SDK and default to the first one
+  // Fetch supported models from BOTH backends and merge into grouped list
   useEffect(() => {
-    fetch('/api/models')
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.models && data.models.length > 0) {
-          const models = data.models.map((m: { value: string; displayName: string }) => ({
-            value: m.value,
-            label: m.displayName,
-          }));
-          setDynamicModels(models);
-          // Auto-select default model if no explicit model set.
-          // Prefer "sonnet" over "default" to avoid accidentally using the most
-          // expensive model (the SDK's "default" maps to Opus).
-          if (!modelName) {
-            const preferred =
-              models.find((m: { value: string }) => m.value === 'sonnet') ??
-              models.find((m: { value: string }) => m.value !== 'default') ??
-              models[0];
-            if (preferred) onModelChange?.(preferred.value);
+    Promise.all([
+      fetch('/api/models').then(r => r.ok ? r.json() : { models: [] }).catch(() => ({ models: [] })),
+      fetch('/api/codex/models').then(r => r.ok ? r.json() : { models: [] }).catch(() => ({ models: [] })),
+    ]).then(([claudeData, codexData]) => {
+      const claudeModels = (claudeData.models || []).map((m: { value: string; displayName: string }) => ({
+        value: m.value,
+        label: m.displayName,
+        group: 'claude' as const,
+      }));
+      const codexModels = (codexData.models || []).map((m: { value: string; displayName: string }) => ({
+        value: m.value,
+        label: m.displayName,
+        group: 'codex' as const,
+      }));
+
+      const allModels = [...claudeModels, ...codexModels];
+      setDynamicModels(allModels);
+
+      // Build effort info map for Codex models
+      const infoMap = new Map<string, CodexModelInfo>();
+      for (const m of codexData.models || []) {
+        const info: CodexModelInfo = { value: m.value, label: m.displayName };
+        if (m.reasoningEfforts && m.reasoningEfforts.length > 1) {
+          info.reasoningEfforts = m.reasoningEfforts;
+          info.defaultEffort = m.defaultEffort;
+        }
+        infoMap.set(m.value, info);
+      }
+      setCodexModelInfo(infoMap);
+
+      // Auto-select default model if no explicit model set
+      if (!modelName && allModels.length > 0) {
+        const preferred =
+          allModels.find((m: { value: string }) => m.value === 'sonnet') ??
+          allModels.find((m: { value: string }) => m.value !== 'default') ??
+          allModels[0];
+        if (preferred) {
+          onModelChange?.(preferred.value);
+          // Auto-set backend based on model group
+          const newBackend = preferred.group === 'codex' ? 'codex' : 'claude';
+          if (newBackend !== backend) onBackendChange?.(newBackend);
+          // Auto-set default effort for Codex
+          if (preferred.group === 'codex') {
+            const modelData = (codexData.models || []).find((dm: { value: string }) => dm.value === preferred.value);
+            if (modelData?.defaultEffort && !effort) onEffortChange?.(modelData.defaultEffort);
           }
         }
-      })
-      .catch(() => {});
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount
   }, []);
 
   const MODEL_OPTIONS = dynamicModels || FALLBACK_MODEL_OPTIONS;
@@ -589,7 +643,52 @@ export function MessageInput({
     const builtInNames = new Set(BUILT_IN_COMMANDS.map(c => c.label));
     const uniqueSkills = apiSkills.filter(s => !builtInNames.has(s.label));
 
-    return [...BUILT_IN_COMMANDS, ...uniqueSkills];
+    // When Codex is active, only show CodePilot-native commands (help, clear, cost)
+    // and hide Claude-specific ones (compact, doctor, init, review, etc.)
+    const CODEX_SAFE_COMMANDS = new Set(['help', 'clear', 'cost']);
+    const commands = backend === 'codex'
+      ? BUILT_IN_COMMANDS.filter(c => CODEX_SAFE_COMMANDS.has(c.label))
+      : BUILT_IN_COMMANDS;
+
+    // When Codex is active, don't show Claude API skills (they use /command-name format)
+    const skills = backend === 'codex' ? [] : uniqueSkills;
+
+    return [...commands, ...skills];
+  }, [workingDirectory, backend]);
+
+  // Fetch Codex skills for $ trigger (Codex backend only).
+  // Returns from cache on subsequent calls to avoid redundant fetches on every keystroke.
+  const codexSkillsItemsRef = useRef<PopoverItem[]>([]);
+  const fetchCodexSkills = useCallback(async (): Promise<PopoverItem[]> => {
+    // Return cached popover items if already populated (skills rarely change mid-session)
+    if (codexSkillsItemsRef.current.length > 0) {
+      return codexSkillsItemsRef.current;
+    }
+
+    try {
+      const cwdParam = workingDirectory ? `?cwd=${encodeURIComponent(workingDirectory)}` : '';
+      const res = await fetch(`/api/codex/skills${cwdParam}`);
+      if (!res.ok) return [];
+      const data = await res.json();
+      const skills: Array<{ name: string; description: string; path: string; displayName?: string }> = data.skills || [];
+
+      const cache = new Map<string, string>();
+      const items: PopoverItem[] = skills.map((s) => {
+        cache.set(s.name, s.path);
+        return {
+          label: s.name,
+          value: `$${s.name}`,
+          description: s.description || '',
+          builtIn: false,
+          codexSkillPath: s.path,
+        };
+      });
+      codexSkillsCacheRef.current = cache;
+      codexSkillsItemsRef.current = items;
+      return items;
+    } catch {
+      return [];
+    }
   }, [workingDirectory]);
 
   // Close popover
@@ -620,6 +719,20 @@ export function MessageInput({
       const cursorEnd = triggerPos + popoverFilter.length + 1; // +1 for the /
       const after = currentVal.slice(cursorEnd);
       const insertText = `/${item.label} `;
+
+      setInputValue(before + insertText + after);
+      closePopover();
+      setTimeout(() => textareaRef.current?.focus(), 0);
+      return;
+    }
+
+    // Codex skill: insert $name inline
+    if (popoverMode === 'codexSkill') {
+      const currentVal = inputValue;
+      const before = currentVal.slice(0, triggerPos);
+      const cursorEnd = triggerPos + popoverFilter.length + 1; // +1 for the $
+      const after = currentVal.slice(cursorEnd);
+      const insertText = `$${item.label} `;
 
       setInputValue(before + insertText + after);
       closePopover();
@@ -664,6 +777,21 @@ export function MessageInput({
       return;
     }
 
+    // Check for $ trigger (Codex skills — only when backend is Codex)
+    if (backend === 'codex') {
+      const dollarMatch = beforeCursor.match(/(^|\s)\$([^\s$]*)$/);
+      if (dollarMatch) {
+        const filter = dollarMatch[2];
+        setPopoverMode('codexSkill');
+        setPopoverFilter(filter);
+        setTriggerPos(cursorPos - dollarMatch[2].length - 1);
+        setSelectedIndex(0);
+        const items = await fetchCodexSkills();
+        setPopoverItems(items);
+        return;
+      }
+    }
+
     // Check for / trigger (only at start of line or after space)
     const slashMatch = beforeCursor.match(/(^|\s)\/([^\s]*)$/);
     if (slashMatch) {
@@ -680,7 +808,7 @@ export function MessageInput({
     if (popoverMode) {
       closePopover();
     }
-  }, [fetchFiles, fetchSkills, popoverMode, closePopover]);
+  }, [fetchFiles, fetchSkills, fetchCodexSkills, popoverMode, closePopover, backend]);
 
   const handleSubmit = useCallback(async (msg: { text: string; files: Array<{ type: string; url: string; filename?: string; mediaType?: string }> }, e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -756,9 +884,38 @@ export function MessageInput({
       // Unknown /command — send as-is
     }
 
+    // Codex backend: detect $skill-name references anywhere in the message.
+    // If the cache is empty (user typed/pasted without triggering the $ popover),
+    // fetch skills first so references can be resolved.
+    if (backend === 'codex') {
+      const hasSkillRef = /(^|\s)\$[a-zA-Z0-9_-]+/.test(content);
+      if (hasSkillRef) {
+        // Ensure cache is populated (no-op if already filled)
+        if (codexSkillsCacheRef.current.size === 0) {
+          await fetchCodexSkills();
+        }
+
+        const skillRefPattern = /(^|\s)\$([a-zA-Z0-9_-]+)/g;
+        const matchedSkills: CodexSkillRef[] = [];
+        let refMatch;
+        while ((refMatch = skillRefPattern.exec(content)) !== null) {
+          const skillName = refMatch[2];
+          const skillPath = codexSkillsCacheRef.current.get(skillName);
+          if (skillPath) {
+            matchedSkills.push({ name: skillName, path: skillPath });
+          }
+        }
+        if (matchedSkills.length > 0) {
+          setInputValue('');
+          onSend(content, hasFiles ? files : undefined, undefined, matchedSkills);
+          return;
+        }
+      }
+    }
+
     onSend(content || 'Please review the attached file(s).', hasFiles ? files : undefined);
     setInputValue('');
-  }, [inputValue, onSend, onCommand, disabled, isStreaming, closePopover]);
+  }, [inputValue, onSend, onCommand, disabled, isStreaming, closePopover, backend, fetchCodexSkills]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -836,6 +993,25 @@ export function MessageInput({
   const currentModelOption = MODEL_OPTIONS.find((m) => m.value === currentModelValue) || MODEL_OPTIONS[0];
   const currentMode = MODE_OPTIONS.find((m) => m.value === mode) || MODE_OPTIONS[0];
 
+  // Reasoning effort for current Codex model (dynamic from API, not hardcoded)
+  const currentModelEfforts = codexModelInfo.get(currentModelValue)?.reasoningEfforts;
+  const currentModelInfo = codexModelInfo.get(currentModelValue);
+  // Validate effort: if stored effort isn't in model's supported list, fall back to default
+  const supportedEffortValues = currentModelEfforts?.map(e => e.value) || [];
+  const rawEffort = effort || currentModelInfo?.defaultEffort;
+  const currentEffort = rawEffort && supportedEffortValues.length > 0 && !supportedEffortValues.includes(rawEffort)
+    ? currentModelInfo?.defaultEffort || supportedEffortValues[0]
+    : rawEffort;
+
+  /** Short effort label for the toolbar button (e.g. "Med", "Hi", "XHi") */
+  const effortShortLabel = (val?: string) => {
+    if (!val) return '';
+    const map: Record<string, string> = {
+      none: 'No', minimal: 'Min', low: 'Lo', medium: 'Med', high: 'Hi', xhigh: 'XHi',
+    };
+    return map[val] || val.slice(0, 3);
+  };
+
   // Map isStreaming to ChatStatus for PromptInputSubmit
   const chatStatus: ChatStatus = isStreaming ? 'streaming' : 'ready';
 
@@ -869,7 +1045,9 @@ export function MessageInput({
                 ) : (
                   <HugeiconsIcon icon={CommandLineIcon} className="h-4 w-4 shrink-0 text-muted-foreground" />
                 )}
-                <span className="font-mono text-xs truncate">{item.label}</span>
+                <span className="font-mono text-xs truncate">
+                  {popoverMode === 'codexSkill' ? `$${item.label}` : item.label}
+                </span>
                 {item.description && (
                   <span className="text-xs text-muted-foreground truncate max-w-[200px]">
                     {item.description}
@@ -888,18 +1066,18 @@ export function MessageInput({
                 ref={popoverRef}
                 className="absolute bottom-full left-0 right-0 mb-2 rounded-xl border bg-popover shadow-lg overflow-hidden z-50"
               >
-                {popoverMode === 'skill' ? (
+                {(popoverMode === 'skill' || popoverMode === 'codexSkill') ? (
                   <div className="px-3 py-2 border-b">
                     <input
                       ref={searchInputRef}
                       type="text"
-                      placeholder="Search..."
+                      placeholder={popoverMode === 'codexSkill' ? 'Search Codex skills...' : 'Search...'}
                       value={popoverFilter}
                       onChange={(e) => {
                         const val = e.target.value;
                         setPopoverFilter(val);
                         setSelectedIndex(0);
-                        // Sync textarea: replace the filter portion after /
+                        // Sync textarea: replace the filter portion after / or $
                         if (triggerPos !== null) {
                           const before = inputValue.slice(0, triggerPos + 1);
                           setInputValue(before + val);
@@ -935,6 +1113,13 @@ export function MessageInput({
                 <div className="max-h-48 overflow-y-auto py-1">
                   {popoverMode === 'file' ? (
                     filteredItems.map((item, i) => renderItem(item, i))
+                  ) : popoverMode === 'codexSkill' ? (
+                    <>
+                      <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground">
+                        Codex Skills
+                      </div>
+                      {filteredItems.map((item, i) => renderItem(item, i))}
+                    </>
                   ) : (
                     <>
                       {builtInItems.length > 0 && (
@@ -1040,37 +1225,102 @@ export function MessageInput({
                   )}
                 </div>
 
-                {/* Model selector */}
+                {/* Model selector (with effort for Codex) */}
                 <div className="relative min-w-0 shrink" ref={modelMenuRef}>
                   <PromptInputButton
                     onClick={() => setModelMenuOpen((prev) => !prev)}
                   >
-                    <span className="text-xs font-mono max-w-[5ch] truncate sm:max-w-none">{getShortModelName(currentModelOption.label)}</span>
+                    <span className="text-xs font-mono max-w-[5ch] truncate sm:max-w-none">
+                      {getShortModelName(currentModelOption.label)}
+                      {currentModelEfforts && currentEffort ? `\u00B7${effortShortLabel(currentEffort)}` : ''}
+                    </span>
                     <HugeiconsIcon icon={ArrowDown01Icon} className={cn("h-2.5 w-2.5 shrink-0 transition-transform duration-200", modelMenuOpen && "rotate-180")} />
                   </PromptInputButton>
 
                   {modelMenuOpen && (
-                    <div className="absolute bottom-full left-0 mb-1.5 w-48 rounded-lg border bg-popover shadow-lg overflow-hidden z-50">
-                      <div className="py-1">
-                        {MODEL_OPTIONS.map((opt) => {
+                    <div className="absolute bottom-full left-0 mb-1.5 w-40 rounded-lg border bg-popover shadow-lg z-50 max-h-[50vh] flex flex-col overflow-hidden">
+                      <div className="overflow-y-auto py-0.5 flex-1 min-h-0">
+                        {/* Claude models group */}
+                        {MODEL_OPTIONS.some(m => m.group === 'claude' || (!m.group && !codexModelInfo.has(m.value))) && (
+                          <div className="px-2 py-0.5 text-[9px] font-medium text-muted-foreground/50 uppercase tracking-wider">Claude</div>
+                        )}
+                        {MODEL_OPTIONS.filter(m => m.group === 'claude' || (!m.group && !codexModelInfo.has(m.value))).map((opt) => {
                           const isActive = opt.value === currentModelValue;
                           return (
                             <button
                               key={opt.value}
                               className={cn(
-                                "flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors",
+                                "flex w-full items-center px-2 py-[5px] text-left transition-colors",
                                 isActive ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
                               )}
                               onClick={() => {
                                 onModelChange?.(opt.value);
-                                setModelMenuOpen(false);
+                                if (backend !== 'claude') onBackendChange?.('claude');
+                                onEffortChange?.('');  // clear effort when switching to Claude
+                                setModelMenuOpen(false);  // Claude has no effort — close immediately
                               }}
                             >
-                              <span className="font-mono text-xs">{opt.label}</span>
+                              <span className="font-mono text-[11px]">{opt.label}</span>
+                            </button>
+                          );
+                        })}
+                        {/* Codex models group */}
+                        {MODEL_OPTIONS.some(m => m.group === 'codex' || codexModelInfo.has(m.value)) && (
+                          <div className="px-2 py-0.5 text-[9px] font-medium text-muted-foreground/50 uppercase tracking-wider border-t border-border/50 mt-0.5 pt-1">Codex</div>
+                        )}
+                        {MODEL_OPTIONS.filter(m => m.group === 'codex' || codexModelInfo.has(m.value)).map((opt) => {
+                          const isActive = opt.value === currentModelValue;
+                          return (
+                            <button
+                              key={opt.value}
+                              className={cn(
+                                "flex w-full items-center px-2 py-[5px] text-left transition-colors",
+                                isActive ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
+                              )}
+                              onClick={() => {
+                                onModelChange?.(opt.value);
+                                if (backend !== 'codex') onBackendChange?.('codex');
+                                const newModelInfo = codexModelInfo.get(opt.value);
+                                // Always reset effort to new model's default (prevents carrying unsupported efforts like xhigh→mini)
+                                const supportedValues = newModelInfo?.reasoningEfforts?.map(e => e.value) || [];
+                                if (newModelInfo?.defaultEffort) {
+                                  onEffortChange?.(newModelInfo.defaultEffort);
+                                } else if (supportedValues.length > 0) {
+                                  onEffortChange?.(supportedValues[0]);
+                                } else {
+                                  onEffortChange?.('');
+                                }
+                                // Don't close — let user adjust effort level
+                              }}
+                            >
+                              <span className="font-mono text-[11px]">{opt.label}</span>
                             </button>
                           );
                         })}
                       </div>
+
+                      {/* Reasoning effort selector — pinned at bottom, always visible */}
+                      {currentModelEfforts && currentModelEfforts.length > 1 && (
+                        <div className="border-t px-2 py-1.5 shrink-0">
+                          <span className="text-[9px] text-muted-foreground">Thinking</span>
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {currentModelEfforts.map((e) => (
+                              <button
+                                key={e.value}
+                                className={cn(
+                                  "px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors",
+                                  currentEffort === e.value
+                                    ? "bg-primary text-primary-foreground"
+                                    : "bg-muted text-muted-foreground hover:bg-accent"
+                                )}
+                                onClick={() => { onEffortChange?.(e.value); setModelMenuOpen(false); }}
+                              >
+                                {effortShortLabel(e.value)}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

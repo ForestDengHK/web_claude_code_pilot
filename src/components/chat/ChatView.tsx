@@ -26,10 +26,15 @@ function buildMessageContent(
   text: string,
   toolUses: ToolUseInfo[],
   toolResults: ToolResultInfo[],
+  thinking?: string,
 ): string {
-  if (toolUses.length === 0) return text;
+  if (toolUses.length === 0 && !thinking) return text;
 
   const blocks: Array<Record<string, unknown>> = [];
+  // Thinking block first (matches backend save order)
+  if (thinking) {
+    blocks.push({ type: 'thinking', text: thinking });
+  }
   if (text) {
     blocks.push({ type: 'text', text });
   } else {
@@ -56,21 +61,25 @@ interface ChatViewProps {
   initialHasMore?: boolean;
   modelName?: string;
   initialMode?: string;
+  backend?: 'claude' | 'codex';
 }
 
-export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, initialMode }: ChatViewProps) {
+export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, initialMode, backend = 'claude' }: ChatViewProps) {
   const { setStreamingSessionId, workingDirectory, setWorkingDirectory, setPanelOpen, setPendingApprovalSessionId, sessionTitle } = usePanel();
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [loadingMore, setLoadingMore] = useState(false);
   const loadingMoreRef = useRef(false);
   const [streamingContent, setStreamingContent] = useState('');
+  const [streamingThinking, setStreamingThinking] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [toolUses, setToolUses] = useState<ToolUseInfo[]>([]);
   const [toolResults, setToolResults] = useState<ToolResultInfo[]>([]);
   const [statusText, setStatusText] = useState<string | undefined>();
   const [mode, setMode] = useState(initialMode || 'code');
+  const [currentBackend, setCurrentBackendRaw] = useState<'claude' | 'codex'>(backend || 'claude');
   const [currentModel, setCurrentModelRaw] = useState(modelName || '');
+  const [currentEffort, setCurrentEffort] = useState<string | undefined>();
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
   const [pendingInputRequest, setPendingInputRequest] = useState<InputRequestEvent | null>(null);
@@ -99,6 +108,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   // Stream recovery: when SSE disconnects (mobile tab suspension), poll DB for the response
   const recoveryActiveRef = useRef(false);
   const recoveryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Periodic heartbeat timeout check — detects dead SSE connections even without visibilitychange
+  const heartbeatWatchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const setCurrentModel = useCallback((newModel: string) => {
     setCurrentModelRaw(newModel);
@@ -108,6 +119,17 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: newModel }),
+      }).catch(() => { /* silent */ });
+    }
+  }, [sessionId]);
+
+  const setCurrentBackend = useCallback((newBackend: 'claude' | 'codex') => {
+    setCurrentBackendRaw(newBackend);
+    if (sessionId) {
+      fetch(`/api/chat/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backend: newBackend }),
       }).catch(() => { /* silent */ });
     }
   }, [sessionId]);
@@ -129,8 +151,10 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
 
   // Ref to keep accumulated streaming content in sync regardless of React batching
   const accumulatedRef = useRef('');
+  // Ref for accumulated thinking content (same purpose as accumulatedRef)
+  const accumulatedThinkingRef = useRef('');
   // Ref for sendMessage to allow self-referencing in timeout auto-retry without circular deps
-  const sendMessageRef = useRef<(content: string, files?: FileAttachment[], skillInfo?: { name: string; content: string }) => Promise<void>>(undefined);
+  const sendMessageRef = useRef<(content: string, files?: FileAttachment[], skillInfo?: { name: string; content: string }, codexSkills?: Array<{ name: string; path: string }>) => Promise<void>>(undefined);
   // Wake Lock sentinel — keeps the screen on during streaming to prevent socket death on screen-off
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   // Independent AbortController for the SSE read loop only (not the backend Claude process).
@@ -163,12 +187,18 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       clearInterval(recoveryTimerRef.current);
       recoveryTimerRef.current = null;
     }
+    if (heartbeatWatchdogRef.current) {
+      clearInterval(heartbeatWatchdogRef.current);
+      heartbeatWatchdogRef.current = null;
+    }
     recoveryActiveRef.current = false;
     // Perform the deferred cleanup that the finally block skipped
     setIsStreaming(false);
     setStreamingSessionId('');
     setStreamingContent('');
+    setStreamingThinking('');
     accumulatedRef.current = '';
+    accumulatedThinkingRef.current = '';
     setToolUses([]);
     setToolResults([]);
     toolUsesRef.current = [];
@@ -221,10 +251,12 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           if (done) {
             stopRecovery();
           } else {
-            // Message fetch failed or Claude produced no output — retry a few
-            // times then force-stop to avoid infinite polling.
+            // Message fetch failed or backend hasn't saved yet — retry.
+            // Use 10 retries (30s total at 3s intervals) to handle slow saves.
             doneRetries++;
-            if (doneRetries >= 5) {
+            if (doneRetries >= 10) {
+              // Last resort: fetch one more time before giving up
+              await recoverMessages();
               stopRecovery();
             }
           }
@@ -493,7 +525,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     setPendingApprovalSessionId('');
 
     try {
-      await fetch('/api/chat/permission', {
+      const permEndpoint = currentBackend === 'codex' ? '/api/codex/permission' : '/api/chat/permission';
+      await fetch(permEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -507,7 +540,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       setPendingPermission(null);
       setPermissionResolved(null);
     }, 1000);
-  }, [pendingPermission, setPendingApprovalSessionId]);
+  }, [pendingPermission, setPendingApprovalSessionId, currentBackend]);
 
   const handleInputResponse = useCallback(async (answers: Record<string, string>) => {
     if (!pendingInputRequest) return;
@@ -547,7 +580,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   }, [pendingInputRequest]);
 
   const sendMessage = useCallback(
-    async (content: string, files?: FileAttachment[], skillInfo?: { name: string; content: string }) => {
+    async (content: string, files?: FileAttachment[], skillInfo?: { name: string; content: string }, codexSkills?: Array<{ name: string; path: string }>) => {
       if (isStreaming) return;
 
       // Cancel any ongoing recovery from a previous disconnection
@@ -583,6 +616,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       setIsStreaming(true);
       setStreamingSessionId(sessionId);
       setStreamingContent('');
+      setStreamingThinking('');
       accumulatedRef.current = '';
       setToolUses([]);
       setToolResults([]);
@@ -597,7 +631,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       let toolCount = 0;
 
       try {
-        const response = await fetch('/api/chat', {
+        const chatEndpoint = currentBackend === 'codex' ? '/api/codex/chat' : '/api/chat';
+        const response = await fetch(chatEndpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -607,6 +642,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             mode,
             model: currentModel,
             ...(files && files.length > 0 ? { files } : {}),
+            ...(currentBackend === 'codex' ? { effort: currentEffort || 'high' } : {}),
+            ...(codexSkills && codexSkills.length > 0 ? { codexSkills } : {}),
           }),
           signal: controller.signal,
         });
@@ -625,12 +662,32 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         readerAbortControllerRef.current = readerAbort;
         lastSseDataRef.current = Date.now();
 
+        // Start heartbeat watchdog: if no SSE data arrives for 30s (3 missed
+        // 10s heartbeats), the connection is dead — abort reader → recovery.
+        if (heartbeatWatchdogRef.current) clearInterval(heartbeatWatchdogRef.current);
+        heartbeatWatchdogRef.current = setInterval(() => {
+          if (lastSseDataRef.current > 0 && Date.now() - lastSseDataRef.current > 30_000) {
+            // Connection silently died — trigger recovery
+            if (heartbeatWatchdogRef.current) {
+              clearInterval(heartbeatWatchdogRef.current);
+              heartbeatWatchdogRef.current = null;
+            }
+            recoveryAbortRef.current = true;
+            readerAbortControllerRef.current?.abort();
+          }
+        }, 5_000);
+
         const result = await consumeSSEStream(reader, {
           onText: (acc) => {
             lastSseDataRef.current = Date.now();
             accumulated = acc;
             accumulatedRef.current = acc;
             setStreamingContent(acc);
+          },
+          onThinking: (delta) => {
+            lastSseDataRef.current = Date.now();
+            accumulatedThinkingRef.current += delta;
+            setStreamingThinking((prev) => prev + delta);
           },
           onToolUse: (tool) => {
             toolCount++;
@@ -707,7 +764,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         // Build optimistic assistant message with tool blocks (matching DB JSON format)
         // so that MessageItem.parseToolBlocks() can render tools after streaming ends
         const finalText = accumulated.trim();
-        const finalContent = buildMessageContent(finalText, toolUsesRef.current, toolResultsRef.current)
+        const finalContent = buildMessageContent(finalText, toolUsesRef.current, toolResultsRef.current, accumulatedThinkingRef.current.trim() || undefined)
           || (toolCount > 0 ? '*(Task completed with tool activity but no text response)*' : '');
         if (finalContent) {
           const assistantMessage: Message = {
@@ -749,6 +806,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             setIsStreaming(false);
             setStreamingSessionId('');
             setStreamingContent('');
+            setStreamingThinking('');
             accumulatedRef.current = '';
             setToolUses([]);
             setToolResults([]);
@@ -785,6 +843,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           startRecovery();
         }
       } finally {
+        // Always stop the heartbeat watchdog — recovery has its own polling
+        if (heartbeatWatchdogRef.current) {
+          clearInterval(heartbeatWatchdogRef.current);
+          heartbeatWatchdogRef.current = null;
+        }
         toolTimeoutRef.current = null;
         if (recoveryActiveRef.current) {
           // Recovery is active — only clean up internal refs, keep UI state visible
@@ -797,6 +860,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           setIsStreaming(false);
           setStreamingSessionId('');
           setStreamingContent('');
+          setStreamingThinking('');
           accumulatedRef.current = '';
           setToolUses([]);
           setToolResults([]);
@@ -818,7 +882,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         }
       }
     },
-    [sessionId, isStreaming, setStreamingSessionId, setPendingApprovalSessionId, mode, currentModel, stopRecovery, startRecovery]
+    [sessionId, isStreaming, setStreamingSessionId, setPendingApprovalSessionId, mode, currentModel, stopRecovery, startRecovery, currentBackend]
   );
 
   // Keep sendMessageRef in sync so timeout auto-retry can call it
@@ -920,6 +984,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       <MessageList
         messages={messages}
         streamingContent={streamingContent}
+        thinkingContent={streamingThinking}
         isStreaming={isStreaming}
         toolUses={toolUses}
         toolResults={toolResults}
@@ -951,6 +1016,10 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         workingDirectory={workingDirectory}
         mode={mode}
         onModeChange={handleModeChange}
+        backend={currentBackend}
+        onBackendChange={setCurrentBackend}
+        effort={currentEffort}
+        onEffortChange={setCurrentEffort}
       />
     </div>
   );
