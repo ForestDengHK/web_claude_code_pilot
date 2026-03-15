@@ -17,7 +17,7 @@ Concise, high-signal instructions for AI-assisted development in this repo.
 - `src/hooks/`, `src/types/`: shared hooks/contracts
 - `src/__tests__/`: e2e + unit + targeted/smoke scripts
 - `docs/`: architecture notes (notably bridge); `scripts/`: build helpers; `public/`: assets
-- `.worktrees/`: local git worktrees (do not lint/build against generated artifacts here)
+- `.worktrees/`: transient git worktrees (gitignored; do not lint/build against generated artifacts here)
 
 ## Key Architecture Decisions
 - Standalone server build: `next.config.mjs` sets `output: 'standalone'` and externalizes `better-sqlite3`.

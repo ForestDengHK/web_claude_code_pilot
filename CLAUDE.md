@@ -74,5 +74,6 @@ Self-hosted web app. Pull the latest tag and run:
 - Next.js is configured with `output: 'standalone'` in `next.config.ts`
 - `npm run build` produces `.next/standalone/` which includes a minimal Node.js server
 - `npm run start` launches the production server (or use `node .next/standalone/server.js`)
+- For production deployment, use `./scripts/rebuild-production.sh` (builds in `/tmp` to avoid corrupting dev cache)
 - `better-sqlite3` is listed in `serverExternalPackages` so it is not bundled by webpack
 - Clean before rebuilding: `rm -rf .next/` to avoid stale output
