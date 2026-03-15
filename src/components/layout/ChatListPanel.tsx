@@ -263,8 +263,31 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
       });
       if (res.ok) {
         const data = await res.json();
+        // Auto-expand the project so the new chat is visible
+        setCollapsedProjects((prev) => {
+          if (!prev.has(workingDirectory)) return prev;
+          const next = new Set(prev);
+          next.delete(workingDirectory);
+          saveCollapsedProjects(next);
+          return next;
+        });
         window.dispatchEvent(new CustomEvent("session-created"));
         router.push(`/chat/${data.session.id}`);
+        // Scroll the new session into view after fetch + render completes
+        const scrollToSession = () => {
+          const el = document.querySelector(`[data-session-id="${data.session.id}"]`);
+          if (el) {
+            el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+          } else {
+            // DOM not yet updated — retry once after a short delay
+            setTimeout(() => {
+              document.querySelector(`[data-session-id="${data.session.id}"]`)
+                ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }, 300);
+          }
+        };
+        // Give fetchSessions time to complete and React to render
+        setTimeout(scrollToSession, 100);
       }
     } catch {
       // Silently fail
@@ -605,6 +628,7 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                             return (
                               <div
                                 key={session.id}
+                                data-session-id={session.id}
                                 className="group relative"
                               >
                                 <Link

@@ -495,6 +495,21 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   }, [sessionId, messages, hasMore]);
 
   const stopStreaming = useCallback(() => {
+    // If recovery polling is active, stop it and reset UI immediately.
+    // This lets the user cancel "Reconnecting..." by clicking the stop button.
+    if (recoveryActiveRef.current) {
+      // Tell the server to abort first (best-effort), then clean up client state
+      fetch('/api/chat/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId }),
+      }).catch(() => { /* best-effort */ });
+      // Recover any messages that may have been saved before stopping
+      recoverMessages().finally(() => {
+        stopRecovery();
+      });
+      return;
+    }
     // Abort the client-side reader immediately
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
@@ -504,7 +519,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: sessionId }),
     }).catch(() => { /* best-effort */ });
-  }, [sessionId]);
+  }, [sessionId, recoverMessages, stopRecovery]);
 
   const handlePermissionResponse = useCallback(async (decision: 'allow' | 'allow_session' | 'deny') => {
     if (!pendingPermission) return;
