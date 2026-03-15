@@ -270,7 +270,7 @@ function ToolActionRow({ tool, isStreaming }: { tool: ToolAction; isStreaming: b
         <span className={cn("font-medium shrink-0", category === 'skill' ? "text-blue-500" : "text-muted-foreground")}>{label}</span>
       )}
 
-      <Tooltip open={longPress.isTouchDevice ? longPress.isActive : undefined}>
+      <Tooltip open={longPress.tooltipOpen}>
         <TooltipTrigger asChild>
           <span
             className={cn("font-mono truncate flex-1 select-none", category === 'skill' ? "text-blue-500/70" : "text-muted-foreground/60")}
@@ -387,7 +387,7 @@ export function ToolActionsGroup({
 
         {/* Show running task description on the right */}
         {runningDesc && (
-          <Tooltip open={headerLongPress.isTouchDevice ? headerLongPress.isActive : undefined}>
+          <Tooltip open={headerLongPress.tooltipOpen}>
             <TooltipTrigger asChild>
               <span
                 className="ml-auto text-muted-foreground/40 text-[11px] font-mono truncate max-w-[40%] select-none"

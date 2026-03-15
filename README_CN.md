@@ -1,7 +1,7 @@
 <img src="docs/icon-readme.png" width="32" height="32" alt="Web Claude Code Pilot" style="vertical-align: middle; margin-right: 8px;" /> Web Claude Code Pilot
 ===
 
-**Claude Code 的 Web GUI** -- 通过可视化界面进行对话、编码和项目管理，无需在终端中操作。自托管在你自己的机器上，可从任何浏览器访问（包括通过 Tailscale 从手机访问）。
+**Claude Code 与 Codex CLI 的 Web GUI** -- 通过可视化界面进行对话、编码和项目管理，无需在终端中操作。支持在 Claude Code 和 Codex CLI 后端之间随时切换，并自动传递对话上下文。自托管在你自己的机器上，可从任何浏览器访问（包括通过 Tailscale 从手机访问）。
 
 [English](./README.md)
 
@@ -26,6 +26,21 @@
 - **动态模型列表** -- 运行时从 SDK 获取模型，而非硬编码。选择在消息间持久化。
 - **会话级权限切换** -- 在输入栏通过盾牌图标按会话自动批准工具使用。
 - **文件夹收藏** -- 收藏常用项目目录以快速访问。
+- **会话分组** -- 侧边栏中会话按项目目录分组，支持折叠/展开全部。
+- **会话内搜索** -- 在对话中搜索消息，高亮匹配并支持导航。
+- **图片灯箱** -- 点击聊天中的图片打开全屏查看器，支持多图导航。
+- **文档预览** -- 在右侧面板直接预览文件，无需离开聊天。
+- **Git 克隆** -- 在文件选择器中直接克隆仓库。
+- **任务追踪** -- 查看 Claude 在编码过程中创建的任务。
+- **连接状态指示** -- UI 中实时显示服务器连接健康状态。
+- **剪贴板兼容** -- 非 HTTPS 环境下的 Clipboard API 兼容方案（通过 Tailscale 从手机访问时）。
+- **双后端：Claude Code + Codex CLI** -- 按会话切换 Claude Code（Agent SDK）和 Codex CLI 后端。模型和技能分别从两个后端获取。切换时自动桥接对话上下文（增量式，无额外 LLM 开销）。
+- **IM 桥接（Telegram）** -- 通过 Telegram 与 Claude 对话。完整的双向桥接，支持会话管理、权限转发、Markdown 渲染、流式预览和图片附件。详见 [Bridge Architecture](docs/bridge-architecture.md)。
+- **多服务商支持** -- 配置多个 API 服务商（Anthropic、OpenRouter 或自定义端点），各自独立的 API Key、Base URL 和模型列表。
+- **语音输入（STT）** -- 聊天输入栏中的麦克风按钮，支持语音转文字。可在语音输入设置中配置转录服务商。
+- **虚拟滚动** -- 消息列表使用 react-virtuoso，长对话中滚动流畅。
+- **草稿检查点** -- 流式传输中的消息实时保存到数据库，浏览器标签页挂起或重连时可恢复。
+- **回到顶部按钮** -- 在对话中快速跳转到顶部。
 - **生产构建修复** -- 构建后脚本将 `.next/static` 符号链接到 standalone 输出（CSS/JS 加载所必需）。
 
 ---
@@ -33,32 +48,43 @@
 ## 功能特性
 
 - **实时对话编码** -- 流式接收 Claude 的响应，支持完整的 Markdown 渲染、语法高亮代码块和工具调用可视化
-- **会话管理** -- 创建、重命名和恢复聊天会话。可导入 Claude Code CLI 的对话记录。所有数据本地持久化存储在 SQLite 中
-- **项目感知上下文** -- 为每个会话选择工作目录。右侧面板实时展示文件树，支持文件预览、下载和复制文件名
+- **双后端** -- 在 Claude Code（Agent SDK）和 Codex CLI 之间按会话切换。两个后端共享相同的流式传输、工具调用和权限审批 UI。切换时自动桥接上下文，无额外 LLM 开销
+- **会话管理** -- 创建、重命名、归档和恢复聊天会话。会话按项目分组显示，支持折叠/展开。可导入 Claude Code CLI 的对话记录
+- **项目感知上下文** -- 为每个会话选择工作目录。右侧面板实时展示文件树，支持展开/折叠全部、文件预览、下载和复制文件名。支持从文件选择器中 Git 克隆
+- **会话内搜索** -- 在对话中搜索消息，高亮匹配并支持导航
+- **图片灯箱** -- 点击聊天中的图片打开全屏查看器，支持多图导航
+- **文档预览** -- 在右侧面板直接预览文件，无需离开聊天
 - **可调节面板宽度** -- 拖拽聊天列表和右侧面板的边缘调整宽度，偏好设置跨会话保存
 - **文件和图片附件** -- 在聊天输入框直接附加文件和图片。图片以多模态视觉内容发送给 Claude 进行分析
-- **权限控制** -- 逐项审批、拒绝或自动允许工具使用，可选择不同的权限模式
+- **权限控制** -- 逐项审批、拒绝或自动允许工具使用。输入栏盾牌图标可按会话切换自动批准
 - **多种交互模式** -- 在 *Code*、*Plan* 和 *Ask* 模式之间切换，控制 Claude 在每个会话中的行为方式
-- **模型切换** -- 在对话中随时切换 Claude 模型（Opus、Sonnet、Haiku）
+- **模型切换** -- 在对话中随时切换 Claude 和 Codex 模型。运行时从两个后端动态获取模型列表。Codex 模型支持可配置的推理深度
+- **多服务商支持** -- 配置多个 API 服务商（Anthropic、OpenRouter 或自定义端点），各自独立的 API Key、Base URL 和模型列表
 - **MCP 服务器管理** -- 在扩展页面添加、配置和移除 Model Context Protocol 服务器。支持 `stdio`、`sse` 和 `http` 传输类型。自动读取项目级 `.mcp.json` 配置
-- **自定义技能** -- 定义可复用的提示词技能（全局或项目级别），在聊天中以 `/skill` 命令调用。同时支持 Claude Code CLI 的插件技能
+- **自定义技能** -- 定义可复用的提示词技能（全局或项目级别），在聊天中以 `/skill` 命令调用。同时支持 Claude Code CLI 和 Codex CLI 的插件技能
 - **设置编辑器** -- 可视化和 JSON 编辑器管理 `~/.claude/settings.json`，包括权限和环境变量配置
 - **Token 用量追踪** -- 每次助手回复后查看输入/输出 Token 数量和预估费用
 - **深色/浅色主题** -- 导航栏一键切换主题
 - **斜杠命令** -- 内置 `/help`、`/clear`、`/cost`、`/compact`、`/doctor`、`/review` 等命令
-- **移动端适配** -- 响应式布局，底部导航栏，触控友好的控件，手机屏幕上的面板覆盖层
+- **文件夹收藏** -- 收藏常用项目目录以快速访问
+- **连接状态指示** -- 实时显示服务器连接是否正常
+- **任务追踪** -- 查看和管理 Claude 在编码过程中创建的任务
+- **IM 桥接** -- 连接外部 IM 平台（Telegram）到 Web Claude Code Pilot。无需打开浏览器即可通过手机与 Claude 对话。功能包括：会话绑定、项目切换、11 个斜杠命令、权限转发、Markdown 渲染、流式预览、图片附件、聊天清理和限速。在 Bridge 设置页面管理。详见 [Bridge Architecture](docs/bridge-architecture.md)
+- **语音输入** -- 聊天输入栏麦克风按钮，支持语音转文字。可在语音输入设置中配置转录服务商（如 OpenAI Whisper）
+- **移动端适配** -- 响应式布局，底部导航栏，触控友好的控件，手机屏幕上的面板覆盖层。非 HTTPS 环境下的剪贴板兼容方案
 
 ---
 
 ## 环境要求
 
-| 要求 | 最低版本 |
-|------|---------|
-| **Node.js** | 20+ |
-| **Claude Code CLI** | 已安装并完成认证（`claude --version` 可正常运行） |
-| **npm** | 9+（Node 20 自带） |
+| 要求 | 最低版本 | 说明 |
+|------|---------|------|
+| **Node.js** | 20+ | 必需 |
+| **npm** | 9+（Node 20 自带） | 必需 |
+| **Claude Code CLI** | 最新版（`claude --version`） | Claude 后端必需；运行 `claude login` 完成认证 |
+| **Codex CLI** | 最新版（`codex --version`） | 可选；仅 Codex 后端需要 |
 
-> **注意**：Web Claude Code Pilot 底层调用 Claude Code Agent SDK。请确保 `claude` 命令在 `PATH` 中可用，并且已完成认证（`claude login`）。
+> **注意**：Web Claude Code Pilot 支持两个后端 —— Claude Code（Agent SDK）和 Codex CLI。至少需要安装一个。请确保 `claude` 和/或 `codex` 命令在 `PATH` 中可用并已完成认证。
 
 ---
 
@@ -187,9 +213,10 @@ rm ~/Library/LaunchAgents/com.codepilot.web.plist
 | UI 组件 | [Radix UI](https://www.radix-ui.com/) + [shadcn/ui](https://ui.shadcn.com/) |
 | 样式 | [Tailwind CSS 4](https://tailwindcss.com/) |
 | 动画 | [Motion](https://motion.dev/)（Framer Motion） |
-| AI 集成 | [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) |
+| AI 集成 | [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) + [Codex CLI](https://github.com/openai/codex)（JSON-RPC） |
 | 数据库 | [better-sqlite3](https://github.com/WiseLibs/better-sqlite3)（嵌入式，用户独立） |
 | Markdown | react-markdown + remark-gfm + rehype-raw + [Shiki](https://shiki.style/) |
+| IM Bridge Markdown | [markdown-it](https://github.com/markdown-it/markdown-it)（服务端 IR → Telegram HTML） |
 | 流式传输 | Server-Sent Events (SSE) |
 | 图标 | [Hugeicons](https://hugeicons.com/) + [Lucide](https://lucide.dev/) |
 | 测试 | [Playwright](https://playwright.dev/) |
@@ -205,6 +232,7 @@ web_claude_code_pilot/
 ├── src/
 │   ├── app/                 # Next.js App Router 页面和 API 路由
 │   │   ├── chat/            # 新建对话页面和 [id] 会话页面
+│   │   ├── bridge/          # IM Bridge 设置页面
 │   │   ├── extensions/      # 技能 + MCP 服务器管理
 │   │   ├── settings/        # 设置编辑器
 │   │   └── api/             # REST + SSE 接口
@@ -214,13 +242,19 @@ web_claude_code_pilot/
 │   │       ├── files/       # 文件树和预览
 │   │       ├── models/      # 从 SDK 获取模型列表
 │   │       ├── plugins/     # 插件和 MCP 增删改查
-│   │       ├── providers/   # API 提供商管理
+│   │       ├── providers/   # API 服务商管理 + 激活
+│   │       ├── bridge/      # IM 桥接：状态、设置、频道
+│   │       ├── codex/       # Codex 后端：聊天、模型、权限、技能
+│   │       ├── git/         # Git 克隆
+│   │       ├── health/      # 服务器健康检查
 │   │       ├── settings/    # 设置读写
 │   │       ├── skills/      # 技能增删改查
 │   │       ├── tasks/       # 任务追踪
+│   │       ├── transcribe/  # 语音输入转录
 │   │       └── uploads/     # 文件上传处理
 │   ├── components/
 │   │   ├── ai-elements/     # 消息气泡、代码块、工具调用等
+│   │   ├── bridge/          # Bridge 设置 UI（BridgeSection、TelegramBridgeSection）
 │   │   ├── chat/            # ChatView、MessageList、MessageInput、流式消息
 │   │   ├── layout/          # AppShell、NavRail、BottomNav、RightPanel
 │   │   ├── plugins/         # MCP 服务器列表和编辑器
@@ -230,9 +264,24 @@ web_claude_code_pilot/
 │   │   └── ui/              # 基于 Radix 的基础组件（button、dialog、tabs...）
 │   ├── hooks/               # 自定义 React Hooks（usePanel、useSSEStream 等）
 │   ├── lib/                 # 核心逻辑
+│   │   ├── bridge/                 # IM 桥接系统（详见 docs/bridge-architecture.md）
+│   │   │   ├── types.ts            #   共享类型
+│   │   │   ├── bridge-manager.ts   #   生命周期编排和命令处理
+│   │   │   ├── channel-adapter.ts  #   抽象适配器基类 + 注册表
+│   │   │   ├── channel-router.ts   #   地址→会话映射
+│   │   │   ├── conversation-engine.ts # 服务端 SSE 流消费
+│   │   │   ├── delivery-layer.ts   #   限速、重试、去重
+│   │   │   ├── permission-broker.ts #  权限转发
+│   │   │   ├── markdown/           #   Markdown IR → 平台特定渲染
+│   │   │   └── adapters/           #   平台适配器（Telegram 等）
 │   │   ├── abort-registry.ts       # 流式中断控制器注册表
 │   │   ├── claude-client.ts        # Agent SDK 流式封装
 │   │   ├── claude-session-parser.ts # CLI 会话导入解析器
+│   │   ├── codex-client.ts         # Codex CLI 流式封装（JSON-RPC → SSE）
+│   │   ├── codex-jsonrpc.ts        # Codex app-server JSON-RPC 传输层
+│   │   ├── codex-process-manager.ts # Codex app-server 子进程生命周期
+│   │   ├── codex-approval-registry.ts # Codex 权限待审批队列
+│   │   ├── context-bridge.ts       # 跨后端对话上下文桥接
 │   │   ├── db.ts                   # SQLite 数据库、迁移、CRUD
 │   │   ├── files.ts                # 文件系统工具函数
 │   │   ├── permission-registry.ts  # 权限请求/响应桥接

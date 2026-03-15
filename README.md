@@ -1,7 +1,7 @@
 <img src="docs/icon-readme.png" width="32" height="32" alt="Web Claude Code Pilot" style="vertical-align: middle; margin-right: 8px;" /> Web Claude Code Pilot
 ===
 
-**A web GUI for Claude Code** -- chat, code, and manage projects through a polished visual interface instead of the terminal. Self-hosted on your own machine, accessible from any browser (including mobile via Tailscale).
+**A web GUI for Claude Code & Codex CLI** -- chat, code, and manage projects through a polished visual interface instead of the terminal. Switch between Claude Code and Codex CLI backends mid-conversation with automatic context handoff. Self-hosted on your own machine, accessible from any browser (including mobile via Tailscale).
 
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](#)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -36,6 +36,11 @@ This fork diverges from the original CodePilot with the following major changes:
 - **Task tracking** -- View tasks created by Claude during coding sessions.
 - **Connection status indicator** -- Live server health check in the UI.
 - **Clipboard polyfill** -- Clipboard API workaround for non-HTTPS contexts (mobile via Tailscale).
+- **Dual backend: Claude Code + Codex CLI** -- Switch between Claude Code (Agent SDK) and Codex CLI backends per session. Models and skills are fetched from both backends. Context is automatically bridged when switching mid-conversation (incremental, no LLM cost).
+- **Voice input (STT)** -- Mic button in the chat input bar for speech-to-text. Configurable transcription provider in Voice Input settings.
+- **Virtualized scrolling** -- Message list uses react-virtuoso for smooth performance in long conversations.
+- **Draft checkpointing** -- In-progress streaming messages are saved to the database, enabling recovery if the browser tab is suspended or reconnected.
+- **Scroll-to-top button** -- Quickly jump to the top of a conversation.
 - **Production build fix** -- Post-build script symlinks `.next/static` into standalone output (required for CSS/JS to load).
 
 ---
@@ -52,7 +57,8 @@ This fork diverges from the original CodePilot with the following major changes:
 - **File & image attachments** -- Attach files and images directly in the chat input. Images are sent as multimodal vision content for Claude to analyze.
 - **Permission controls** -- Approve, deny, or auto-allow tool use on a per-action basis. Per-session auto-approve toggle with a shield icon in the input bar.
 - **Multiple interaction modes** -- Switch between *Code*, *Plan*, and *Ask* modes to control how Claude behaves in each session.
-- **Model selector** -- Switch between Claude models (Opus, Sonnet, Haiku) mid-conversation. Models are fetched dynamically from the SDK at runtime.
+- **Dual backend** -- Switch between Claude Code (Agent SDK) and Codex CLI per session. Both backends share the same UI for streaming, tool calls, and permission approval. When switching mid-conversation, an automatic context bridge carries recent history to the new backend without extra LLM cost.
+- **Model selector** -- Switch between Claude and Codex models mid-conversation. Models are fetched dynamically from both backends at runtime. Codex models support configurable reasoning effort levels.
 - **Multi-provider support** -- Configure multiple API providers (Anthropic, OpenRouter, custom endpoints) and switch between them. Each provider has its own API key, base URL, and model list.
 - **MCP server management** -- Add, configure, and remove Model Context Protocol servers from the Extensions page. Supports `stdio`, `sse`, and `http` transport types. Reads project-level `.mcp.json` files automatically.
 - **Custom skills** -- Define reusable prompt-based skills (global or per-project) invoked as `/skill` commands in chat. Plugin skills from Claude Code CLI are also supported.
@@ -64,19 +70,21 @@ This fork diverges from the original CodePilot with the following major changes:
 - **Connection status** -- Live indicator showing whether the server connection is healthy.
 - **Task tracking** -- View and manage tasks created by Claude during coding sessions.
 - **IM Bridge** -- Connect external IM platforms (starting with Telegram) to Web Claude Code Pilot. Chat with Claude from your phone without opening a browser. Features include: session binding, project switching via interactive menus, 11 slash commands with inline pickers, permission forwarding via inline buttons, markdown-to-HTML rendering, streaming previews, image attachments, chat clearing (deletes messages from both sides), and rate limiting. Managed from the Bridge settings page. See [Bridge Architecture](docs/bridge-architecture.md).
+- **Voice input** -- Mic button in the chat input bar for speech-to-text transcription. Configurable provider (e.g. OpenAI Whisper) in Voice Input settings.
 - **Mobile-friendly** -- Responsive layout with bottom navigation, touch-friendly controls, and panel overlays for phone-sized screens. Clipboard polyfill for non-HTTPS contexts (e.g. Tailscale HTTP access).
 
 ---
 
 ## Prerequisites
 
-> **Important**: Web Claude Code Pilot calls the Claude Code Agent SDK under the hood. Make sure `claude` is available on your `PATH` and that you have authenticated (`claude login`) before starting the server.
+> **Important**: Web Claude Code Pilot supports two backends — Claude Code (Agent SDK) and Codex CLI. At least one must be installed. Make sure `claude` and/or `codex` is available on your `PATH` and authenticated before starting the server.
 
-| Requirement | Minimum version |
-|---|---|
-| **Node.js** | 20+ |
-| **Claude Code CLI** | Installed and authenticated (`claude --version` should work) |
-| **npm** | 9+ (ships with Node 20) |
+| Requirement | Minimum version | Notes |
+|---|---|---|
+| **Node.js** | 20+ | Required |
+| **npm** | 9+ (ships with Node 20) | Required |
+| **Claude Code CLI** | Latest (`claude --version`) | Required for Claude backend; run `claude login` to authenticate |
+| **Codex CLI** | Latest (`codex --version`) | Optional; required only for Codex backend |
 
 ---
 
@@ -205,7 +213,7 @@ rm ~/Library/LaunchAgents/com.codepilot.web.plist
 | UI components | [Radix UI](https://www.radix-ui.com/) + [shadcn/ui](https://ui.shadcn.com/) |
 | Styling | [Tailwind CSS 4](https://tailwindcss.com/) |
 | Animation | [Motion](https://motion.dev/) (Framer Motion) |
-| AI integration | [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) |
+| AI integration | [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) + [Codex CLI](https://github.com/openai/codex) (JSON-RPC) |
 | Database | [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) (embedded, per-user) |
 | Markdown | react-markdown + remark-gfm + rehype-raw + [Shiki](https://shiki.style/) |
 | IM Bridge Markdown | [markdown-it](https://github.com/markdown-it/markdown-it) (server-side IR → Telegram HTML) |
@@ -236,7 +244,9 @@ web_claude_code_pilot/
 │   │       ├── plugins/     # Plugin & MCP CRUD
 │   │       ├── providers/   # API provider CRUD + activation
 │   │       ├── bridge/      # IM bridge: status, settings, channels
+│   │       ├── codex/       # Codex backend: chat, models, permission, skills
 │   │       ├── git/         # Git clone
+│   │       ├── transcribe/  # Voice input transcription
 │   │       ├── health/      # Server health check
 │   │       ├── settings/    # Settings read/write
 │   │       ├── skills/      # Skill CRUD
@@ -269,6 +279,11 @@ web_claude_code_pilot/
 │   │   ├── abort-registry.ts       # Streaming abort controller registry
 │   │   ├── claude-client.ts        # Agent SDK streaming wrapper
 │   │   ├── claude-session-parser.ts # CLI session import parser
+│   │   ├── codex-client.ts         # Codex CLI streaming wrapper (JSON-RPC → SSE)
+│   │   ├── codex-jsonrpc.ts        # JSON-RPC transport for Codex app-server
+│   │   ├── codex-process-manager.ts # Codex app-server subprocess lifecycle
+│   │   ├── codex-approval-registry.ts # Pending approval queue for Codex permissions
+│   │   ├── context-bridge.ts       # Cross-backend conversation context handoff
 │   │   ├── db.ts                   # SQLite schema, migrations, CRUD
 │   │   ├── files.ts                # File system helpers
 │   │   ├── permission-registry.ts  # Permission request/response bridge

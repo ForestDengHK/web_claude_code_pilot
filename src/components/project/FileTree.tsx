@@ -158,6 +158,79 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
 
   const abortRef = useRef<AbortController | null>(null);
+  const lazyLoadingRef = useRef<Set<string>>(new Set());
+
+  // Lazy-load children for directories that were truncated by depth limit
+  const lazyLoadChildren = useCallback(async (dirPath: string) => {
+    if (lazyLoadingRef.current.has(dirPath)) return; // already loading
+    lazyLoadingRef.current.add(dirPath);
+    try {
+      const res = await fetch(
+        `/api/files?dir=${encodeURIComponent(dirPath)}&baseDir=${encodeURIComponent(workingDirectory)}&depth=3`
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      const children: FileTreeNode[] = data.tree || [];
+      if (children.length === 0) return;
+
+      // Merge children into the tree
+      setTree(prev => {
+        function mergeAt(nodes: FileTreeNode[]): FileTreeNode[] {
+          return nodes.map(node => {
+            if (node.path === dirPath && node.type === 'directory') {
+              return { ...node, children };
+            }
+            if (node.children) {
+              return { ...node, children: mergeAt(node.children) };
+            }
+            return node;
+          });
+        }
+        return mergeAt(prev);
+      });
+      // Update git status for new nodes
+      setGitStatusMap(prev => {
+        const newMap = new Map(prev);
+        function walkNewNodes(ns: FileTreeNode[]) {
+          for (const n of ns) {
+            if (n.gitStatus) newMap.set(n.path, n.gitStatus);
+            if (n.children) walkNewNodes(n.children);
+          }
+        }
+        walkNewNodes(children);
+        return newMap;
+      });
+    } finally {
+      lazyLoadingRef.current.delete(dirPath);
+    }
+  }, [workingDirectory]);
+
+  // Find empty directories in expanded set and lazy-load them
+  const lazyLoadEmptyDirs = useCallback((newExpanded: Set<string>, currentTree: FileTreeNode[]) => {
+    function findNode(nodes: FileTreeNode[], targetPath: string): FileTreeNode | null {
+      for (const n of nodes) {
+        if (n.path === targetPath) return n;
+        if (n.children) {
+          const found = findNode(n.children, targetPath);
+          if (found) return found;
+        }
+      }
+      return null;
+    }
+
+    for (const p of newExpanded) {
+      const node = findNode(currentTree, p);
+      if (node && node.type === 'directory' && node.children && node.children.length === 0) {
+        lazyLoadChildren(p);
+      }
+    }
+  }, [lazyLoadChildren]);
+
+  // Handle expand change from tree toggle: update state + lazy load
+  const handleExpandedChange = useCallback((newExpanded: Set<string>) => {
+    setExpandedPaths(newExpanded);
+    lazyLoadEmptyDirs(newExpanded, tree);
+  }, [tree, lazyLoadEmptyDirs]);
 
   const fetchTree = useCallback(async () => {
     // Abort any in-flight request to prevent stale responses
@@ -278,7 +351,9 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
                 if (allExpanded) {
                   setExpandedPaths(new Set());
                 } else {
-                  setExpandedPaths(new Set(allDirs));
+                  const newExpanded = new Set(allDirs);
+                  setExpandedPaths(newExpanded);
+                  lazyLoadEmptyDirs(newExpanded, tree);
                 }
               }}
             >
@@ -324,7 +399,7 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
         ) : (
           <AIFileTree
             expanded={expandedPaths}
-            onExpandedChange={setExpandedPaths}
+            onExpandedChange={handleExpandedChange}
             gitStatusMap={gitStatusMap}
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI Elements FileTree onSelect type conflicts with HTMLAttributes.onSelect
             onSelect={onFileSelect as any}

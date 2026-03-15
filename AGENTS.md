@@ -5,15 +5,15 @@ Concise, high-signal instructions for AI-assisted development in this repo.
 ## Tech Stack
 - Next.js App Router (standalone output), React, TypeScript
 - UI: Radix UI + shadcn/ui; styling: Tailwind CSS v4; animation: Motion
-- AI: `@anthropic-ai/claude-agent-sdk` (Claude Code CLI on `PATH` is expected)
+- AI: `@anthropic-ai/claude-agent-sdk` (Claude Code) + Codex CLI via JSON-RPC (`codex app-server`)
 - DB: SQLite via `better-sqlite3`
 - Streaming: Server-Sent Events (SSE)
 - Tests: Playwright (`src/__tests__/e2e`), TS/Node tests via `tsx`
 
 ## Project Structure
-- `src/app/`: App Router routes + API routes (chat, settings, extensions/plugins, bridge)
+- `src/app/`: App Router routes + API routes (chat, codex, settings, extensions/plugins, bridge)
 - `src/components/`: feature UI by domain (chat/layout/project/settings/skills/bridge/plugins)
-- `src/lib/`: core logic (db, claude client, bridge, permissions, helpers)
+- `src/lib/`: core logic (db, claude client, codex client, context bridge, IM bridge, permissions, helpers)
 - `src/hooks/`, `src/types/`: shared hooks/contracts
 - `src/__tests__/`: e2e + unit + targeted/smoke scripts
 - `docs/`: architecture notes (notably bridge); `scripts/`: build helpers; `public/`: assets
@@ -23,7 +23,9 @@ Concise, high-signal instructions for AI-assisted development in this repo.
 - Standalone server build: `next.config.mjs` sets `output: 'standalone'` and externalizes `better-sqlite3`.
 - Versioning: `NEXT_PUBLIC_APP_VERSION` is injected from `package.json` at build time.
 - Data directory: defaults to `~/.codepilot/` (DB at `~/.codepilot/codepilot.db`), override with `CLAUDE_GUI_DATA_DIR`.
-- Claude integration is mediated via `src/lib/claude-client.ts`; prefer adding behavior there over sprinkling SDK calls.
+- **Dual backend**: Claude integration via `src/lib/claude-client.ts`; Codex integration via `src/lib/codex-client.ts`. Both produce the same SSE event format. Frontend routes to `/api/chat` (Claude) or `/api/codex/chat` (Codex) based on session backend.
+- **Codex subsystem**: `codex-jsonrpc.ts` (JSON-RPC transport), `codex-process-manager.ts` (subprocess lifecycle), `codex-approval-registry.ts` (permission queue). All use globalThis-backed maps for Turbopack HMR resilience.
+- **Context bridge**: `src/lib/context-bridge.ts` handles cross-backend context handoff. Incremental (only new messages since last bridge), no LLM cost.
 - Bridge subsystem lives under `src/lib/bridge/**` and has its own adapters + markdown handling.
 
 ## Commands (local)
@@ -36,8 +38,8 @@ Concise, high-signal instructions for AI-assisted development in this repo.
 - Smoke scripts: `node --import tsx src/__tests__/smoke-test.ts` (preferred over `npx tsx` in restricted sandboxes)
 
 ## Env / Config
-- Required for real usage: Claude Code CLI installed + authenticated (`claude login`).
-- Common env vars: `ANTHROPIC_API_KEY`, `CLAUDE_GUI_DATA_DIR`, `HOSTNAME`, `PORT`.
+- Required for real usage: at least one of Claude Code CLI (`claude login`) or Codex CLI (`codex`) installed and authenticated.
+- Common env vars: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` (for Codex), `CLAUDE_GUI_DATA_DIR`, `HOSTNAME`, `PORT`.
 - Local overrides: `.env.local`.
 
 ## Coding Conventions

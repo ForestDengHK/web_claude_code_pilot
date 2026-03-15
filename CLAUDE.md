@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Web Claude Code Pilot -- Claude Code's web GUI, built with Next.js (standalone mode). Deployed as a self-hosted web app.
+Web Claude Code Pilot -- Web GUI for Claude Code & Codex CLI, built with Next.js (standalone mode). Supports dual AI backends with automatic context bridging. Deployed as a self-hosted web app.
 
 ## Release Checklist
 
@@ -53,7 +53,8 @@ Self-hosted web app. Pull the latest tag and run:
 ## Requirements
 
 - Node.js 20+
-- Anthropic API Key or `ANTHROPIC_API_KEY` environment variable
+- At least one backend: Claude Code CLI (`claude login`) or Codex CLI (`codex`)
+- `ANTHROPIC_API_KEY` for Claude backend; `OPENAI_API_KEY` for Codex backend
 
 ## Changelog (since v{previous version})
 

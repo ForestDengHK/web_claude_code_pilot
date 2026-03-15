@@ -226,7 +226,7 @@ export const FileTreeFolder = ({
           tabIndex={0}
           {...props}
         >
-          <Tooltip open={longPress.isTouchDevice ? longPress.isActive : undefined}>
+          <Tooltip open={longPress.tooltipOpen}>
             <TooltipTrigger asChild>
               <div
                 className="group/folder flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors hover:bg-muted/50 select-none"
@@ -382,7 +382,7 @@ export const FileTreeFile = ({
 
   return (
     <FileTreeFileContext.Provider value={fileContextValue}>
-      <Tooltip open={longPress.isTouchDevice ? longPress.isActive : undefined}>
+      <Tooltip open={longPress.tooltipOpen}>
         <TooltipTrigger asChild>
           <div
             className={cn(

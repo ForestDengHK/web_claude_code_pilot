@@ -3,11 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
- * Detects long-press (touch-and-hold) gestures on mobile.
+ * Detects long-press (touch-and-hold) gestures on mobile AND provides
+ * controlled tooltip dismiss support for desktop.
  *
- * - `isActive` — `true` after the long-press fires, stays `true` until dismissed
- * - `isTouchDevice` — `true` once the first touch is detected (used to
- *   switch Radix Tooltip between controlled / uncontrolled mode)
+ * - `tooltipOpen` — pass to Radix Tooltip `open` prop:
+ *     - Mobile (touch): controlled by long-press state
+ *     - Desktop: `undefined` (uncontrolled/hover-based) until dismiss is
+ *       clicked, then briefly `false` to force-close
+ * - `isTouchDevice` — `true` once the first touch is detected
  * - `cancelClick()` — call at the top of your `onClick`; returns `true`
  *   when the click should be suppressed (it followed a long press)
  * - `dismiss()` — call from a close button to hide the tooltip
@@ -15,14 +18,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
  */
 export function useLongPress(delay = 500) {
   const [isActive, setIsActive] = useState(false);
+  const [isDismissed, setIsDismissed] = useState(false);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   const timerRef = useRef<number>(0);
   const firedRef = useRef(false);
+  const dismissTimerRef = useRef<number>(0);
 
   // Cleanup on unmount
-  useEffect(() => () => window.clearTimeout(timerRef.current), []);
+  useEffect(() => () => {
+    window.clearTimeout(timerRef.current);
+    window.clearTimeout(dismissTimerRef.current);
+  }, []);
 
-  // Auto-dismiss after 5 s so stale tooltips don't linger forever
+  // Auto-dismiss after 10s so stale tooltips don't linger forever
   useEffect(() => {
     if (!isActive) return;
     const id = window.setTimeout(() => {
@@ -36,6 +44,7 @@ export function useLongPress(delay = 500) {
     setIsTouchDevice(true);
     // Dismiss any tooltip from a previous long press on this element
     setIsActive(false);
+    setIsDismissed(false);
     firedRef.current = false;
     timerRef.current = window.setTimeout(() => {
       firedRef.current = true;
@@ -64,14 +73,33 @@ export function useLongPress(delay = 500) {
     return false;
   }, []);
 
-  /** Dismiss the tooltip (for close button). */
+  /** Dismiss the tooltip (for close button). Works on both mobile and desktop. */
   const dismiss = useCallback(() => {
+    // Mobile: just clear the long-press state
     setIsActive(false);
     firedRef.current = false;
+
+    // Desktop: briefly switch to controlled mode (open=false) to force-close,
+    // then revert to uncontrolled (open=undefined) so hover works normally again.
+    setIsDismissed(true);
+    window.clearTimeout(dismissTimerRef.current);
+    dismissTimerRef.current = window.setTimeout(() => {
+      setIsDismissed(false);
+    }, 300);
   }, []);
+
+  // Tooltip `open` prop:
+  // - Mobile: always controlled by long-press state
+  // - Desktop: undefined (Radix handles hover) unless manually dismissed
+  const tooltipOpen: boolean | undefined = isTouchDevice
+    ? isActive
+    : (isDismissed ? false : undefined);
 
   return {
     isActive,
+    /** @deprecated Use `tooltipOpen` instead */
+    isOpen: tooltipOpen,
+    tooltipOpen,
     isTouchDevice,
     cancelClick,
     dismiss,
