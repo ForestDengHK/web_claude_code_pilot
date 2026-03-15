@@ -1,41 +1,56 @@
-# Repository Guidelines
+# CodePilot (Web Claude Code Pilot) — AGENTS.md
 
-## Project Structure & Module Organization
-- `src/app/`: Next.js App Router pages and API routes (chat, settings, extensions).
-- `src/components/`: UI building blocks and feature components grouped by domain.
-- `src/lib/`: Core logic (database, Claude client, file helpers, permissions).
-- `src/hooks/` and `src/types/`: shared hooks and TypeScript contracts.
-- `src/__tests__/`: Playwright e2e specs plus Node test/tsx unit and script tests.
-- `public/`: static assets; `scripts/`: build helpers; `docs/`: design notes/plans.
+Concise, high-signal instructions for AI-assisted development in this repo.
 
-## Build, Test, and Development Commands
-- `npm run dev`: starts the Next.js dev server on `http://localhost:3000`.
-- `npm run build`: builds the standalone app and prepares server assets.
-- `npm run start`: runs the production server (`.next/standalone`).
-- `npm run lint`: runs ESLint (required before PRs).
-- `npx playwright test`: runs e2e tests in `src/__tests__/e2e` (auto-starts dev server).
-- `npx tsx --test src/__tests__/unit/<name>.test.ts`: runs a unit test file.
-- `npx tsx src/__tests__/smoke-test.ts`: runs scripted smoke/functional checks.
+## Tech Stack
+- Next.js App Router (standalone output), React, TypeScript
+- UI: Radix UI + shadcn/ui; styling: Tailwind CSS v4; animation: Motion
+- AI: `@anthropic-ai/claude-agent-sdk` (Claude Code CLI on `PATH` is expected)
+- DB: SQLite via `better-sqlite3`
+- Streaming: Server-Sent Events (SSE)
+- Tests: Playwright (`src/__tests__/e2e`), TS/Node tests via `tsx`
 
-## Coding Style & Naming Conventions
-- TypeScript + React (Next.js App Router). Indentation is 2 spaces.
-- Components use `PascalCase` filenames; hooks use `useX` naming.
-- Follow ESLint (`eslint.config.mjs`) and existing module boundaries in `src/`.
-- Prefer small, focused components; colocate feature UI under `src/components/<area>/`.
+## Project Structure
+- `src/app/`: App Router routes + API routes (chat, settings, extensions/plugins, bridge)
+- `src/components/`: feature UI by domain (chat/layout/project/settings/skills/bridge/plugins)
+- `src/lib/`: core logic (db, claude client, bridge, permissions, helpers)
+- `src/hooks/`, `src/types/`: shared hooks/contracts
+- `src/__tests__/`: e2e + unit + targeted/smoke scripts
+- `docs/`: architecture notes (notably bridge); `scripts/`: build helpers; `public/`: assets
+- `.worktrees/`: local git worktrees (do not lint/build against generated artifacts here)
 
-## Testing Guidelines
-- E2E: Playwright specs in `src/__tests__/e2e/*.spec.ts`.
-- Unit: Node test runner via `tsx` in `src/__tests__/unit/*.test.ts`.
-- Scripted tests: `src/__tests__/*-test.ts` (smoke/functional/targeted).
-- No explicit coverage thresholds; keep tests close to the behavior you change.
+## Key Architecture Decisions
+- Standalone server build: `next.config.mjs` sets `output: 'standalone'` and externalizes `better-sqlite3`.
+- Versioning: `NEXT_PUBLIC_APP_VERSION` is injected from `package.json` at build time.
+- Data directory: defaults to `~/.codepilot/` (DB at `~/.codepilot/codepilot.db`), override with `CLAUDE_GUI_DATA_DIR`.
+- Claude integration is mediated via `src/lib/claude-client.ts`; prefer adding behavior there over sprinkling SDK calls.
+- Bridge subsystem lives under `src/lib/bridge/**` and has its own adapters + markdown handling.
 
-## Commit & Pull Request Guidelines
-- Commit messages follow a conventional style (`feat:`, `fix:`).
-- PRs: keep scope focused, describe changes and rationale, and list test commands run.
-- Include screenshots/gifs for UI changes when practical.
-- Run `npm run lint` before opening a PR.
+## Commands (local)
+- Dev server: `npm run dev` (default binds `0.0.0.0:3000`)
+- Lint: `npm run lint`
+- Typecheck (recommended): `npx tsc -p tsconfig.json --noEmit`
+- Build (standalone): `npm run build` then `npm run start` or `node .next/standalone/codepilot-server.js`
+- E2E: `npx playwright test`
+- Unit test (single): `npx tsx --test src/__tests__/unit/<name>.test.ts`
+- Smoke scripts: `node --import tsx src/__tests__/smoke-test.ts` (preferred over `npx tsx` in restricted sandboxes)
 
-## Configuration & Data Notes
-- The standalone server loads shell env for keys like `ANTHROPIC_API_KEY`.
-- Local data lives in `~/.codepilot/codepilot.db` (override with `CLAUDE_GUI_DATA_DIR`).
-- `HOSTNAME` and `PORT` control server binding (default `0.0.0.0:3000`).
+## Env / Config
+- Required for real usage: Claude Code CLI installed + authenticated (`claude login`).
+- Common env vars: `ANTHROPIC_API_KEY`, `CLAUDE_GUI_DATA_DIR`, `HOSTNAME`, `PORT`.
+- Local overrides: `.env.local`.
+
+## Coding Conventions
+- TypeScript, React, 2-space indentation; keep components small and domain-scoped.
+- Prefer colocating feature UI under `src/components/<area>/`.
+- Hooks: `useX` naming; components: `PascalCase` filenames.
+- Follow existing patterns for streaming + persistence (DB-backed stream recovery).
+
+## Gotchas / Footguns
+- `next.config.mjs` sets `typescript.ignoreBuildErrors: true`; do not rely on `next build` alone for type safety—run `npx tsc`.
+- `next/font/google` fetches fonts at build time; offline/network-restricted environments can fail builds.
+- Lint/build output under `.next/**` and worktrees under `.worktrees/**` should be treated as generated; avoid expanding tooling scope to those paths.
+  - If `npm run lint` appears to lint generated files, scope it (e.g. `npx eslint src`) or add appropriate ignores in `eslint.config.mjs`.
+
+## Ops (macOS service)
+- See `OPERATIONS.md` for launchd + Caddy setup, restart commands, and when to clear `.next`.
