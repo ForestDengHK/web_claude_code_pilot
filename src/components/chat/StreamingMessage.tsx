@@ -406,6 +406,7 @@ export function StreamingMessage({
         {/* Permission approval confirmation — rendered after content so it appears near the bottom */}
         {(pendingPermission || permissionResolved) && (
           <Confirmation
+            id={`approval-${pendingPermission?.permissionRequestId || ''}`}
             approval={getApproval()}
             state={getConfirmationState()}
           >
@@ -461,11 +462,13 @@ export function StreamingMessage({
 
         {/* AskUserQuestion input request — rendered after content so it appears at the bottom */}
         {(pendingInputRequest || inputRequestResolved) && onInputResponse && (
-          <InputRequestUI
-            inputRequest={pendingInputRequest!}
-            onSubmit={onInputResponse}
-            resolved={!!inputRequestResolved}
-          />
+          <div id={`input-request-${pendingInputRequest?.inputRequestId || ''}`}>
+            <InputRequestUI
+              inputRequest={pendingInputRequest!}
+              onSubmit={onInputResponse}
+              resolved={!!inputRequestResolved}
+            />
+          </div>
         )}
 
         {/* Loading indicator when no content yet */}

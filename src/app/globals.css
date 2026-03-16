@@ -234,6 +234,17 @@
   border-radius: 0.5rem;
 }
 
+/* Push notification deep-link highlight animation */
+@keyframes highlight-pulse {
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.5); }
+}
+
+.highlight-pulse {
+  animation: highlight-pulse 0.5s ease-in-out 3;
+  border-radius: 8px;
+}
+
 /* Global icon stroke weight — make Hugeicons strokes slightly thicker */
 svg.hugeicons,
 svg.hugeicons path,

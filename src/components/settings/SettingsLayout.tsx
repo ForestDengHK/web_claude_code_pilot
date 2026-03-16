@@ -7,6 +7,7 @@ import {
   Settings02Icon,
   CodeIcon,
   Mic01Icon,
+  Notification02Icon,
 } from "@hugeicons/core-free-icons";
 import { Plug01Icon } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
@@ -14,8 +15,9 @@ import { GeneralSection } from "./GeneralSection";
 import { ProviderManager } from "./ProviderManager";
 import { CliSettingsSection } from "./CliSettingsSection";
 import { SttSection } from "./SttSection";
+import NotificationSection from "./NotificationSection";
 
-type Section = "general" | "providers" | "cli" | "stt";
+type Section = "general" | "providers" | "cli" | "stt" | "notifications";
 
 interface SidebarItem {
   id: Section;
@@ -28,6 +30,7 @@ const sidebarItems: SidebarItem[] = [
   { id: "providers", label: "Providers", icon: Plug01Icon },
   { id: "cli", label: "Claude CLI", icon: CodeIcon },
   { id: "stt", label: "Voice Input", icon: Mic01Icon },
+  { id: "notifications", label: "Notifications", icon: Notification02Icon },
 ];
 
 export function SettingsLayout() {
@@ -107,6 +110,7 @@ export function SettingsLayout() {
           {activeSection === "providers" && <ProviderManager />}
           {activeSection === "cli" && <CliSettingsSection />}
           {activeSection === "stt" && <SttSection />}
+          {activeSection === "notifications" && <NotificationSection />}
         </div>
       </div>
     </div>

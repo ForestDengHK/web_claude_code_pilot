@@ -404,6 +404,32 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     };
   }, []);
 
+  // Handle push notification deep links
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const approveId = params.get('approve');
+    const inputId = params.get('input');
+
+    if (approveId || inputId) {
+      // Clean URL without reload
+      const url = new URL(window.location.href);
+      url.searchParams.delete('approve');
+      url.searchParams.delete('input');
+      window.history.replaceState({}, '', url.toString());
+
+      // Scroll to target after render
+      setTimeout(() => {
+        const targetId = approveId ? `approval-${approveId}` : `input-request-${inputId}`;
+        const element = document.getElementById(targetId);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          element.classList.add('highlight-pulse');
+          setTimeout(() => element.classList.remove('highlight-pulse'), 2000);
+        }
+      }, 500);
+    }
+  }, []);
+
   // Acquire a screen Wake Lock while streaming to prevent the screen from
   // turning off and triggering socket suspension on mobile devices.
   // This doesn't prevent app-switch suspension, but covers the screen-timeout case.
@@ -745,12 +771,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             }
           },
           onResult: () => {
-            // Notify user when task completes and tab is not visible
-            if (document.visibilityState === "hidden" && window.isSecureContext && "Notification" in window && Notification.permission === "granted") {
-              const title = sessionTitle || "CodePilot";
-              const body = accumulated.length > 100 ? accumulated.slice(0, 100) + "…" : accumulated;
-              new Notification(`✅ ${title}`, { body, tag: `codepilot-${sessionId}` });
-            }
+            // Push notifications are now server-initiated (see push-notifications.ts)
           },
           onPermissionRequest: (permData) => {
             setPendingPermission(permData);

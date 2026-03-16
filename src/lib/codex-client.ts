@@ -20,7 +20,8 @@ import {
 } from '@/lib/codex-jsonrpc';
 import { CodexProcessManager, type CodexProcess } from '@/lib/codex-process-manager';
 import { registerPendingCodexApproval } from '@/lib/codex-approval-registry';
-import { updateCodexThreadId } from '@/lib/db';
+import { updateCodexThreadId, getSession } from '@/lib/db';
+import { sendPushNotification } from './push-notifications';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -655,6 +656,16 @@ function handleApprovalRequest(
     jsonRpcId: msg.id,
     changes: !isCommand ? { grantRoot: params.grantRoot } as Record<string, unknown> : undefined,
   };
+
+  // Push notification for codex approval request
+  const sessionForPush = getSession(sessionId);
+  sendPushNotification({
+    type: 'permission_request',
+    sessionId,
+    sessionTitle: sessionForPush?.title || 'CodePilot',
+    message: `${approvalInfo.type}: ${approvalInfo.reason || 'Approval needed'}`,
+    requestId: approvalId,
+  }).catch(() => {});
 
   registerPendingCodexApproval(approvalId, sessionId, approvalInfo, abortSignal)
     .then((decision) => {

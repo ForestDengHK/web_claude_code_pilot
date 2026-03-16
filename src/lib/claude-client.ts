@@ -19,7 +19,8 @@ import type {
 import type { ClaudeStreamOptions, SSEEvent, TokenUsage, MCPServerConfig, PermissionRequestEvent, InputRequestEvent, FileAttachment } from '@/types';
 import { registerPendingPermission } from './permission-registry';
 import { registerPendingInputRequest } from './input-request-registry';
-import { getSetting, getActiveProvider } from './db';
+import { getSetting, getActiveProvider, getSession } from './db';
+import { sendPushNotification } from './push-notifications';
 import { findClaudeBinary, findGitBash, getExpandedPath } from './platform';
 import os from 'os';
 import fs from 'fs';
@@ -563,6 +564,16 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
               type: 'input_request',
               data: JSON.stringify(inputEvent),
             }));
+            // Push notification for input request (time-sensitive)
+            const sessionForInputPush = getSession(sessionId);
+            const questionText = inputEvent.questions?.map((q: { question?: string }) => q.question).join('; ') || 'Question from Claude';
+            sendPushNotification({
+              type: 'input_request',
+              sessionId,
+              sessionTitle: sessionForInputPush?.title || 'CodePilot',
+              message: questionText,
+              requestId: inputRequestId,
+            }).catch(() => {});
             return registerPendingInputRequest(inputRequestId, input, opts.signal, sessionId, inputEvent);
           }
 
@@ -587,6 +598,15 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
           // Wait for user response (resolved by POST /api/chat/permission)
           // Store original input so registry can inject updatedInput on allow
+          // Push notification for permission request (time-sensitive: 5min auto-deny)
+          const sessionForPush = getSession(sessionId);
+          sendPushNotification({
+            type: 'permission_request',
+            sessionId,
+            sessionTitle: sessionForPush?.title || 'CodePilot',
+            message: `${toolName}: ${JSON.stringify(input).slice(0, 100)}`,
+            requestId: permissionRequestId,
+          }).catch(() => {});
           return registerPendingPermission(permissionRequestId, input, opts.signal, sessionId, permEvent);
         };
 

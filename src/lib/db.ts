@@ -298,6 +298,17 @@ function migrateDb(db: Database.Database): void {
     backfill();
     console.log(`[db] FTS index backfill complete`);
   }
+
+  // Push subscriptions table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      endpoint TEXT PRIMARY KEY,
+      keys_p256dh TEXT NOT NULL,
+      keys_auth TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      user_agent TEXT
+    )
+  `);
 }
 
 // ==========================================
@@ -878,6 +889,47 @@ export function getRecentDirectories(limit = 5): string[] {
     "SELECT DISTINCT working_directory FROM chat_sessions WHERE working_directory IS NOT NULL AND working_directory != '' ORDER BY updated_at DESC LIMIT ?"
   ).all(limit) as Array<{ working_directory: string }>;
   return rows.map(r => r.working_directory);
+}
+
+// --- Push Subscriptions ---
+
+export function upsertPushSubscription(
+  endpoint: string,
+  keysP256dh: string,
+  keysAuth: string,
+  userAgent?: string,
+): void {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO push_subscriptions (endpoint, keys_p256dh, keys_auth, user_agent)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(endpoint) DO UPDATE SET
+      keys_p256dh = excluded.keys_p256dh,
+      keys_auth = excluded.keys_auth,
+      user_agent = excluded.user_agent
+  `).run(endpoint, keysP256dh, keysAuth, userAgent || null);
+}
+
+export function deletePushSubscription(endpoint: string): void {
+  const db = getDb();
+  db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').run(endpoint);
+}
+
+export function getAllPushSubscriptions(): Array<{
+  endpoint: string;
+  keys_p256dh: string;
+  keys_auth: string;
+  created_at: string;
+  user_agent: string | null;
+}> {
+  const db = getDb();
+  return db.prepare('SELECT * FROM push_subscriptions').all() as Array<{
+    endpoint: string;
+    keys_p256dh: string;
+    keys_auth: string;
+    created_at: string;
+    user_agent: string | null;
+  }>;
 }
 
 // ==========================================

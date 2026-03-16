@@ -88,11 +88,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Install clipboard polyfill once on mount (before any user interaction)
   useEffect(installClipboardPolyfill, []);
 
-  // Request notification permission on secure contexts
+  // Handle Service Worker navigation messages (fallback for browsers without client.navigate)
   useEffect(() => {
-    if (window.isSecureContext && "Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
-    }
+    const handler = (event: MessageEvent) => {
+      if (event.data?.type === 'push-navigate' && event.data.url) {
+        window.location.href = event.data.url;
+      }
+    };
+    navigator.serviceWorker?.addEventListener('message', handler);
+    return () => {
+      navigator.serviceWorker?.removeEventListener('message', handler);
+    };
   }, []);
 
   const [chatListOpen, setChatListOpenRaw] = useState(false);

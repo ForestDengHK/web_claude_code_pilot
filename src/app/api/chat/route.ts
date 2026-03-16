@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
 import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting } from '@/lib/db';
+import { sendPushNotification } from '@/lib/push-notifications';
 import { detectBackendSwitch, buildIncrementalBridge } from '@/lib/context-bridge';
 import { registerAbort, unregisterAbort } from '@/lib/abort-registry';
 import {
@@ -393,6 +394,24 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
             'claude',
           );
         }
+
+        // Send push notification for task completion
+        const session = getSession(sessionId);
+        sendPushNotification({
+          type: 'task_complete',
+          sessionId,
+          sessionTitle: session?.title || 'CodePilot',
+          message: (() => {
+            try {
+              const blocks = JSON.parse(content);
+              if (Array.isArray(blocks)) {
+                const textParts = blocks.filter((b: { type: string }) => b.type === 'text').map((b: { text: string }) => b.text);
+                return textParts.join('').trim() || 'Task completed';
+              }
+            } catch { /* not JSON, use as-is */ }
+            return content;
+          })(),
+        }).catch(() => {});
       }
     }
   } catch {
