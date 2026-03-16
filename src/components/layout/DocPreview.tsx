@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useTheme } from "next-themes";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Cancel01Icon, Copy01Icon, Tick01Icon, Loading02Icon, ArrowExpandIcon, ArrowShrinkIcon, PencilEdit02Icon } from "@hugeicons/core-free-icons";
@@ -712,19 +712,152 @@ function SvgRenderedView({ content }: { content: string }) {
   );
 }
 
-/* ── Image Rendered View ── */
+/* ── Image Rendered View (with pinch-to-zoom & pan on mobile) ── */
 
 function ImageRenderedView({ filePath }: { filePath: string }) {
   const src = `/api/files/raw?path=${encodeURIComponent(filePath)}`;
   const fileName = filePath.split("/").pop() || "image";
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(1);
+  const [translate, setTranslate] = useState({ x: 0, y: 0 });
+
+  // Refs for gesture tracking (avoid stale closures)
+  const gestureRef = useRef({
+    initialDistance: 0,
+    initialScale: 1,
+    lastTouchX: 0,
+    lastTouchY: 0,
+    isPinching: false,
+    isPanning: false,
+  });
+
+  const resetZoom = useCallback(() => {
+    setScale(1);
+    setTranslate({ x: 0, y: 0 });
+  }, []);
+
+  // Reset when file changes
+  useEffect(() => {
+    resetZoom();
+  }, [filePath, resetZoom]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const g = gestureRef.current;
+
+    function getDistance(t1: Touch, t2: Touch) {
+      const dx = t1.clientX - t2.clientX;
+      const dy = t1.clientY - t2.clientY;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    function onTouchStart(e: TouchEvent) {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        g.isPinching = true;
+        g.isPanning = false;
+        g.initialDistance = getDistance(e.touches[0], e.touches[1]);
+        g.initialScale = scale;
+      } else if (e.touches.length === 1 && scale > 1) {
+        // Single-finger pan only when zoomed in
+        g.isPanning = true;
+        g.isPinching = false;
+        g.lastTouchX = e.touches[0].clientX;
+        g.lastTouchY = e.touches[0].clientY;
+      }
+    }
+
+    function onTouchMove(e: TouchEvent) {
+      if (g.isPinching && e.touches.length === 2) {
+        e.preventDefault();
+        const dist = getDistance(e.touches[0], e.touches[1]);
+        const newScale = Math.min(
+          5,
+          Math.max(1, g.initialScale * (dist / g.initialDistance))
+        );
+        setScale(newScale);
+        // Reset translate if zoomed back to 1
+        if (newScale <= 1) {
+          setTranslate({ x: 0, y: 0 });
+        }
+      } else if (g.isPanning && e.touches.length === 1 && scale > 1) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - g.lastTouchX;
+        const dy = e.touches[0].clientY - g.lastTouchY;
+        g.lastTouchX = e.touches[0].clientX;
+        g.lastTouchY = e.touches[0].clientY;
+        setTranslate((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+      }
+    }
+
+    function onTouchEnd(e: TouchEvent) {
+      if (e.touches.length < 2) {
+        g.isPinching = false;
+      }
+      if (e.touches.length === 0) {
+        g.isPanning = false;
+      }
+    }
+
+    // Use { passive: false } so we can preventDefault to stop browser zoom
+    el.addEventListener("touchstart", onTouchStart, { passive: false });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd);
+
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+    };
+  }, [scale, resetZoom]);
+
+  // Double-tap to reset zoom
+  const lastTapRef = useRef(0);
+  const handleDoubleTap = useCallback(() => {
+    const now = Date.now();
+    if (now - lastTapRef.current < 300) {
+      if (scale > 1) {
+        resetZoom();
+      } else {
+        setScale(2.5);
+      }
+    }
+    lastTapRef.current = now;
+  }, [scale, resetZoom]);
+
+  const isZoomed = scale > 1;
+
   return (
-    <div className="flex h-full items-center justify-center p-4 bg-[repeating-conic-gradient(#e0e0e0_0%_25%,transparent_0%_50%)] dark:bg-[repeating-conic-gradient(#333_0%_25%,transparent_0%_50%)] bg-[length:16px_16px]">
+    <div
+      ref={containerRef}
+      className="relative flex h-full items-center justify-center p-4 bg-[repeating-conic-gradient(#e0e0e0_0%_25%,transparent_0%_50%)] dark:bg-[repeating-conic-gradient(#333_0%_25%,transparent_0%_50%)] bg-[length:16px_16px] overflow-hidden touch-none"
+      onClick={handleDoubleTap}
+    >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={src}
         alt={fileName}
-        className="max-w-full max-h-full object-contain rounded"
+        className="max-w-full max-h-full object-contain rounded select-none"
+        draggable={false}
+        style={{
+          transform: `translate(${translate.x}px, ${translate.y}px) scale(${scale})`,
+          transition: isZoomed ? "none" : "transform 0.2s ease-out",
+        }}
       />
+      {isZoomed && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            resetZoom();
+          }}
+          className="absolute top-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded-full backdrop-blur-sm"
+        >
+          {Math.round(scale * 100)}% ✕
+        </button>
+      )}
     </div>
   );
 }
