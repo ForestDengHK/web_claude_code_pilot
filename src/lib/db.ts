@@ -221,6 +221,9 @@ function migrateDb(db: Database.Database): void {
   if (!msgColNames.includes('status')) {
     db.exec("ALTER TABLE messages ADD COLUMN status TEXT NOT NULL DEFAULT 'complete'");
   }
+  if (!msgColNames.includes('bookmarked')) {
+    db.exec("ALTER TABLE messages ADD COLUMN bookmarked INTEGER DEFAULT 0");
+  }
 
   // Ensure tasks table exists for databases created before this migration
   db.exec(`
@@ -930,6 +933,13 @@ export function getAllPushSubscriptions(): Array<{
     created_at: string;
     user_agent: string | null;
   }>;
+}
+
+// --- Message Bookmarks ---
+
+export function toggleBookmark(messageId: string, bookmarked: boolean): void {
+  const db = getDb();
+  db.prepare('UPDATE messages SET bookmarked = ? WHERE id = ?').run(bookmarked ? 1 : 0, messageId);
 }
 
 // ==========================================

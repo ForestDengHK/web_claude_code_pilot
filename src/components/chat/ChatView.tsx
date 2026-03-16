@@ -1,11 +1,13 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { Message, MessagesResponse, PermissionRequestEvent, InputRequestEvent, FileAttachment } from '@/types';
 import { MessageList } from './MessageList';
 import { MessageInput } from './MessageInput';
 import { SearchBar } from './SearchBar';
 import { SearchIcon } from 'lucide-react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { Bookmark02Icon } from '@hugeicons/core-free-icons';
 import { usePanel } from '@/hooks/usePanel';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
 
@@ -92,6 +94,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
 
   // Search state
   const [searchOpen, setSearchOpen] = useState(false);
+  const [bookmarkFilterActive, setBookmarkFilterActive] = useState(false);
+  const displayMessages = useMemo(
+    () => bookmarkFilterActive ? messages.filter(m => m.bookmarked === 1) : messages,
+    [bookmarkFilterActive, messages],
+  );
   const [highlightMessageIds, setHighlightMessageIds] = useState<Set<string>>(new Set());
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -476,6 +483,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [searchOpen]);
+
+  // Reset bookmark filter on session change
+  useEffect(() => {
+    setBookmarkFilterActive(false);
+  }, [sessionId]);
 
   const initializedRef = useRef(false);
   useEffect(() => {
@@ -1008,17 +1020,37 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           onHighlightChange={handleSearchHighlightChange}
         />
       ) : messages.length > 0 && (
-        <button
-          type="button"
-          onClick={() => setSearchOpen(true)}
-          className="absolute top-2 right-2 z-10 p-1.5 rounded-md bg-background/80 backdrop-blur-sm border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-          title="Search messages (Cmd+F)"
-        >
-          <SearchIcon className="h-3.5 w-3.5" />
-        </button>
+        <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setBookmarkFilterActive(!bookmarkFilterActive)}
+            className={`p-1.5 rounded-md backdrop-blur-sm border transition-colors ${
+              bookmarkFilterActive
+                ? 'bg-amber-500/20 border-amber-500/50 text-amber-500'
+                : 'bg-background/80 border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted'
+            }`}
+            title={bookmarkFilterActive ? 'Show all messages' : 'Show bookmarked only'}
+          >
+            <HugeiconsIcon icon={Bookmark02Icon} size={14} fill={bookmarkFilterActive ? 'currentColor' : 'none'} />
+          </button>
+          <button
+            type="button"
+            onClick={() => setSearchOpen(true)}
+            className="p-1.5 rounded-md bg-background/80 backdrop-blur-sm border border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            title="Search messages (Cmd+F)"
+          >
+            <SearchIcon className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+      {bookmarkFilterActive && displayMessages.length === 0 && (
+        <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
+          No bookmarked messages in this session.
+        </div>
       )}
       <MessageList
-        messages={messages}
+        key={bookmarkFilterActive ? 'bookmarks' : 'all'}
+        messages={displayMessages}
         streamingContent={streamingContent}
         thinkingContent={streamingThinking}
         isStreaming={isStreaming}

@@ -75,6 +75,7 @@ export interface Message {
   token_usage: string | null; // JSON string of TokenUsage
   backend?: 'claude' | 'codex' | null; // Which backend handled this message
   status?: 'streaming' | 'complete';  // draft checkpointing
+  bookmarked?: number;
   _rowid?: number;                     // pagination cursor
 }
 

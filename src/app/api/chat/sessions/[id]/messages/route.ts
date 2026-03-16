@@ -16,13 +16,22 @@ export async function GET(
     const searchParams = request.nextUrl.searchParams;
     const limitParam = searchParams.get('limit');
     const beforeParam = searchParams.get('before');
+    const bookmarkedOnly = searchParams.get('bookmarked') === 'true';
 
     const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 100, 1), 500) : 100;
     const beforeRowId = beforeParam ? parseInt(beforeParam, 10) || undefined : undefined;
 
     const { messages, hasMore } = getMessages(id, { limit, beforeRowId });
-    const response: MessagesResponse = { messages, hasMore };
-    return Response.json(response);
+    let result: MessagesResponse = { messages, hasMore };
+
+    if (bookmarkedOnly) {
+      result = {
+        ...result,
+        messages: result.messages.filter((m: { bookmarked?: number }) => m.bookmarked === 1),
+      };
+    }
+
+    return Response.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to fetch messages';
     return Response.json({ error: message }, { status: 500 });

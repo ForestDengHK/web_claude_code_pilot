@@ -9,6 +9,8 @@ import {
 } from '@/components/ai-elements/message';
 import { ToolActionsGroup } from '@/components/ai-elements/tool-actions-group';
 import { CopyIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon } from 'lucide-react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { Bookmark02Icon } from '@hugeicons/core-free-icons';
 import { FileAttachmentDisplay } from './FileAttachmentDisplay';
 
 interface MessageItemProps {
@@ -287,6 +289,36 @@ export function MessageItem({ message, searchQuery, isLatestMessage }: MessageIt
 
   const displayText = isUser ? textWithoutFiles : text;
 
+  // Bookmark state — sync with message prop when it changes (e.g., messages reloaded from API)
+  const [isBookmarked, setIsBookmarked] = useState(!!message.bookmarked);
+  useEffect(() => {
+    setIsBookmarked(!!message.bookmarked);
+  }, [message.bookmarked]);
+
+  const handleBookmarkToggle = useCallback(async () => {
+    const newState = !isBookmarked;
+    setIsBookmarked(newState);
+    // Also update the message object directly so parent filters see the change
+    message.bookmarked = newState ? 1 : 0;
+    try {
+      const res = await fetch(
+        `/api/chat/sessions/${message.session_id}/messages/${message.id}/bookmark`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bookmarked: newState }),
+        },
+      );
+      if (!res.ok) {
+        setIsBookmarked(!newState);
+        message.bookmarked = newState ? 0 : 1;
+      }
+    } catch {
+      setIsBookmarked(!newState);
+      message.bookmarked = newState ? 0 : 1;
+    }
+  }, [isBookmarked, message]);
+
   // Collapse/expand state for long user messages
   const [isExpanded, setIsExpanded] = useState(false);
   const [isOverflowing, setIsOverflowing] = useState(false);
@@ -387,6 +419,23 @@ export function MessageItem({ message, searchQuery, isLatestMessage }: MessageIt
       <div className={`flex items-center gap-2 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200 ${isUser ? 'justify-end' : ''}`}>
         {!isUser && <span className="text-xs text-muted-foreground/50">{timestamp}</span>}
         {!isUser && tokenUsage && <TokenUsageDisplay usage={tokenUsage} />}
+        {!isUser && (
+          <button
+            onClick={handleBookmarkToggle}
+            className={`p-0.5 rounded transition-colors ${
+              isBookmarked
+                ? 'text-amber-500'
+                : 'text-muted-foreground/50 hover:text-muted-foreground'
+            }`}
+            title={isBookmarked ? 'Remove bookmark' : 'Bookmark this message'}
+          >
+            <HugeiconsIcon
+              icon={Bookmark02Icon}
+              size={14}
+              fill={isBookmarked ? 'currentColor' : 'none'}
+            />
+          </button>
+        )}
         {displayText && <CopyButton text={displayText} />}
       </div>
     </AIMessage>
