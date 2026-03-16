@@ -1020,7 +1020,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           onHighlightChange={handleSearchHighlightChange}
         />
       ) : messages.length > 0 && (
-        <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
+        <div className="absolute top-2 right-2 z-10 flex flex-col items-center gap-1">
           <button
             type="button"
             onClick={() => setBookmarkFilterActive(!bookmarkFilterActive)}
