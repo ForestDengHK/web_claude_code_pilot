@@ -14,6 +14,10 @@ import {
   CheckmarkCircle02Icon,
   CancelCircleIcon,
   Download04Icon,
+  UserMultipleIcon,
+  Globe02Icon,
+  CheckListIcon,
+  MessageQuestionIcon,
 } from "@hugeicons/core-free-icons";
 import { ChevronRightIcon, CopyIcon, CheckIcon, XIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -60,12 +64,13 @@ interface ToolActionsGroupProps {
 // Tool categorisation
 // ---------------------------------------------------------------------------
 
-type ToolCategory = 'read' | 'write' | 'bash' | 'search' | 'skill' | 'other';
+type ToolCategory = 'read' | 'write' | 'bash' | 'search' | 'skill' | 'agent' | 'web' | 'todo' | 'ask' | 'other';
 
 function getToolCategory(name: string): ToolCategory {
   const lower = name.toLowerCase();
   if (lower === 'skill') return 'skill';
-  if (lower === 'read' || lower === 'readfile' || lower === 'read_file') return 'read';
+  if (lower === 'agent' || lower === 'task') return 'agent';
+  if (lower === 'read' || lower === 'readfile' || lower === 'read_file' || lower === 'notebookread' || lower === 'notebook_read') return 'read';
   if (
     lower === 'write' || lower === 'edit' || lower === 'file_edit' || lower === 'writefile' ||
     lower === 'write_file' || lower === 'create_file' || lower === 'createfile' ||
@@ -78,8 +83,11 @@ function getToolCategory(name: string): ToolCategory {
   if (
     lower === 'search' || lower === 'glob' || lower === 'grep' ||
     lower === 'find_files' || lower === 'search_files' ||
-    lower === 'websearch' || lower === 'web_search'
+    lower === 'websearch' || lower === 'web_search' || lower === 'toolsearch'
   ) return 'search';
+  if (lower === 'webfetch' || lower === 'web_fetch') return 'web';
+  if (lower === 'todowrite' || lower === 'todo_write') return 'todo';
+  if (lower === 'askuserquestion' || lower === 'ask_user_question') return 'ask';
   return 'other';
 }
 
@@ -90,6 +98,10 @@ function getToolIcon(category: ToolCategory): IconSvgElement {
     case 'bash':   return CommandLineIcon;
     case 'search': return Search01Icon;
     case 'skill':  return Wrench01Icon;
+    case 'agent':  return UserMultipleIcon;
+    case 'web':    return Globe02Icon;
+    case 'todo':   return CheckListIcon;
+    case 'ask':    return MessageQuestionIcon;
     case 'other':  return Wrench01Icon;
   }
 }
@@ -129,6 +141,36 @@ function getToolSummary(name: string, input: unknown, category: ToolCategory): s
       if (skillName) return `/${skillName}`;
       return name;
     }
+    case 'agent': {
+      const agentType = (inp.subagent_type || '') as string;
+      const desc = (inp.description || '') as string;
+      if (agentType && desc) return `${agentType} · ${desc.length > 40 ? desc.slice(0, 37) + '...' : desc}`;
+      if (agentType) return agentType;
+      if (desc) return desc.length > 50 ? desc.slice(0, 47) + '...' : desc;
+      return name;
+    }
+    case 'web': {
+      const url = (inp.url || '') as string;
+      if (url) {
+        try {
+          const hostname = new URL(url).hostname;
+          return hostname.length > 40 ? hostname.slice(0, 37) + '...' : hostname;
+        } catch { return url.length > 50 ? url.slice(0, 47) + '...' : url; }
+      }
+      return name;
+    }
+    case 'todo': {
+      const todos = inp.todos as Array<Record<string, unknown>> | undefined;
+      if (todos && todos.length > 0) {
+        const first = (todos[0].content || '') as string;
+        return `${todos.length} items · ${first.length > 30 ? first.slice(0, 27) + '...' : first}`;
+      }
+      return name;
+    }
+    case 'ask': {
+      const question = (inp.question || inp.text || '') as string;
+      return question ? (question.length > 50 ? question.slice(0, 47) + '...' : question) : name;
+    }
     default:
       return name;
   }
@@ -148,6 +190,24 @@ function getToolFullText(name: string, input: unknown, category: ToolCategory): 
       const skillName = (inp.skill || inp.name || inp.skill_name || '') as string;
       const args = (inp.args || '') as string;
       return skillName ? `/${skillName}${args ? ' ' + args : ''}` : name;
+    }
+    case 'agent': {
+      const agentType = (inp.subagent_type || '') as string;
+      const desc = (inp.description || '') as string;
+      const prompt = (inp.prompt || '') as string;
+      const parts: string[] = [];
+      if (agentType) parts.push(`[${agentType}]`);
+      if (desc) parts.push(desc);
+      if (prompt) parts.push(`\n${prompt.length > 200 ? prompt.slice(0, 197) + '...' : prompt}`);
+      return parts.length > 0 ? parts.join(' ') : name;
+    }
+    case 'web': {
+      const url = (inp.url || '') as string;
+      return url || name;
+    }
+    case 'ask': {
+      const question = (inp.question || inp.text || '') as string;
+      return question || name;
     }
     default: return getToolSummary(name, input, category);
   }
@@ -260,20 +320,26 @@ function ToolActionRow({ tool, isStreaming }: { tool: ToolAction; isStreaming: b
   const status = getStatus(tool, isStreaming);
   const longPress = useLongPress();
 
-  const label = category === 'bash' ? '' : category === 'skill' ? 'Skill' : tool.name;
+  const label = category === 'bash' ? ''
+    : category === 'skill' ? 'Skill'
+    : category === 'agent' ? 'Agent'
+    : category === 'web' ? 'Fetch'
+    : category === 'todo' ? 'Todo'
+    : category === 'ask' ? 'Ask'
+    : tool.name;
 
   return (
     <div className="flex items-center gap-2 px-2 py-1 min-h-[28px] text-xs hover:bg-muted/30 rounded-sm transition-colors">
-      <HugeiconsIcon icon={icon} className={cn("h-3.5 w-3.5 shrink-0", category === 'skill' ? "text-blue-500" : "text-muted-foreground")} />
+      <HugeiconsIcon icon={icon} className={cn("h-3.5 w-3.5 shrink-0", category === 'skill' ? "text-blue-500" : category === 'agent' ? "text-violet-500" : "text-muted-foreground")} />
 
       {label && (
-        <span className={cn("font-medium shrink-0", category === 'skill' ? "text-blue-500" : "text-muted-foreground")}>{label}</span>
+        <span className={cn("font-medium shrink-0", category === 'skill' ? "text-blue-500" : category === 'agent' ? "text-violet-500" : "text-muted-foreground")}>{label}</span>
       )}
 
       <Tooltip open={longPress.tooltipOpen}>
         <TooltipTrigger asChild>
           <span
-            className={cn("font-mono truncate flex-1 select-none", category === 'skill' ? "text-blue-500/70" : "text-muted-foreground/60")}
+            className={cn("font-mono truncate flex-1 select-none", category === 'skill' ? "text-blue-500/70" : category === 'agent' ? "text-violet-500/70" : "text-muted-foreground/60")}
             title={fullText}
             {...longPress.handlers}
           >
