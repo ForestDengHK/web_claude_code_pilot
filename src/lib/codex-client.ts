@@ -235,10 +235,15 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
             formatJsonRpcRequest('turn/start', turnStartParams),
           );
 
+          // Track whether the new codex/event/* protocol is active for this turn.
+          // When active, skip old item/reasoning/summaryTextDelta to avoid duplicate thinking.
+          // Per-turn flag (not module-level) so switching models works correctly.
+          const turnCtx = { useNewReasoningProtocol: false };
+
           // Message handler for all events during this turn
           messageHandler = (msg: JsonRpcMessage) => {
             try {
-              handleCodexMessage(msg, controller, codexProcess!, sessionId, threadId!, resolve, reject, abortController?.signal);
+              handleCodexMessage(msg, controller, codexProcess!, sessionId, threadId!, resolve, reject, abortController?.signal, turnCtx);
             } catch (err) {
               reject(err);
             }
@@ -387,6 +392,7 @@ function handleCodexMessage(
   onTurnComplete: () => void,
   onError: (err: Error) => void,
   abortSignal?: AbortSignal,
+  turnCtx: { useNewReasoningProtocol: boolean } = { useNewReasoningProtocol: false },
 ): void {
   // --- Notifications (server push) ---
   if (msg.type === 'notification') {
@@ -426,7 +432,9 @@ function handleCodexMessage(
       }
 
       // Reasoning summary — stream as thinking block, separate from response
+      // Skip if new codex/event/reasoning_content_delta is active (avoids duplicates)
       case 'item/reasoning/summaryTextDelta': {
+        if (turnCtx.useNewReasoningProtocol) break;
         const delta = msg.params.delta as string;
         if (delta) {
           controller.enqueue(formatSSE({ type: 'thinking', data: delta }));
@@ -577,6 +585,128 @@ function handleCodexMessage(
           controller.enqueue(formatSSE({
             type: 'status',
             data: JSON.stringify({ message: `Codex error (retrying): ${errorMsg}` }),
+          }));
+        }
+        break;
+      }
+
+      // ---------------------------------------------------------------
+      // New codex/event/* protocol (gpt-5.4+, supplementary to item/*)
+      // These carry richer data and are the primary source for reasoning
+      // content on newer models. The payload is in msg.params.msg.
+      // ---------------------------------------------------------------
+
+      // Reasoning content delta — stream as thinking block (primary source on 5.4+)
+      case 'codex/event/reasoning_content_delta': {
+        turnCtx.useNewReasoningProtocol = true; // Flag to skip old summaryTextDelta duplicates
+        const inner = msg.params.msg as Record<string, unknown> | undefined;
+        const delta = inner?.delta as string;
+        if (delta) {
+          controller.enqueue(formatSSE({ type: 'thinking', data: delta }));
+        }
+        break;
+      }
+
+      // Agent reasoning delta — show as status snippet
+      case 'codex/event/agent_reasoning_delta': {
+        const inner = msg.params.msg as Record<string, unknown> | undefined;
+        const delta = inner?.delta as string;
+        if (delta) {
+          const snippet = delta.replace(/\n/g, ' ').trim();
+          if (snippet) {
+            controller.enqueue(formatSSE({
+              type: 'status',
+              data: JSON.stringify({ notification: true, message: `Thinking: ${snippet.slice(0, 80)}${snippet.length > 80 ? '…' : ''}` }),
+            }));
+          }
+        }
+        break;
+      }
+
+      // Agent reasoning complete — full reasoning text (no-op, already streamed via deltas)
+      case 'codex/event/agent_reasoning':
+      // Section break between reasoning blocks
+      case 'codex/event/agent_reasoning_section_break':
+        break;
+
+      // Item lifecycle events (v2) — map to tool_use/tool_result like old item/* events
+      case 'codex/event/item_started': {
+        const inner = msg.params.msg as Record<string, unknown> | undefined;
+        const item = inner?.item as Record<string, unknown> | undefined;
+        if (!item) break;
+
+        if (item.type === 'CommandExecution' || item.type === 'commandExecution') {
+          controller.enqueue(formatSSE({
+            type: 'tool_use',
+            data: JSON.stringify({
+              id: item.id,
+              name: 'command',
+              input: { command: item.command, cwd: item.cwd },
+            }),
+          }));
+        } else if (item.type === 'FileChange' || item.type === 'fileChange') {
+          controller.enqueue(formatSSE({
+            type: 'tool_use',
+            data: JSON.stringify({
+              id: item.id,
+              name: 'file_edit',
+              input: { changes: item.changes },
+            }),
+          }));
+        } else if (item.type === 'WebSearch' || item.type === 'webSearch') {
+          controller.enqueue(formatSSE({
+            type: 'status',
+            data: JSON.stringify({ message: 'Searching the web...' }),
+          }));
+        }
+        break;
+      }
+
+      case 'codex/event/item_completed': {
+        const inner = msg.params.msg as Record<string, unknown> | undefined;
+        const item = inner?.item as Record<string, unknown> | undefined;
+        if (!item) break;
+
+        if (item.type === 'CommandExecution' || item.type === 'commandExecution') {
+          controller.enqueue(formatSSE({
+            type: 'tool_result',
+            data: JSON.stringify({
+              tool_use_id: item.id,
+              content: item.aggregatedOutput || item.output || '',
+              is_error: (item.exitCode as number) !== 0,
+              exit_code: item.exitCode,
+            }),
+          }));
+        } else if (item.type === 'FileChange' || item.type === 'fileChange') {
+          controller.enqueue(formatSSE({
+            type: 'tool_result',
+            data: JSON.stringify({
+              tool_use_id: item.id,
+              content: JSON.stringify(item.changes || []),
+              is_error: item.status === 'failed',
+            }),
+          }));
+        }
+        // WebSearch completion — no specific tool_result needed
+        break;
+      }
+
+      // Web search lifecycle events — show as status
+      case 'codex/event/web_search_begin': {
+        controller.enqueue(formatSSE({
+          type: 'status',
+          data: JSON.stringify({ message: 'Searching the web...' }),
+        }));
+        break;
+      }
+
+      case 'codex/event/web_search_end': {
+        const inner = msg.params.msg as Record<string, unknown> | undefined;
+        const query = inner?.query as string;
+        if (query) {
+          controller.enqueue(formatSSE({
+            type: 'status',
+            data: JSON.stringify({ message: `Web search: ${query.slice(0, 80)}` }),
           }));
         }
         break;

@@ -303,9 +303,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             setToolResults(sc.toolResults);
             toolResultsRef.current = sc.toolResults;
           }
-          setStatusText(sc.statusText || 'Claude is running...');
+          const backendLabel = currentBackend === 'codex' ? 'Codex' : 'Claude';
+          setStatusText(sc.statusText || `${backendLabel} is running...`);
         } else {
-          setStatusText('Reconnecting... Claude is still running');
+          const backendLabel = currentBackend === 'codex' ? 'Codex' : 'Claude';
+          setStatusText(`Reconnecting... ${backendLabel} is still running`);
         }
       } catch {
         setStatusText('Connection lost, retrying...');
