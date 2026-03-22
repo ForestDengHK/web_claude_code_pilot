@@ -205,37 +205,16 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function formatTokenCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
-  return n.toLocaleString();
-}
-
 function TokenUsageDisplay({ usage }: { usage: TokenUsage }) {
   const totalTokens = usage.input_tokens + usage.output_tokens;
   const costStr = usage.cost_usd !== undefined && usage.cost_usd !== null
     ? ` · $${usage.cost_usd.toFixed(4)}`
     : '';
 
-  // Context usage percentage (input tokens / context window)
-  const contextWindow = usage.context_window;
-  const contextPct = contextWindow ? Math.min((usage.input_tokens / contextWindow) * 100, 100) : null;
-  const contextColor = contextPct && contextPct >= 80 ? 'bg-red-500' : contextPct && contextPct >= 60 ? 'bg-yellow-500' : 'bg-emerald-500';
-
   return (
-    <span className="inline-flex items-center gap-2 text-xs text-muted-foreground/50">
-      <span>
-        {usage.model && <>{usage.model} · </>}
-        {totalTokens.toLocaleString()} tokens{costStr}
-      </span>
-      {contextPct !== null && contextWindow && (
-        <span className="inline-flex items-center gap-1" title={`Context: ${formatTokenCount(usage.input_tokens)} / ${formatTokenCount(contextWindow)}`}>
-          <span className="inline-block h-1.5 w-16 rounded-full bg-muted overflow-hidden">
-            <span className={`block h-full rounded-full ${contextColor} transition-all`} style={{ width: `${contextPct}%` }} />
-          </span>
-          <span className={contextPct >= 80 ? 'text-red-500' : ''}>{contextPct.toFixed(0)}%</span>
-        </span>
-      )}
+    <span className="text-xs text-muted-foreground/50">
+      {usage.model && <>{usage.model} · </>}
+      {totalTokens.toLocaleString()} tokens{costStr}
     </span>
   );
 }
