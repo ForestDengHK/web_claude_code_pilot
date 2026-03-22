@@ -160,6 +160,7 @@ export interface TokenUsage {
   cache_creation_input_tokens?: number;
   cost_usd?: number;
   model?: string;
+  context_window?: number;  // Total context window size for the model
 }
 
 // ==========================================
