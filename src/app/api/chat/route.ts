@@ -3,7 +3,8 @@ import { streamClaude } from '@/lib/claude-client';
 import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting } from '@/lib/db';
 import { sendPushNotification } from '@/lib/push-notifications';
 import { detectBackendSwitch, buildIncrementalBridge } from '@/lib/context-bridge';
-import { registerAbort, unregisterAbort } from '@/lib/abort-registry';
+import { registerAbort, registerQuery, unregisterAbort } from '@/lib/abort-registry';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import {
   initStreamBuffer,
   appendStreamText,
@@ -185,6 +186,7 @@ export async function POST(request: NextRequest) {
       files: fileAttachments,
       toolTimeoutSeconds: toolTimeout || 120,
       skipPermissions: session.skip_permissions === 1,
+      onQueryCreated: (q) => registerQuery(session_id, q as Query),
     });
 
     // Tee the stream: one for client, one for collecting the response

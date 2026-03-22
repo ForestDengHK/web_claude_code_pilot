@@ -332,6 +332,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
     files,
     toolTimeoutSeconds = 0,
     skipPermissions: skipPermissionsOption,
+    onQueryCreated,
   } = options;
 
   let heartbeatInterval: ReturnType<typeof setInterval>;
@@ -724,6 +725,11 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           prompt: finalPrompt,
           options: queryOptions,
         });
+
+        // Expose the Query object so the stop route can call interrupt()
+        if (onQueryCreated) {
+          onQueryCreated(conversation);
+        }
 
         let lastAssistantText = '';
         let tokenUsage: TokenUsage | null = null;

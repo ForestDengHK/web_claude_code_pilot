@@ -105,9 +105,10 @@ export async function handlePermissionCallback(
     const { resolvePendingPermission } = await import('../permission-registry');
     if (resolvePendingPermission) {
       const allowed = action === 'allow' || action === 'always';
-      resolvePendingPermission(permissionRequestId, {
-        behavior: allowed ? 'allow' : 'deny',
-      });
+      resolvePendingPermission(permissionRequestId, allowed
+        ? { behavior: 'allow' }
+        : { behavior: 'deny', message: 'User denied permission via bridge' },
+      );
     }
   } catch {
     // permission-registry may not exist yet or may have different API

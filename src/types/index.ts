@@ -492,4 +492,5 @@ export interface ClaudeStreamOptions {
   files?: FileAttachment[];
   toolTimeoutSeconds?: number;
   skipPermissions?: boolean; // Per-session override for dangerously_skip_permissions
+  onQueryCreated?: (query: unknown) => void; // Callback to register SDK Query for interrupt support
 }

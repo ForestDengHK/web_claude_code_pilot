@@ -534,7 +534,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     }
   }, [sessionId, messages, hasMore]);
 
-  const stopStreaming = useCallback(() => {
+  const stopStreaming = useCallback((force = false) => {
     // If recovery polling is active, stop it and reset UI immediately.
     // This lets the user cancel "Reconnecting..." by clicking the stop button.
     if (recoveryActiveRef.current) {
@@ -542,7 +542,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       fetch('/api/chat/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId }),
+        body: JSON.stringify({ session_id: sessionId, force: true }),
       }).catch(() => { /* best-effort */ });
       // Recover any messages that may have been saved before stopping
       recoverMessages().finally(() => {
@@ -550,15 +550,24 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       });
       return;
     }
-    // Abort the client-side reader immediately
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
-    // Also tell the server to abort the Claude process so it doesn't keep running
-    fetch('/api/chat/stop', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId }),
-    }).catch(() => { /* best-effort */ });
+    if (force) {
+      // Force stop: abort client reader immediately + hard kill server process
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
+      fetch('/api/chat/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, force: true }),
+      }).catch(() => { /* best-effort */ });
+    } else {
+      // Graceful stop: interrupt server (let current tool finish), then abort client reader
+      fetch('/api/chat/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId }),
+      }).catch(() => { /* best-effort */ });
+      // Don't abort client reader immediately — let streaming end naturally after interrupt
+    }
   }, [sessionId, recoverMessages, stopRecovery]);
 
   const handlePermissionResponse = useCallback(async (decision: 'allow' | 'allow_session' | 'deny') => {
@@ -1066,7 +1075,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         pendingInputRequest={pendingInputRequest}
         onInputResponse={handleInputResponse}
         inputRequestResolved={inputRequestResolved}
-        onForceStop={stopStreaming}
+        onForceStop={() => stopStreaming(true)}
         hasMore={hasMore}
         loadingMore={loadingMore}
         onLoadMore={loadEarlierMessages}
@@ -1077,7 +1086,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       <MessageInput
         onSend={sendMessage}
         onCommand={handleCommand}
-        onStop={stopStreaming}
+        onStop={() => stopStreaming(false)}
         disabled={false}
         isStreaming={isStreaming}
         sessionId={sessionId}
