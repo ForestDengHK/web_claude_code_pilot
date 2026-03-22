@@ -7,8 +7,9 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { Loading02Icon } from "@hugeicons/core-free-icons";
 import { SkillsManager } from "@/components/skills/SkillsManager";
 import { McpManager } from "@/components/plugins/McpManager";
+import { PluginUpdater } from "@/components/plugins/PluginUpdater";
 
-type ExtTab = "skills" | "mcp";
+type ExtTab = "skills" | "mcp" | "plugins";
 
 export default function ExtensionsPage() {
   return (
@@ -37,12 +38,14 @@ function ExtensionsPageInner() {
           <TabsList>
             <TabsTrigger value="skills">Skills</TabsTrigger>
             <TabsTrigger value="mcp">MCP Servers</TabsTrigger>
+            <TabsTrigger value="plugins">Plugins</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
       <div className="flex-1 overflow-hidden p-4 md:p-6 flex flex-col min-h-0">
         {tab === "skills" && <SkillsManager />}
         {tab === "mcp" && <McpManager />}
+        {tab === "plugins" && <PluginUpdater />}
       </div>
     </div>
   );
