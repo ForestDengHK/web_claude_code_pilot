@@ -4,20 +4,18 @@
  * Find text in the DOM that corresponds to a TTS segment.
  *
  * The challenge: TTS segments come from stripped text (no code, no emoji),
- * but the DOM still has those elements. So exact matching fails when
- * stripped content (like inline code) was between words.
+ * but the DOM still has those elements.
  *
- * Strategy:
- * 1. Try exact match first (fast path, works for simple segments)
- * 2. Fuzzy match: find the first word in the DOM, then find the last word
- *    AFTER the first word. Highlight everything between them. This naturally
- *    bridges over inline code, emoji, bold markers, etc.
+ * Strategy: Use raw text node concatenation (no artificial spaces) and
+ * subsequence matching — walk through the search text character by character,
+ * finding each character in the accumulated DOM text. This handles any
+ * amount of extra content (code, emoji, bold markers) between characters.
  */
 export function findTextRange(container: HTMLElement, searchText: string): Range | null {
-  const normalized = normalizeWhitespace(searchText);
-  if (!normalized) return null;
+  const search = searchText.replace(/\s+/g, ' ').trim();
+  if (!search) return null;
 
-  // Collect all text nodes and build accumulated text
+  // Collect all text nodes with their raw content
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
   const textNodes: { node: Text; start: number }[] = [];
   let accumulated = '';
@@ -25,77 +23,84 @@ export function findTextRange(container: HTMLElement, searchText: string): Range
   let node: Text | null;
   while ((node = walker.nextNode() as Text | null)) {
     const raw = node.textContent || '';
-    const norm = normalizeWhitespace(raw);
-    if (norm) {
-      textNodes.push({ node, start: accumulated.length });
-      accumulated += (accumulated ? ' ' : '') + norm;
-    }
+    if (!raw) continue;
+    textNodes.push({ node, start: accumulated.length });
+    accumulated += raw;
   }
 
   if (!accumulated) return null;
 
-  // Try exact match first
-  const exactIdx = accumulated.indexOf(normalized);
+  // Try exact match first (fast path)
+  const exactIdx = accumulated.indexOf(search);
   if (exactIdx !== -1) {
-    return buildRange(textNodes, accumulated, exactIdx, exactIdx + normalized.length);
+    return buildRange(textNodes, exactIdx, exactIdx + search.length);
   }
 
-  // Fuzzy match using first word + last word as anchors
-  const words = normalized.split(/\s+/).filter(w => w.length > 0);
-  if (words.length === 0) return null;
+  // Subsequence match: find the first and last characters of the search text
+  // in the accumulated DOM text, allowing extra content in between.
+  // This handles cases like:
+  //   search: "目标目录 () 写死了"  (code stripped, empty parens)
+  //   DOM:    "目标目录 (/Users/party/working) 写死了"  (code still present)
 
-  // Find start anchor: try first 2 words, then first word, then progressively
-  // shorter prefixes (handles CJK text split by bold/italic formatting)
-  let startIdx = -1;
-  if (words.length >= 2) {
-    startIdx = accumulated.indexOf(words[0] + ' ' + words[1]);
-  }
-  if (startIdx === -1) {
-    startIdx = accumulated.indexOf(words[0]);
-  }
-  if (startIdx === -1) {
-    // CJK fallback: the first "word" may be a long CJK string that got split
-    // by formatting (e.g., "果然设置页面里没有" but DOM has "果然设置页面里" + "没有")
-    // Try progressively shorter prefixes (min 4 chars to avoid false positives)
-    const firstWord = words[0];
-    for (let len = firstWord.length - 1; len >= Math.min(4, firstWord.length); len--) {
-      startIdx = accumulated.indexOf(firstWord.slice(0, len));
-      if (startIdx !== -1) break;
-    }
-  }
-  if (startIdx === -1) return null;
+  const firstMatchStart = findSubsequenceStart(accumulated, search);
+  if (firstMatchStart === -1) return null;
 
-  // Single word segment — just highlight that word
-  if (words.length === 1) {
-    return buildRange(textNodes, accumulated, startIdx, startIdx + words[0].length);
-  }
+  const lastMatchEnd = findSubsequenceEnd(accumulated, search, firstMatchStart);
+  if (lastMatchEnd === -1) return null;
 
-  // Find end anchor: try last word, searching AFTER startIdx
-  const lastWord = words[words.length - 1];
-  // Search from a position after the start to avoid matching the same word
-  const searchFrom = startIdx + words[0].length;
-  let endIdx = accumulated.indexOf(lastWord, searchFrom);
-
-  if (endIdx === -1) {
-    // Last word not found — try second-to-last word
-    if (words.length >= 3) {
-      const altWord = words[words.length - 2];
-      endIdx = accumulated.indexOf(altWord, searchFrom);
-      if (endIdx !== -1) {
-        return buildRange(textNodes, accumulated, startIdx, endIdx + altWord.length);
-      }
-    }
-    // Still not found — highlight from start to a reasonable length
-    return buildRange(textNodes, accumulated, startIdx, Math.min(startIdx + 80, accumulated.length));
-  }
-
-  return buildRange(textNodes, accumulated, startIdx, endIdx + lastWord.length);
+  return buildRange(textNodes, firstMatchStart, lastMatchEnd);
 }
 
-/** Build a DOM Range from accumulated text offsets */
+/**
+ * Find where the search text starts as a subsequence in the DOM text.
+ * Match the first few characters of search contiguously to anchor the start.
+ */
+function findSubsequenceStart(domText: string, search: string): number {
+  // Use a reasonable prefix to anchor — first 6 chars or full search if shorter
+  const prefixLen = Math.min(6, search.length);
+  const prefix = search.slice(0, prefixLen);
+
+  // Try exact prefix match
+  const idx = domText.indexOf(prefix);
+  if (idx !== -1) return idx;
+
+  // Try progressively shorter prefixes (min 2 chars)
+  for (let len = prefixLen - 1; len >= 2; len--) {
+    const shorter = search.slice(0, len);
+    const sIdx = domText.indexOf(shorter);
+    if (sIdx !== -1) return sIdx;
+  }
+
+  return -1;
+}
+
+/**
+ * Find where the search text ends in the DOM text.
+ * Match the last few characters of search contiguously to anchor the end.
+ */
+function findSubsequenceEnd(domText: string, search: string, afterPos: number): number {
+  // Use last 6 chars as suffix anchor
+  const suffixLen = Math.min(6, search.length);
+  const suffix = search.slice(-suffixLen);
+
+  // Search for suffix after the start position
+  const idx = domText.indexOf(suffix, afterPos);
+  if (idx !== -1) return idx + suffix.length;
+
+  // Try progressively shorter suffixes (min 2 chars)
+  for (let len = suffixLen - 1; len >= 2; len--) {
+    const shorter = search.slice(-len);
+    const sIdx = domText.indexOf(shorter, afterPos);
+    if (sIdx !== -1) return sIdx + shorter.length;
+  }
+
+  // Last resort: just use a fixed length from start
+  return Math.min(afterPos + search.length + 20, domText.length);
+}
+
+/** Build a DOM Range from raw accumulated text offsets */
 function buildRange(
   textNodes: { node: Text; start: number }[],
-  _accumulated: string,
   matchStart: number,
   matchEnd: number,
 ): Range | null {
@@ -106,23 +111,16 @@ function buildRange(
 
   for (let i = 0; i < textNodes.length; i++) {
     const { node: tn, start } = textNodes[i];
-    const normLen = normalizeWhitespace(tn.textContent || '').length;
-    const end = start + normLen;
+    const len = tn.textContent?.length || 0;
+    const end = start + len;
 
     if (!startNode && matchStart >= start && matchStart < end) {
       startNode = tn;
-      startOffset = mapNormToRawOffset(tn.textContent || '', matchStart - start);
+      startOffset = matchStart - start;
     }
     if (matchEnd > start && matchEnd <= end) {
       endNode = tn;
-      endOffset = mapNormToRawOffset(tn.textContent || '', matchEnd - start);
-      break;
-    }
-    // If we've passed the matchEnd, use end of previous node
-    if (start > matchEnd && !endNode && startNode) {
-      const prev = textNodes[i - 1];
-      endNode = prev.node;
-      endOffset = prev.node.textContent?.length || 0;
+      endOffset = matchEnd - start;
       break;
     }
   }
@@ -201,28 +199,4 @@ export function scrollToRange(range: Range, scrollContainer: Element | null): vo
       block: 'center',
     });
   }
-}
-
-function normalizeWhitespace(s: string): string {
-  return s.replace(/\s+/g, ' ').trim();
-}
-
-function mapNormToRawOffset(raw: string, normOffset: number): number {
-  let ni = 0;
-  let inSpace = false;
-  let ri = 0;
-  while (ri < raw.length && /\s/.test(raw[ri])) ri++;
-
-  for (; ri < raw.length && ni < normOffset; ri++) {
-    if (/\s/.test(raw[ri])) {
-      if (!inSpace) {
-        ni++;
-        inSpace = true;
-      }
-    } else {
-      ni++;
-      inSpace = false;
-    }
-  }
-  return ri;
 }

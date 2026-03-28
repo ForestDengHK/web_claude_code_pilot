@@ -7,8 +7,8 @@ export function stripMarkdown(text: string): string {
   return text
     // Code blocks (remove entirely — don't read code aloud)
     .replace(/```[\s\S]*?```/g, '')
-    // Inline code (remove entirely — code identifiers aren't speakable)
-    .replace(/`[^`]+`/g, '')
+    // Inline code (keep text, just remove backticks — often config names, not real code)
+    .replace(/`([^`]+)`/g, '$1')
     // Images (remove entirely)
     .replace(/!\[([^\]]*)\]\([^)]+\)/g, '')
     // Links (keep link text)

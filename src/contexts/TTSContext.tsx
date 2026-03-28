@@ -12,6 +12,8 @@ interface TTSContextValue {
   pause: () => void;
   resume: () => void;
   stop: () => void;
+  /** Seek to a specific segment by global index (tap-to-jump) */
+  seekToSegment: (globalIndex: number) => void;
 }
 
 const TTSContext = createContext<TTSContextValue | null>(null);
@@ -271,10 +273,76 @@ export function TTSProvider({ children }: { children: ReactNode }) {
     setState('playing');
   }, [startSegmentTracking]);
 
+  /** Seek to a specific segment by global index. Handles cross-chunk seeking. */
+  const seekToSegment = useCallback((globalIndex: number) => {
+    const map = segmentMapRef.current;
+    const chunks = chunksRef.current;
+    if (globalIndex < 0 || globalIndex >= map.length || chunks.length === 0) return;
+
+    const { chunkIdx, localIdx } = map[globalIndex];
+    const chunk = chunks[chunkIdx];
+    if (!chunk) return;
+
+    const targetTime = chunk.segments[localIdx]?.start ?? 0;
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    // Update segment index immediately for instant highlight feedback
+    segmentIndexRef.current = globalIndex;
+    setActiveSegmentIndex(globalIndex);
+
+    if (chunkIdx === chunkIndexRef.current) {
+      // Same chunk — just seek within current audio
+      audio.currentTime = targetTime;
+      if (audio.paused) {
+        audio.play();
+        startSegmentTracking();
+        setState('playing');
+      }
+    } else {
+      // Different chunk — need to switch audio source
+      stopSegmentTracking();
+      playChunkAt(chunkIdx, targetTime);
+    }
+  }, [startSegmentTracking, stopSegmentTracking]);
+
+  /** Play a chunk starting at a specific time offset */
+  const playChunkAt = useCallback((index: number, startTime: number) => {
+    const chunks = chunksRef.current;
+    if (index >= chunks.length) return;
+
+    chunkIndexRef.current = index;
+    const chunk = chunks[index];
+    const audio = audioRef.current!;
+
+    if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+
+    const blob = base64ToBlob(chunk.audio, 'audio/mpeg');
+    const url = URL.createObjectURL(blob);
+    blobUrlRef.current = url;
+
+    audio.onended = () => playChunk(index + 1);
+    audio.onerror = () => {
+      stopSegmentTracking();
+      setState('idle');
+      setActiveMessageId(null);
+    };
+
+    audio.src = url;
+    audio.currentTime = startTime;
+    audio.play().then(() => {
+      setState('playing');
+      startSegmentTracking();
+    }).catch(() => {
+      setState('idle');
+      setActiveMessageId(null);
+    });
+  }, [playChunk, startSegmentTracking, stopSegmentTracking]);
+
   return (
     <TTSContext.Provider value={{
       activeMessageId, state, activeSegmentIndex, segments,
-      play, pause, resume, stop,
+      play, pause, resume, stop, seekToSegment,
     }}>
       {children}
     </TTSContext.Provider>

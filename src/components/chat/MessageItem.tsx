@@ -374,6 +374,33 @@ export function MessageItem({ message, searchQuery, isLatestMessage }: MessageIt
     };
   }, [isThisMessageActive, tts.activeSegmentIndex, tts.segments]);
 
+  // Seek on click: when TTS is active, tapping text jumps to that segment
+  const handleSeekClick = useCallback((e: React.MouseEvent) => {
+    if (!isThisMessageActive || !responseRef.current) return;
+    if (tts.state !== 'playing' && tts.state !== 'paused') return;
+    if (tts.segments.length === 0) return;
+
+    // Don't intercept clicks on buttons/links
+    const target = e.target as HTMLElement;
+    if (target.closest('button, a')) return;
+
+    // Find which segment contains the clicked position
+    for (let i = 0; i < tts.segments.length; i++) {
+      const range = findTextRange(responseRef.current, tts.segments[i].text);
+      if (!range) continue;
+
+      const rects = range.getClientRects();
+      for (let r = 0; r < rects.length; r++) {
+        const rect = rects[r];
+        if (e.clientX >= rect.left && e.clientX <= rect.right &&
+            e.clientY >= rect.top && e.clientY <= rect.bottom) {
+          tts.seekToSegment(i);
+          return;
+        }
+      }
+    }
+  }, [isThisMessageActive, tts]);
+
   const timestamp = new Date(message.created_at).toLocaleTimeString([], {
     hour: '2-digit',
     minute: '2-digit',
@@ -445,7 +472,7 @@ export function MessageItem({ message, searchQuery, isLatestMessage }: MessageIt
               )}
             </div>
           ) : (
-            <div ref={responseRef}>
+            <div ref={responseRef} onClick={handleSeekClick} style={isThisMessageActive ? { cursor: 'pointer' } : undefined}>
               <MessageResponse>{displayText}</MessageResponse>
             </div>
           )
