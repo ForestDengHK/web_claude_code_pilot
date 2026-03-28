@@ -4,12 +4,14 @@
  * Find text in the DOM that corresponds to a TTS segment.
  *
  * The challenge: TTS segments come from stripped text (no code, no emoji),
- * but the DOM still has those elements. So exact matching fails.
+ * but the DOM still has those elements. So exact matching fails when
+ * stripped content (like inline code) was between words.
  *
- * Strategy: find the first few words and last few words of the segment
- * in the DOM, then create a range spanning from the start of the first
- * match to the end of the last match. This naturally bridges over
- * inline code, emoji, and other stripped content.
+ * Strategy:
+ * 1. Try exact match first (fast path, works for simple segments)
+ * 2. Fuzzy match: find the first word in the DOM, then find the last word
+ *    AFTER the first word. Highlight everything between them. This naturally
+ *    bridges over inline code, emoji, bold markers, etc.
  */
 export function findTextRange(container: HTMLElement, searchText: string): Range | null {
   const normalized = normalizeWhitespace(searchText);
@@ -32,52 +34,68 @@ export function findTextRange(container: HTMLElement, searchText: string): Range
 
   if (!accumulated) return null;
 
-  // Try exact match first (works when no code/emoji in the segment)
+  // Try exact match first
   const exactIdx = accumulated.indexOf(normalized);
   if (exactIdx !== -1) {
     return buildRange(textNodes, accumulated, exactIdx, exactIdx + normalized.length);
   }
 
-  // Fuzzy match: find first anchor words and last anchor words
-  const words = normalized.split(/\s+/);
+  // Fuzzy match using first word + last word as anchors
+  const words = normalized.split(/\s+/).filter(w => w.length > 0);
   if (words.length === 0) return null;
 
-  // Take first 3 words and last 3 words as anchors
-  const anchorLen = Math.min(3, words.length);
-  const startAnchor = words.slice(0, anchorLen).join(' ');
-  const endAnchor = words.slice(-anchorLen).join(' ');
-
-  const startIdx = accumulated.indexOf(startAnchor);
+  // Find start anchor: try first 2 words, then first word, then progressively
+  // shorter prefixes (handles CJK text split by bold/italic formatting)
+  let startIdx = -1;
+  if (words.length >= 2) {
+    startIdx = accumulated.indexOf(words[0] + ' ' + words[1]);
+  }
   if (startIdx === -1) {
-    // Try single first word as fallback
+    startIdx = accumulated.indexOf(words[0]);
+  }
+  if (startIdx === -1) {
+    // CJK fallback: the first "word" may be a long CJK string that got split
+    // by formatting (e.g., "果然设置页面里没有" but DOM has "果然设置页面里" + "没有")
+    // Try progressively shorter prefixes (min 4 chars to avoid false positives)
     const firstWord = words[0];
-    const singleIdx = accumulated.indexOf(firstWord);
-    if (singleIdx === -1) return null;
-    // Just highlight what we can find
-    const endIdx = endAnchor !== startAnchor ? accumulated.indexOf(endAnchor, singleIdx) : -1;
-    if (endIdx !== -1) {
-      return buildRange(textNodes, accumulated, singleIdx, endIdx + endAnchor.length);
+    for (let len = firstWord.length - 1; len >= Math.min(4, firstWord.length); len--) {
+      startIdx = accumulated.indexOf(firstWord.slice(0, len));
+      if (startIdx !== -1) break;
     }
-    return buildRange(textNodes, accumulated, singleIdx, singleIdx + firstWord.length);
+  }
+  if (startIdx === -1) return null;
+
+  // Single word segment — just highlight that word
+  if (words.length === 1) {
+    return buildRange(textNodes, accumulated, startIdx, startIdx + words[0].length);
   }
 
-  if (startAnchor === endAnchor) {
-    return buildRange(textNodes, accumulated, startIdx, startIdx + startAnchor.length);
-  }
+  // Find end anchor: try last word, searching AFTER startIdx
+  const lastWord = words[words.length - 1];
+  // Search from a position after the start to avoid matching the same word
+  const searchFrom = startIdx + words[0].length;
+  let endIdx = accumulated.indexOf(lastWord, searchFrom);
 
-  const endIdx = accumulated.indexOf(endAnchor, startIdx + startAnchor.length);
   if (endIdx === -1) {
-    // End anchor not found, just highlight from start anchor to a reasonable distance
-    return buildRange(textNodes, accumulated, startIdx, Math.min(startIdx + normalized.length + 50, accumulated.length));
+    // Last word not found — try second-to-last word
+    if (words.length >= 3) {
+      const altWord = words[words.length - 2];
+      endIdx = accumulated.indexOf(altWord, searchFrom);
+      if (endIdx !== -1) {
+        return buildRange(textNodes, accumulated, startIdx, endIdx + altWord.length);
+      }
+    }
+    // Still not found — highlight from start to a reasonable length
+    return buildRange(textNodes, accumulated, startIdx, Math.min(startIdx + 80, accumulated.length));
   }
 
-  return buildRange(textNodes, accumulated, startIdx, endIdx + endAnchor.length);
+  return buildRange(textNodes, accumulated, startIdx, endIdx + lastWord.length);
 }
 
 /** Build a DOM Range from accumulated text offsets */
 function buildRange(
   textNodes: { node: Text; start: number }[],
-  accumulated: string,
+  _accumulated: string,
   matchStart: number,
   matchEnd: number,
 ): Range | null {
@@ -100,11 +118,20 @@ function buildRange(
       endOffset = mapNormToRawOffset(tn.textContent || '', matchEnd - start);
       break;
     }
-    // If matchEnd goes beyond last node, use the last node's end
-    if (i === textNodes.length - 1 && !endNode && startNode) {
-      endNode = tn;
-      endOffset = tn.textContent?.length || 0;
+    // If we've passed the matchEnd, use end of previous node
+    if (start > matchEnd && !endNode && startNode) {
+      const prev = textNodes[i - 1];
+      endNode = prev.node;
+      endOffset = prev.node.textContent?.length || 0;
+      break;
     }
+  }
+
+  // If matchEnd extends past last text node
+  if (startNode && !endNode) {
+    const last = textNodes[textNodes.length - 1];
+    endNode = last.node;
+    endOffset = last.node.textContent?.length || 0;
   }
 
   if (!startNode || !endNode) return null;
@@ -121,7 +148,6 @@ function buildRange(
 
 /**
  * Highlight a Range by placing overlay divs on top of each client rect.
- * Uses getClientRects() for multi-line support. No DOM mutation of the text content.
  * Returns a cleanup function.
  */
 export function highlightRange(range: Range, container: HTMLElement): () => void {
