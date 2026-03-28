@@ -14,18 +14,180 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { RefreshCw, ArrowUpCircle, Check, AlertTriangle, Loader2 } from "lucide-react";
+
+interface ToolVersionInfo {
+  name: string;
+  current: string;
+  latest: string | null;
+  updateAvailable: boolean;
+  source: "global-npm" | "local-npm" | "cli";
+}
 
 function VersionCard() {
   const currentVersion = process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0";
+  const [tools, setTools] = useState<ToolVersionInfo[]>([]);
+  const [checking, setChecking] = useState(false);
+  const [upgrading, setUpgrading] = useState<string | null>(null);
+  const [upgradeResult, setUpgradeResult] = useState<{
+    tool: string;
+    success: boolean;
+    message: string;
+  } | null>(null);
+
+  const checkVersions = useCallback(async () => {
+    setChecking(true);
+    setUpgradeResult(null);
+    try {
+      const res = await fetch("/api/versions");
+      if (res.ok) {
+        const data = await res.json();
+        setTools(data.tools);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+
+  const handleUpgrade = async (toolName: string) => {
+    setUpgrading(toolName);
+    setUpgradeResult(null);
+    try {
+      const res = await fetch("/api/versions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tool: toolName }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setUpgradeResult({
+          tool: toolName,
+          success: true,
+          message: data.needsRestart
+            ? "Upgraded! Restart dev server to take effect."
+            : "Upgraded successfully!",
+        });
+        // Refresh versions
+        await checkVersions();
+      } else {
+        setUpgradeResult({
+          tool: toolName,
+          success: false,
+          message: data.error || "Upgrade failed",
+        });
+      }
+    } catch (err) {
+      setUpgradeResult({
+        tool: toolName,
+        success: false,
+        message: err instanceof Error ? err.message : "Upgrade failed",
+      });
+    } finally {
+      setUpgrading(null);
+    }
+  };
+
+  const updatesAvailable = tools.filter((t) => t.updateAvailable).length;
 
   return (
-    <div className="rounded-lg border border-border/50 p-4 transition-shadow hover:shadow-sm">
+    <div className="rounded-lg border border-border/50 p-4 transition-shadow hover:shadow-sm space-y-3">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-sm font-medium">Web Claude Code Pilot</h2>
-          <p className="text-xs text-muted-foreground">Version {currentVersion}</p>
+          <p className="text-xs text-muted-foreground">
+            Web App v{currentVersion}
+          </p>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={checkVersions}
+          disabled={checking}
+          className="gap-1.5"
+        >
+          {checking ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="h-3.5 w-3.5" />
+          )}
+          {tools.length === 0 ? "Check Versions" : "Refresh"}
+        </Button>
       </div>
+
+      {tools.length > 0 && (
+        <div className="space-y-2">
+          {updatesAvailable > 0 && (
+            <div className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400">
+              <ArrowUpCircle className="h-3.5 w-3.5" />
+              {updatesAvailable} update{updatesAvailable > 1 ? "s" : ""} available
+            </div>
+          )}
+          <div className="divide-y divide-border/30 rounded-md border border-border/30">
+            {tools.map((tool) => (
+              <div
+                key={tool.name}
+                className="flex items-center justify-between px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <div className="text-xs font-medium truncate">
+                    {tool.name}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground font-mono">
+                    {tool.current}
+                    {tool.latest && tool.updateAvailable && (
+                      <span className="text-blue-500 ml-1">
+                        → {tool.latest}
+                      </span>
+                    )}
+                    {tool.latest && !tool.updateAvailable && tool.current !== "unknown" && (
+                      <span className="text-green-500 ml-1">
+                        (latest)
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {tool.updateAvailable && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs gap-1 shrink-0 ml-2"
+                    onClick={() => handleUpgrade(tool.name)}
+                    disabled={upgrading !== null}
+                  >
+                    {upgrading === tool.name ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <ArrowUpCircle className="h-3 w-3" />
+                    )}
+                    Update
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {upgradeResult && (
+            <div
+              className={`flex items-start gap-2 rounded-md px-3 py-2 text-xs ${
+                upgradeResult.success
+                  ? "bg-green-500/10 text-green-600 dark:text-green-400"
+                  : "bg-red-500/10 text-red-600 dark:text-red-400"
+              }`}
+            >
+              {upgradeResult.success ? (
+                <Check className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              ) : (
+                <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              )}
+              <span>
+                <strong>{upgradeResult.tool}:</strong> {upgradeResult.message}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
