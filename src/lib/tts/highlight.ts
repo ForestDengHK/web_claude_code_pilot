@@ -66,6 +66,7 @@ export function findTextRange(container: HTMLElement, searchText: string): Range
  */
 export function highlightRange(range: Range, container: HTMLElement): () => void {
   if (typeof CSS !== 'undefined' && 'highlights' in CSS) {
+    ensureHighlightStyle();
     const highlight = new Highlight(range);
     (CSS.highlights as Map<string, Highlight>).set('tts-active', highlight);
     return () => {
@@ -118,6 +119,20 @@ export function scrollToRange(range: Range, scrollContainer: Element | null): vo
       behavior: 'smooth',
       block: 'center',
     });
+  }
+}
+
+/** Inject ::highlight(tts-active) CSS once (Turbopack can't parse it statically) */
+let highlightStyleInjected = false;
+function ensureHighlightStyle(): void {
+  if (highlightStyleInjected) return;
+  try {
+    const style = document.createElement('style');
+    style.textContent = '::highlight(tts-active) { background-color: rgba(59, 130, 246, 0.2); }';
+    document.head.appendChild(style);
+    highlightStyleInjected = true;
+  } catch {
+    // Ignore — fallback overlay will be used
   }
 }
 
