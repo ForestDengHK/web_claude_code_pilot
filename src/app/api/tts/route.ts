@@ -1,7 +1,6 @@
-// src/app/api/tts/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { spawn } from 'child_process';
-import { readFile, unlink } from 'fs/promises';
+import { readFile, writeFile, unlink } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { randomBytes } from 'crypto';
@@ -9,7 +8,8 @@ import { stripMarkdown } from '@/lib/tts/strip-markdown';
 import { parseSRT } from '@/lib/tts/parse-srt';
 import type { TTSResponse } from '@/lib/tts/types';
 
-const MAX_TEXT_LENGTH = 5000;
+// ~20k chars ≈ 5-8 minutes of audio, reasonable upper bound
+const MAX_TEXT_LENGTH = 20000;
 
 /** Detect if text is primarily CJK */
 function isCJK(text: string): boolean {
@@ -42,18 +42,21 @@ export async function POST(request: NextRequest) {
   }
   if (plain.length > MAX_TEXT_LENGTH) {
     return NextResponse.json(
-      { error: `Text too long (${plain.length} chars, max ${MAX_TEXT_LENGTH})` },
+      { error: `Text too long (${plain.length} chars, max ${MAX_TEXT_LENGTH}). Try selecting a shorter section.` },
       { status: 400 },
     );
   }
 
   const voice = pickVoice(plain);
-
-  // Temp file for SRT subtitles (edge-tts needs a file path for --write-subtitles)
-  const srtPath = join(tmpdir(), `codepilot-tts-${randomBytes(8).toString('hex')}.srt`);
+  const id = randomBytes(8).toString('hex');
+  const textPath = join(tmpdir(), `codepilot-tts-${id}.txt`);
+  const srtPath = join(tmpdir(), `codepilot-tts-${id}.srt`);
 
   try {
-    const { audio, srt } = await synthesize(plain, voice, srtPath);
+    // Write text to file — avoids CLI arg length limits for long texts
+    await writeFile(textPath, plain, 'utf-8');
+
+    const { audio, srt } = await synthesize(textPath, voice, srtPath);
     const segments = parseSRT(srt);
 
     const response: TTSResponse = {
@@ -66,29 +69,28 @@ export async function POST(request: NextRequest) {
     const msg = err instanceof Error ? err.message : 'TTS synthesis failed';
     return NextResponse.json({ error: msg }, { status: 500 });
   } finally {
-    // Cleanup temp SRT file
+    unlink(textPath).catch(() => {});
     unlink(srtPath).catch(() => {});
   }
 }
 
 function synthesize(
-  text: string,
+  textFilePath: string,
   voice: string,
   srtPath: string,
 ): Promise<{ audio: Buffer; srt: string }> {
   return new Promise((resolve, reject) => {
     const audioChunks: Buffer[] = [];
 
-    // edge-tts writes audio to stdout by default, subtitles to the specified file
+    // Use --file instead of --text to avoid CLI arg length limits
     const proc = spawn('edge-tts', [
-      '--text', text,
+      '--file', textFilePath,
       '--voice', voice,
       '--write-subtitles', srtPath,
     ]);
 
     proc.stdout.on('data', (chunk: Buffer) => audioChunks.push(chunk));
 
-    // Collect stderr for error messages
     let stderrText = '';
     proc.stderr.on('data', (chunk: Buffer) => { stderrText += chunk.toString(); });
 
@@ -104,12 +106,11 @@ function synthesize(
         return;
       }
 
-      // Read the SRT file
       let srt = '';
       try {
         srt = await readFile(srtPath, 'utf-8');
       } catch {
-        // SRT is optional — we can still play audio without highlighting
+        // SRT is optional
       }
 
       resolve({ audio, srt });

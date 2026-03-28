@@ -10,17 +10,15 @@ export function findTextRange(container: HTMLElement, searchText: string): Range
   if (!normalized) return null;
 
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-  const textNodes: { node: Text; start: number; rawStart: number }[] = [];
+  const textNodes: { node: Text; start: number }[] = [];
   let accumulated = '';
-  let rawAccumulated = '';
 
   let node: Text | null;
   while ((node = walker.nextNode() as Text | null)) {
     const raw = node.textContent || '';
     const norm = normalizeWhitespace(raw);
-    textNodes.push({ node, start: accumulated.length, rawStart: rawAccumulated.length });
+    textNodes.push({ node, start: accumulated.length });
     accumulated += norm;
-    rawAccumulated += raw;
   }
 
   const matchIndex = accumulated.indexOf(normalized);
@@ -61,46 +59,44 @@ export function findTextRange(container: HTMLElement, searchText: string): Range
 }
 
 /**
- * Apply CSS Custom Highlight API. Returns a cleanup function.
- * Falls back to a positioned overlay div if Highlight API is unavailable.
+ * Highlight a Range by placing overlay divs on top of each client rect.
+ * Uses getClientRects() for multi-line support. No DOM mutation of the text content.
+ * Returns a cleanup function.
  */
 export function highlightRange(range: Range, container: HTMLElement): () => void {
-  if (typeof CSS !== 'undefined' && 'highlights' in CSS) {
-    ensureHighlightStyle();
-    const highlight = new Highlight(range);
-    (CSS.highlights as Map<string, Highlight>).set('tts-active', highlight);
-    return () => {
-      (CSS.highlights as Map<string, Highlight>).delete('tts-active');
-    };
-  }
-
-  // Fallback: absolutely positioned overlay (no DOM mutation)
-  const rect = range.getBoundingClientRect();
-  const containerRect = container.getBoundingClientRect();
-
-  const overlay = document.createElement('div');
-  overlay.className = 'tts-highlight-overlay';
-  overlay.style.cssText = `
-    position: absolute;
-    left: ${rect.left - containerRect.left}px;
-    top: ${rect.top - containerRect.top}px;
-    width: ${rect.width}px;
-    height: ${rect.height}px;
-    background: rgba(59, 130, 246, 0.2);
-    border-radius: 2px;
-    pointer-events: none;
-    transition: all 0.15s ease;
-    z-index: 1;
-  `;
-
+  // Ensure container is positioned for overlay placement
   const prevPosition = container.style.position;
   if (!prevPosition || prevPosition === 'static') {
     container.style.position = 'relative';
   }
-  container.appendChild(overlay);
+
+  const containerRect = container.getBoundingClientRect();
+  const rects = range.getClientRects();
+  const overlays: HTMLDivElement[] = [];
+
+  for (let i = 0; i < rects.length; i++) {
+    const rect = rects[i];
+    // Skip tiny rects (whitespace artifacts)
+    if (rect.width < 2 || rect.height < 2) continue;
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: absolute;
+      left: ${rect.left - containerRect.left}px;
+      top: ${rect.top - containerRect.top}px;
+      width: ${rect.width}px;
+      height: ${rect.height}px;
+      background: rgba(250, 204, 21, 0.35);
+      border-radius: 3px;
+      pointer-events: none;
+      z-index: 5;
+    `;
+    container.appendChild(overlay);
+    overlays.push(overlay);
+  }
 
   return () => {
-    overlay.remove();
+    for (const o of overlays) o.remove();
     if (!prevPosition || prevPosition === 'static') {
       container.style.position = prevPosition;
     }
@@ -119,20 +115,6 @@ export function scrollToRange(range: Range, scrollContainer: Element | null): vo
       behavior: 'smooth',
       block: 'center',
     });
-  }
-}
-
-/** Inject ::highlight(tts-active) CSS once (Turbopack can't parse it statically) */
-let highlightStyleInjected = false;
-function ensureHighlightStyle(): void {
-  if (highlightStyleInjected) return;
-  try {
-    const style = document.createElement('style');
-    style.textContent = '::highlight(tts-active) { background-color: rgba(59, 130, 246, 0.2); }';
-    document.head.appendChild(style);
-    highlightStyleInjected = true;
-  } catch {
-    // Ignore — fallback overlay will be used
   }
 }
 

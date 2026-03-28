@@ -354,16 +354,10 @@ export function MessageItem({ message, searchQuery, isLatestMessage }: MessageIt
     cleanupRef.current?.();
     cleanupRef.current = null;
 
-    if (!isThisMessageActive || !responseRef.current || tts.segments.length === 0) return;
-    if (tts.state !== 'playing' && tts.state !== 'paused') return;
+    if (!isThisMessageActive || !responseRef.current) return;
+    if (tts.activeSegmentIndex < 0 || tts.activeSegmentIndex >= tts.segments.length) return;
 
-    // Find which segment is active based on currentTime
-    const activeSegment = tts.segments.find(
-      (seg, i) => tts.currentTime >= seg.start &&
-        (i === tts.segments.length - 1 || tts.currentTime < tts.segments[i + 1].start)
-    );
-    if (!activeSegment) return;
-
+    const activeSegment = tts.segments[tts.activeSegmentIndex];
     const range = findTextRange(responseRef.current, activeSegment.text);
     if (!range) return;
 
@@ -378,7 +372,7 @@ export function MessageItem({ message, searchQuery, isLatestMessage }: MessageIt
       cleanupRef.current?.();
       cleanupRef.current = null;
     };
-  }, [isThisMessageActive, tts.currentTime, tts.segments, tts.state]);
+  }, [isThisMessageActive, tts.activeSegmentIndex, tts.segments]);
 
   const timestamp = new Date(message.created_at).toLocaleTimeString([], {
     hour: '2-digit',

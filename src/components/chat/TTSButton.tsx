@@ -27,7 +27,7 @@ export function TTSButton({ messageId, text }: TTSButtonProps) {
         tts.pause();
         break;
       case 'paused':
-        tts.resume();
+        tts.stop(); // second click = stop (not resume)
         break;
     }
   }, [state, messageId, text, tts]);
@@ -39,7 +39,7 @@ export function TTSButton({ messageId, text }: TTSButtonProps) {
       case 'playing':
         return <PauseIcon className="h-3.5 w-3.5 text-blue-500" />;
       case 'paused':
-        return <Volume2Icon className="h-3.5 w-3.5 text-blue-500" />;
+        return <SquareIcon className="h-3.5 w-3.5 text-blue-500" />;
       default:
         return <Volume2Icon className="h-3.5 w-3.5" />;
     }
@@ -49,7 +49,7 @@ export function TTSButton({ messageId, text }: TTSButtonProps) {
     switch (state) {
       case 'loading': return 'Cancel';
       case 'playing': return 'Pause';
-      case 'paused': return 'Resume';
+      case 'paused': return 'Stop';
       default: return 'Read aloud';
     }
   })();
