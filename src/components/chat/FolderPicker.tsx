@@ -39,11 +39,14 @@ interface FavoriteDir {
 
 type TabId = 'browse' | 'clone';
 
-function extractRepoInfo(url: string): { name: string; cloneUrl: string } | null {
+const DEFAULT_GIT_HOST = 'https://github.com';
+
+function extractRepoInfo(url: string, gitHost: string = DEFAULT_GIT_HOST): { name: string; cloneUrl: string } | null {
   const trimmed = url.trim();
-  // Shorthand: user/repo
+  // Shorthand: user/repo — uses configurable git host
   if (/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(trimmed)) {
-    return { name: trimmed.split('/')[1], cloneUrl: `https://github.com/${trimmed}` };
+    const host = gitHost.replace(/\/+$/, '');
+    return { name: trimmed.split('/')[1], cloneUrl: `${host}/${trimmed}` };
   }
   // SSH: git@github.com:user/repo.git
   const sshMatch = trimmed.match(/git@[^:]+:([^/]+)\/([^/]+?)(?:\.git)?$/);
@@ -79,6 +82,7 @@ export function FolderPicker({ open, onOpenChange, onSelect, initialPath }: Fold
   // Clone tab state
   const [cloneUrl, setCloneUrl] = useState('');
   const [cloneBaseDir, setCloneBaseDir] = useState('/Users/party/working');
+  const [defaultGitHost, setDefaultGitHost] = useState(DEFAULT_GIT_HOST);
   const [cloning, setCloning] = useState(false);
   const [cloneError, setCloneError] = useState('');
   const [cloneAlreadyExists, setCloneAlreadyExists] = useState<string | null>(null);
@@ -97,6 +101,9 @@ export function FolderPicker({ open, onOpenChange, onSelect, initialPath }: Fold
         .then(data => {
           if (data?.settings?.clone_base_directory) {
             setCloneBaseDir(data.settings.clone_base_directory);
+          }
+          if (data?.settings?.default_git_host) {
+            setDefaultGitHost(data.settings.default_git_host);
           }
         })
         .catch(() => {});
@@ -195,7 +202,7 @@ export function FolderPicker({ open, onOpenChange, onSelect, initialPath }: Fold
     onOpenChange(false);
   };
 
-  const repoInfo = extractRepoInfo(cloneUrl);
+  const repoInfo = extractRepoInfo(cloneUrl, defaultGitHost);
 
   const handleClone = async () => {
     if (!repoInfo) return;
@@ -407,7 +414,7 @@ export function FolderPicker({ open, onOpenChange, onSelect, initialPath }: Fold
                   setCloneError('');
                   setCloneAlreadyExists(null);
                 }}
-                placeholder="https://github.com/user/repo  or  user/repo"
+                placeholder={`${defaultGitHost}/user/repo  or  user/repo`}
                 className="font-mono text-sm"
                 disabled={cloning}
               />

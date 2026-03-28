@@ -5,15 +5,17 @@ import path from 'path';
 import { getSetting } from '@/lib/db';
 
 const DEFAULT_BASE_DIR = '/Users/party/working';
+const DEFAULT_GIT_HOST = 'https://github.com';
 const CLONE_TIMEOUT_MS = 120_000;
 
-function extractRepoName(url: string): { name: string; cloneUrl: string } | null {
+function extractRepoName(url: string, gitHost: string = DEFAULT_GIT_HOST): { name: string; cloneUrl: string } | null {
   const trimmed = url.trim();
 
-  // Shorthand: user/repo
+  // Shorthand: user/repo — uses configurable git host
   if (/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(trimmed)) {
     const name = trimmed.split('/')[1];
-    return { name, cloneUrl: `https://github.com/${trimmed}` };
+    const host = gitHost.replace(/\/+$/, '');
+    return { name, cloneUrl: `${host}/${trimmed}` };
   }
 
   // SSH: git@github.com:user/repo.git
@@ -56,12 +58,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing or invalid URL' }, { status: 400 });
     }
 
-    const parsed = extractRepoName(url);
+    const baseDir = getSetting('clone_base_directory') || DEFAULT_BASE_DIR;
+    const gitHost = getSetting('default_git_host') || DEFAULT_GIT_HOST;
+
+    const parsed = extractRepoName(url, gitHost);
     if (!parsed) {
       return NextResponse.json({ error: 'Could not parse repository URL' }, { status: 400 });
     }
-
-    const baseDir = getSetting('clone_base_directory') || DEFAULT_BASE_DIR;
     const targetDir = path.join(baseDir, parsed.name);
 
     // Check if target already exists

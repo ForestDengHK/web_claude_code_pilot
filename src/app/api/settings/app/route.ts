@@ -11,6 +11,7 @@ const ALLOWED_KEYS = [
   'anthropic_base_url',
   'dangerously_skip_permissions',
   'clone_base_directory',
+  'default_git_host',
   'stt_provider',
   'stt_api_key',
   'stt_endpoint',

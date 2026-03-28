@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
   AlertDialog,
@@ -34,6 +35,12 @@ export function GeneralSection() {
   const [showSkipPermWarning, setShowSkipPermWarning] = useState(false);
   const [skipPermSaving, setSkipPermSaving] = useState(false);
 
+  // Git clone settings
+  const [cloneBaseDir, setCloneBaseDir] = useState('');
+  const [defaultGitHost, setDefaultGitHost] = useState('');
+  const [gitSettingsSaving, setGitSettingsSaving] = useState(false);
+  const [gitSettingsSaved, setGitSettingsSaved] = useState(false);
+
   const fetchAppSettings = useCallback(async () => {
     try {
       const res = await fetch("/api/settings/app");
@@ -41,6 +48,8 @@ export function GeneralSection() {
         const data = await res.json();
         const appSettings = data.settings || {};
         setSkipPermissions(appSettings.dangerously_skip_permissions === "true");
+        setCloneBaseDir(appSettings.clone_base_directory || '');
+        setDefaultGitHost(appSettings.default_git_host || '');
       }
     } catch {
       // ignore
@@ -77,6 +86,31 @@ export function GeneralSection() {
     } finally {
       setSkipPermSaving(false);
       setShowSkipPermWarning(false);
+    }
+  };
+
+  const saveGitSettings = async () => {
+    setGitSettingsSaving(true);
+    setGitSettingsSaved(false);
+    try {
+      const res = await fetch("/api/settings/app", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          settings: {
+            clone_base_directory: cloneBaseDir.trim(),
+            default_git_host: defaultGitHost.trim(),
+          },
+        }),
+      });
+      if (res.ok) {
+        setGitSettingsSaved(true);
+        setTimeout(() => setGitSettingsSaved(false), 2000);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setGitSettingsSaving(false);
     }
   };
 
@@ -143,6 +177,57 @@ export function GeneralSection() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Git Clone Settings */}
+      <div className="rounded-lg border border-border/50 p-4 transition-shadow hover:shadow-sm space-y-4">
+        <div>
+          <h2 className="text-sm font-medium">Git Clone Settings</h2>
+          <p className="text-xs text-muted-foreground">
+            Configure where cloned repos are saved and the default git host for shorthand URLs (e.g. user/repo).
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Clone Base Directory</label>
+            <Input
+              value={cloneBaseDir}
+              onChange={(e) => setCloneBaseDir(e.target.value)}
+              placeholder="/Users/party/working"
+              className="font-mono text-sm"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Repos will be cloned into this directory. Leave empty for default.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Default Git Host</label>
+            <Input
+              value={defaultGitHost}
+              onChange={(e) => setDefaultGitHost(e.target.value)}
+              placeholder="https://github.com"
+              className="font-mono text-sm"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              When you type <code className="rounded bg-muted px-1">user/repo</code>, it expands to this host. Leave empty for GitHub.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              onClick={saveGitSettings}
+              disabled={gitSettingsSaving}
+            >
+              {gitSettingsSaving ? "Saving..." : "Save"}
+            </Button>
+            {gitSettingsSaved && (
+              <span className="text-xs text-green-600 dark:text-green-400">Saved!</span>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
