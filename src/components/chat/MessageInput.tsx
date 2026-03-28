@@ -1079,6 +1079,7 @@ export function MessageInput({
 
             const renderItem = (item: PopoverItem, idx: number) => (
               <button
+                type="button"
                 key={`${idx}-${item.value}`}
                 ref={idx === selectedIndex ? (el) => { el?.scrollIntoView({ block: 'nearest' }); } : undefined}
                 className={cn(
@@ -1252,6 +1253,7 @@ export function MessageInput({
                           const isActive = opt.value === mode;
                           return (
                             <button
+                              type="button"
                               key={opt.value}
                               className={cn(
                                 "flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors",
@@ -1300,6 +1302,7 @@ export function MessageInput({
                           const isActive = opt.value === currentModelValue;
                           return (
                             <button
+                              type="button"
                               key={opt.value}
                               className={cn(
                                 "flex w-full items-center px-2 py-[5px] text-left transition-colors",
@@ -1330,6 +1333,7 @@ export function MessageInput({
                           const isActive = opt.value === currentModelValue;
                           return (
                             <button
+                              type="button"
                               key={opt.value}
                               className={cn(
                                 "flex w-full items-center px-2 py-[5px] text-left transition-colors",
@@ -1364,6 +1368,7 @@ export function MessageInput({
                           <div className="flex flex-wrap gap-1 mt-0.5">
                             {currentModelEfforts.map((e) => (
                               <button
+                                type="button"
                                 key={e.value}
                                 className={cn(
                                   "px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors",

@@ -262,11 +262,8 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
         const newTree = data.tree || [];
         setTree(newTree);
         setGitStatusMap(buildGitStatusMap(newTree));
-        // Expand first-level directories by default on fresh load
-        setExpandedPaths(prev => prev.size === 0
-          ? new Set(newTree.filter((n: FileTreeNode) => n.type === 'directory').map((n: FileTreeNode) => n.path))
-          : prev
-        );
+        // Start collapsed on fresh load — user can expand as needed
+        setExpandedPaths(prev => prev.size === 0 ? new Set() : prev);
       } else {
         setTree([]);
         setGitStatusMap(new Map());
