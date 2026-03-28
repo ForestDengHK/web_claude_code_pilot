@@ -6,10 +6,11 @@ import { join } from 'path';
 import { randomBytes } from 'crypto';
 import { stripMarkdown } from '@/lib/tts/strip-markdown';
 import { parseSRT } from '@/lib/tts/parse-srt';
-import type { TTSResponse } from '@/lib/tts/types';
+import type { TTSChunk, TTSResponse } from '@/lib/tts/types';
 
-// ~20k chars ≈ 5-8 minutes of audio, reasonable upper bound
 const MAX_TEXT_LENGTH = 20000;
+// Target chunk size in characters (~2-4 seconds of audio each)
+const CHUNK_TARGET = 500;
 
 /** Detect if text is primarily CJK */
 function isCJK(text: string): boolean {
@@ -21,6 +22,56 @@ function pickVoice(text: string): string {
   return isCJK(text)
     ? 'zh-CN-XiaoxiaoNeural'
     : 'en-US-AndrewMultilingualNeural';
+}
+
+/**
+ * Split plain text into chunks at sentence/paragraph boundaries.
+ * Each chunk is roughly CHUNK_TARGET chars, split at natural boundaries.
+ */
+function splitIntoChunks(text: string): string[] {
+  // Short text: no splitting needed
+  if (text.length <= CHUNK_TARGET * 1.5) return [text];
+
+  // Split into paragraphs first
+  const paragraphs = text.split(/\n\n+/);
+  const chunks: string[] = [];
+  let current = '';
+
+  for (const para of paragraphs) {
+    // If adding this paragraph would exceed target, finalize current chunk
+    if (current && (current.length + para.length) > CHUNK_TARGET) {
+      chunks.push(current.trim());
+      current = '';
+    }
+
+    // If a single paragraph is very long, split at sentence boundaries
+    if (para.length > CHUNK_TARGET * 1.5) {
+      if (current) {
+        chunks.push(current.trim());
+        current = '';
+      }
+      const sentences = para.split(/(?<=[.!?。！？])\s+/);
+      let sentenceChunk = '';
+      for (const s of sentences) {
+        if (sentenceChunk && (sentenceChunk.length + s.length) > CHUNK_TARGET) {
+          chunks.push(sentenceChunk.trim());
+          sentenceChunk = '';
+        }
+        sentenceChunk += (sentenceChunk ? ' ' : '') + s;
+      }
+      if (sentenceChunk.trim()) {
+        current = sentenceChunk;
+      }
+    } else {
+      current += (current ? '\n\n' : '') + para;
+    }
+  }
+
+  if (current.trim()) {
+    chunks.push(current.trim());
+  }
+
+  return chunks.filter(c => c.length > 0);
 }
 
 export async function POST(request: NextRequest) {
@@ -48,26 +99,43 @@ export async function POST(request: NextRequest) {
   }
 
   const voice = pickVoice(plain);
-  const id = randomBytes(8).toString('hex');
-  const textPath = join(tmpdir(), `codepilot-tts-${id}.txt`);
-  const srtPath = join(tmpdir(), `codepilot-tts-${id}.srt`);
+  const textChunks = splitIntoChunks(plain);
+  const batchId = randomBytes(4).toString('hex');
+
+  // Synthesize all chunks in parallel
+  const chunkPromises = textChunks.map((chunk, i) => {
+    const id = `${batchId}-${i}`;
+    const textPath = join(tmpdir(), `codepilot-tts-${id}.txt`);
+    const srtPath = join(tmpdir(), `codepilot-tts-${id}.srt`);
+    return synthesizeChunk(chunk, voice, textPath, srtPath);
+  });
 
   try {
-    // Write text to file — avoids CLI arg length limits for long texts
-    await writeFile(textPath, plain, 'utf-8');
-
-    const { audio, srt } = await synthesize(textPath, voice, srtPath);
-    const segments = parseSRT(srt);
-
-    const response: TTSResponse = {
-      audio: audio.toString('base64'),
-      segments,
-    };
-
+    const results = await Promise.all(chunkPromises);
+    const response: TTSResponse = { chunks: results };
     return NextResponse.json(response);
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'TTS synthesis failed';
     return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+async function synthesizeChunk(
+  text: string,
+  voice: string,
+  textPath: string,
+  srtPath: string,
+): Promise<TTSChunk> {
+  try {
+    await writeFile(textPath, text, 'utf-8');
+
+    const { audio, srt } = await synthesize(textPath, voice, srtPath);
+    const segments = parseSRT(srt);
+
+    return {
+      audio: audio.toString('base64'),
+      segments,
+    };
   } finally {
     unlink(textPath).catch(() => {});
     unlink(srtPath).catch(() => {});
@@ -82,7 +150,6 @@ function synthesize(
   return new Promise((resolve, reject) => {
     const audioChunks: Buffer[] = [];
 
-    // Use --file instead of --text to avoid CLI arg length limits
     const proc = spawn('edge-tts', [
       '--file', textFilePath,
       '--voice', voice,

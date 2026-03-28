@@ -1,14 +1,12 @@
 'use client';
 
 import { createContext, useContext, useState, useRef, useCallback, useEffect, type ReactNode } from 'react';
-import type { TTSTimedSegment, TTSState } from '@/lib/tts/types';
+import type { TTSTimedSegment, TTSChunk, TTSState } from '@/lib/tts/types';
 
 interface TTSContextValue {
   activeMessageId: string | null;
   state: TTSState;
-  /** Index of the currently playing segment (-1 if none) */
   activeSegmentIndex: number;
-  /** The timed segments from SRT */
   segments: TTSTimedSegment[];
   play: (messageId: string, text: string) => void;
   pause: () => void;
@@ -24,6 +22,22 @@ export function useTTS(): TTSContextValue {
   return ctx;
 }
 
+function base64ToBlob(base64: string, mimeType: string): Blob {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mimeType });
+}
+
+// ── Cache ──
+// Keyed by messageId. Stores processed chunk data so replays are instant.
+interface CachedTTS {
+  chunks: TTSChunk[];
+  allSegments: TTSTimedSegment[];
+  segmentMap: Array<{ chunkIdx: number; localIdx: number }>;
+}
+const ttsCache = new Map<string, CachedTTS>();
+
 export function TTSProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<TTSState>('idle');
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
@@ -33,11 +47,16 @@ export function TTSProvider({ children }: { children: ReactNode }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const blobUrlRef = useRef<string | null>(null);
-  const segmentsRef = useRef<TTSTimedSegment[]>([]);
+
+  // Chunked playback refs
+  const chunksRef = useRef<TTSChunk[]>([]);
+  const chunkIndexRef = useRef(0);
+  const segmentMapRef = useRef<Array<{ chunkIdx: number; localIdx: number }>>([]);
+
+  // Segment tracking
   const segmentIndexRef = useRef(-1);
   const intervalRef = useRef<ReturnType<typeof setInterval>>(undefined);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
@@ -47,39 +66,61 @@ export function TTSProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  /** Poll audio.currentTime and update activeSegmentIndex only when it changes */
   const startSegmentTracking = useCallback(() => {
     clearInterval(intervalRef.current);
     intervalRef.current = setInterval(() => {
       const audio = audioRef.current;
-      const segs = segmentsRef.current;
-      if (!audio || segs.length === 0 || audio.paused) return;
+      if (!audio || audio.paused) return;
+
+      const ci = chunkIndexRef.current;
+      const chunk = chunksRef.current[ci];
+      if (!chunk || chunk.segments.length === 0) return;
 
       const t = audio.currentTime;
-      let newIndex = -1;
-      for (let i = 0; i < segs.length; i++) {
-        if (t >= segs[i].start && (i === segs.length - 1 || t < segs[i + 1].start)) {
-          newIndex = i;
+      let localIdx = -1;
+      for (let i = 0; i < chunk.segments.length; i++) {
+        if (t >= chunk.segments[i].start && (i === chunk.segments.length - 1 || t < chunk.segments[i + 1].start)) {
+          localIdx = i;
           break;
         }
       }
 
-      if (newIndex !== segmentIndexRef.current) {
-        segmentIndexRef.current = newIndex;
-        setActiveSegmentIndex(newIndex);
+      const map = segmentMapRef.current;
+      const globalIdx = map.findIndex(m => m.chunkIdx === ci && m.localIdx === localIdx);
 
+      if (globalIdx >= 0 && globalIdx !== segmentIndexRef.current) {
+        segmentIndexRef.current = globalIdx;
+        setActiveSegmentIndex(globalIdx);
       }
-    }, 100); // Check 10x/sec but only setState when segment actually changes
+    }, 100);
   }, []);
 
   const stopSegmentTracking = useCallback(() => {
     clearInterval(intervalRef.current);
   }, []);
 
-  const cleanup = useCallback(() => {
+  const resetState = useCallback(() => {
+    stopSegmentTracking();
+    setState('idle');
+    setActiveMessageId(null);
+    setActiveSegmentIndex(-1);
+    segmentIndexRef.current = -1;
+    chunksRef.current = [];
+    chunkIndexRef.current = 0;
+    segmentMapRef.current = [];
+    setSegments([]);
+    if (blobUrlRef.current) {
+      URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = null;
+    }
+  }, [stopSegmentTracking]);
+
+  const stopAudio = useCallback(() => {
     abortRef.current?.abort();
     stopSegmentTracking();
     if (audioRef.current) {
+      audioRef.current.onended = null;
+      audioRef.current.onerror = null;
       audioRef.current.pause();
       audioRef.current.removeAttribute('src');
       audioRef.current.load();
@@ -90,37 +131,87 @@ export function TTSProvider({ children }: { children: ReactNode }) {
     }
   }, [stopSegmentTracking]);
 
+  /** Play a specific chunk by index */
+  const playChunk = useCallback((index: number) => {
+    const chunks = chunksRef.current;
+    if (index >= chunks.length) {
+      resetState();
+      return;
+    }
+
+    chunkIndexRef.current = index;
+    const chunk = chunks[index];
+    const audio = audioRef.current!;
+
+    if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+
+    const blob = base64ToBlob(chunk.audio, 'audio/mpeg');
+    const url = URL.createObjectURL(blob);
+    blobUrlRef.current = url;
+
+    audio.onended = () => playChunk(index + 1);
+    audio.onerror = () => {
+      stopSegmentTracking();
+      setState('idle');
+      setActiveMessageId(null);
+    };
+
+    audio.src = url;
+    audio.play().then(() => {
+      setState('playing');
+      startSegmentTracking();
+    }).catch(() => {
+      setState('idle');
+      setActiveMessageId(null);
+    });
+  }, [resetState, startSegmentTracking, stopSegmentTracking]);
+
+  /** Load cached data into refs and state, then start playback */
+  const startFromCache = useCallback((messageId: string, cached: CachedTTS) => {
+    chunksRef.current = cached.chunks;
+    segmentMapRef.current = cached.segmentMap;
+    setSegments(cached.allSegments);
+    setActiveMessageId(messageId);
+    setState('playing');
+    playChunk(0);
+  }, [playChunk]);
+
   const stop = useCallback(() => {
-    cleanup();
-    setState('idle');
-    setActiveMessageId(null);
-    setActiveSegmentIndex(-1);
-    segmentIndexRef.current = -1;
-    segmentsRef.current = [];
-    setSegments([]);
-  }, [cleanup]);
+    stopAudio();
+    resetState();
+  }, [stopAudio, resetState]);
 
   const play = useCallback((messageId: string, text: string) => {
-    cleanup();
+    stopAudio();
 
+    setActiveSegmentIndex(-1);
+    segmentIndexRef.current = -1;
+    chunkIndexRef.current = 0;
+
+    // ── Cache hit: instant replay ──
+    const cached = ttsCache.get(messageId);
+    if (cached) {
+      // iOS audio unlock
+      if (!audioRef.current) audioRef.current = new Audio();
+      audioRef.current.onended = null;
+      audioRef.current.onerror = null;
+      startFromCache(messageId, cached);
+      return;
+    }
+
+    // ── Cache miss: fetch from API ──
     const controller = new AbortController();
     abortRef.current = controller;
 
     setState('loading');
     setActiveMessageId(messageId);
-    setActiveSegmentIndex(-1);
-    segmentIndexRef.current = -1;
-    segmentsRef.current = [];
+    chunksRef.current = [];
+    segmentMapRef.current = [];
     setSegments([]);
 
-    // iOS audio unlock: create/reuse Audio element synchronously in user gesture
-    if (!audioRef.current) {
-      audioRef.current = new Audio();
-    }
+    // iOS audio unlock
+    if (!audioRef.current) audioRef.current = new Audio();
     const audio = audioRef.current;
-
-    // Unlock audio on iOS by playing a tiny silent buffer synchronously.
-    // IMPORTANT: Don't set onended/onerror yet — the silent clip ending would reset state.
     audio.onended = null;
     audio.onerror = null;
     audio.src = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0VAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA/+M4wAAAAAAAAAAAAEluZm8AAAAPAAAAAwAAAbAAqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV////////////////////////////////////////////AAAAAExhdmM1OC4xMwAAAAAAAAAAAAAAACQAAAAAAAAAAAGwRGNS8QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/+M4wAAKiAHIAAAAADFciFAIBAEB4PB4PBAEAQOf/g+D4f/WD4f/5cHw//y4Ph///BAKAICgoP/+D4f/+XB8P//5QfD////ygIAgGBQb/+M4wB0AAAAH/EAAAAD8HwfB8Hw//DLMstBlwEQBAAAAA7TBcM0wPaJbNF8zOhCXP/oRUxqAwNEbJE0N4jxODGo/TKJvTP/+M4wHYAAADSAAAAAO3aA5NSgNDKRSEjxJiUJMYGBkDCRp85kcI1Aot9w8xFYk6HFHt0hOpP//TGa6f///qjJBQmP/iaHh/+M4wLAAAANIAAAAAP///yNEBQT///3///LigoJ//1DhEjv////8jRNf///////yx4eH//+IhIoMAAADSAAAAAAAA';
@@ -137,44 +228,27 @@ export function TTSProvider({ children }: { children: ReactNode }) {
         return res.json();
       })
       .then(data => {
-        const { audio: audioBase64, segments: segs } = data;
-        segmentsRef.current = segs;
-        setSegments(segs);
+        const { chunks } = data;
 
-        const binary = atob(audioBase64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        const blob = new Blob([bytes], { type: 'audio/mpeg' });
-        const url = URL.createObjectURL(blob);
-        blobUrlRef.current = url;
-
-        // Now wire up onended/onerror for the REAL audio (not the silent unlock clip)
-        audio.onended = () => {
-          stopSegmentTracking();
-          setState('idle');
-          setActiveMessageId(null);
-          setActiveSegmentIndex(-1);
-          segmentIndexRef.current = -1;
-          if (blobUrlRef.current) {
-            URL.revokeObjectURL(blobUrlRef.current);
-            blobUrlRef.current = null;
+        // Build flattened segments + mapping
+        const allSegs: TTSTimedSegment[] = [];
+        const map: Array<{ chunkIdx: number; localIdx: number }> = [];
+        for (let ci = 0; ci < chunks.length; ci++) {
+          for (let si = 0; si < chunks[ci].segments.length; si++) {
+            allSegs.push(chunks[ci].segments[si]);
+            map.push({ chunkIdx: ci, localIdx: si });
           }
-        };
-        audio.onerror = () => {
-          stopSegmentTracking();
-          setState('idle');
-          setActiveMessageId(null);
-        };
+        }
 
-        audio.src = url;
-        audio.play().then(() => {
-          setState('playing');
-          startSegmentTracking();
-        }).catch((err) => {
-          console.error('[TTS] audio.play() failed:', err);
-          setState('idle');
-          setActiveMessageId(null);
-        });
+        // Store in cache for instant replay
+        ttsCache.set(messageId, { chunks, allSegments: allSegs, segmentMap: map });
+
+        chunksRef.current = chunks;
+        segmentMapRef.current = map;
+        setSegments(allSegs);
+
+        setState('playing');
+        playChunk(0);
       })
       .catch(err => {
         if (err.name !== 'AbortError') {
@@ -183,7 +257,7 @@ export function TTSProvider({ children }: { children: ReactNode }) {
           setActiveMessageId(null);
         }
       });
-  }, [cleanup, startSegmentTracking, stopSegmentTracking]);
+  }, [stopAudio, playChunk, startFromCache]);
 
   const pause = useCallback(() => {
     audioRef.current?.pause();

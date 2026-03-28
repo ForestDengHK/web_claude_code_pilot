@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback } from 'react';
-import { Volume2Icon, LoaderIcon, PauseIcon, SquareIcon } from 'lucide-react';
+import { Volume2Icon, LoaderIcon, PauseIcon, PlayIcon, SquareIcon } from 'lucide-react';
 import { useTTS } from '@/contexts/TTSContext';
 
 interface TTSButtonProps {
@@ -15,7 +15,7 @@ export function TTSButton({ messageId, text }: TTSButtonProps) {
   const isActive = tts.activeMessageId === messageId;
   const state = isActive ? tts.state : 'idle';
 
-  const handleClick = useCallback(() => {
+  const handleMainClick = useCallback(() => {
     switch (state) {
       case 'idle':
         tts.play(messageId, text);
@@ -27,11 +27,16 @@ export function TTSButton({ messageId, text }: TTSButtonProps) {
         tts.pause();
         break;
       case 'paused':
-        tts.stop(); // second click = stop (not resume)
+        tts.resume();
         break;
     }
   }, [state, messageId, text, tts]);
 
+  const handleStop = useCallback(() => {
+    tts.stop();
+  }, [tts]);
+
+  // Main button icon
   const icon = (() => {
     switch (state) {
       case 'loading':
@@ -39,7 +44,7 @@ export function TTSButton({ messageId, text }: TTSButtonProps) {
       case 'playing':
         return <PauseIcon className="h-3.5 w-3.5 text-blue-500" />;
       case 'paused':
-        return <SquareIcon className="h-3.5 w-3.5 text-blue-500" />;
+        return <PlayIcon className="h-3.5 w-3.5 text-blue-500" />;
       default:
         return <Volume2Icon className="h-3.5 w-3.5" />;
     }
@@ -49,19 +54,24 @@ export function TTSButton({ messageId, text }: TTSButtonProps) {
     switch (state) {
       case 'loading': return 'Cancel';
       case 'playing': return 'Pause';
-      case 'paused': return 'Stop';
+      case 'paused': return 'Resume';
       default: return 'Read aloud';
     }
   })();
 
+  const btnClass = "inline-flex items-center justify-center rounded-md min-w-[32px] min-h-[32px] px-1.5 py-1 text-xs text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted active:bg-muted/80 transition-colors";
+
   return (
-    <button
-      type="button"
-      onClick={handleClick}
-      className="inline-flex items-center justify-center rounded-md min-w-[32px] min-h-[32px] px-1.5 py-1 text-xs text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted active:bg-muted/80 transition-colors"
-      title={title}
-    >
-      {icon}
-    </button>
+    <>
+      <button type="button" onClick={handleMainClick} className={btnClass} title={title}>
+        {icon}
+      </button>
+      {/* Show stop button when playing or paused */}
+      {(state === 'playing' || state === 'paused') && (
+        <button type="button" onClick={handleStop} className={btnClass} title="Stop">
+          <SquareIcon className="h-3 w-3 text-muted-foreground" />
+        </button>
+      )}
+    </>
   );
 }
