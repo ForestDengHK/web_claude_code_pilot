@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { RefreshIcon, Search01Icon, SourceCodeIcon, CodeIcon, File01Icon } from "@hugeicons/core-free-icons";
+import { RefreshIcon, Search01Icon, SourceCodeIcon, CodeIcon, File01Icon, CheckListIcon } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -156,6 +156,10 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
   const [deleting, setDeleting] = useState(false);
   const [gitStatusMap, setGitStatusMap] = useState<Map<string, string>>(new Map());
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
+  // Multi-select
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const lazyLoadingRef = useRef<Set<string>>(new Set());
@@ -319,6 +323,87 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
     }
   }, [deleteTarget, workingDirectory, fetchTree]);
 
+  // Collect all file/folder paths under a node (for folder selection)
+  const collectAllPaths = useCallback((nodes: FileTreeNode[]): string[] => {
+    const paths: string[] = [];
+    function walk(ns: FileTreeNode[]) {
+      for (const n of ns) {
+        paths.push(n.path);
+        if (n.children) walk(n.children);
+      }
+    }
+    walk(nodes);
+    return paths;
+  }, []);
+
+  // Find a node in the tree by path
+  const findNode = useCallback((nodes: FileTreeNode[], targetPath: string): FileTreeNode | null => {
+    for (const n of nodes) {
+      if (n.path === targetPath) return n;
+      if (n.children) {
+        const found = findNode(n.children, targetPath);
+        if (found) return found;
+      }
+    }
+    return null;
+  }, []);
+
+  // Toggle selection of a path (and all children if it's a folder)
+  const handleToggleSelect = useCallback((targetPath: string) => {
+    setSelectedPaths(prev => {
+      const next = new Set(prev);
+      const node = findNode(tree, targetPath);
+      if (next.has(targetPath)) {
+        // Deselect this path and all descendants
+        next.delete(targetPath);
+        if (node?.children) {
+          for (const p of collectAllPaths(node.children)) {
+            next.delete(p);
+          }
+        }
+      } else {
+        // Select this path and all descendants
+        next.add(targetPath);
+        if (node?.children) {
+          for (const p of collectAllPaths(node.children)) {
+            next.add(p);
+          }
+        }
+      }
+      return next;
+    });
+  }, [tree, findNode, collectAllPaths]);
+
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedPaths(new Set());
+  }, []);
+
+  // Batch delete: delete all selected paths sequentially
+  const handleBatchDeleteConfirm = useCallback(async () => {
+    if (selectedPaths.size === 0 || !workingDirectory) return;
+    setDeleting(true);
+    try {
+      // Sort by path length descending so children are deleted before parents
+      const sorted = [...selectedPaths].sort((a, b) => b.length - a.length);
+      for (const p of sorted) {
+        try {
+          await fetch(
+            `/api/files?path=${encodeURIComponent(p)}&baseDir=${encodeURIComponent(workingDirectory)}`,
+            { method: 'DELETE' }
+          );
+        } catch {
+          // Continue deleting remaining files
+        }
+      }
+      fetchTree();
+    } finally {
+      setDeleting(false);
+      setBatchDeleteConfirm(false);
+      exitSelectionMode();
+    }
+  }, [selectedPaths, workingDirectory, fetchTree, exitSelectionMode]);
+
   // Get all directory paths in the tree for expand/collapse all
   const getAllDirectoryPaths = useCallback((nodes: FileTreeNode[]): string[] => {
     const paths: string[] = [];
@@ -343,22 +428,34 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
         </p>
         {tree.length > 0 && (
           <>
-            <button
-              className="text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors px-1.5 py-0.5 rounded shrink-0"
-              onClick={() => {
-                const allDirs = getAllDirectoryPaths(tree);
-                const allExpanded = allDirs.every(p => expandedPaths.has(p));
-                if (allExpanded) {
-                  setExpandedPaths(new Set());
-                } else {
-                  const newExpanded = new Set(allDirs);
-                  setExpandedPaths(newExpanded);
-                  lazyLoadEmptyDirs(newExpanded, tree);
-                }
-              }}
+            {!selectionMode && (
+              <button
+                className="text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors px-1.5 py-0.5 rounded shrink-0"
+                onClick={() => {
+                  const allDirs = getAllDirectoryPaths(tree);
+                  const allExpanded = allDirs.every(p => expandedPaths.has(p));
+                  if (allExpanded) {
+                    setExpandedPaths(new Set());
+                  } else {
+                    const newExpanded = new Set(allDirs);
+                    setExpandedPaths(newExpanded);
+                    lazyLoadEmptyDirs(newExpanded, tree);
+                  }
+                }}
+              >
+                {tree.length > 0 && getAllDirectoryPaths(tree).every(p => expandedPaths.has(p)) ? 'Collapse' : 'Expand'}
+              </button>
+            )}
+            <Button
+              variant={selectionMode ? "secondary" : "ghost"}
+              size="icon-sm"
+              onClick={() => selectionMode ? exitSelectionMode() : setSelectionMode(true)}
+              className={cn("h-8 w-8 shrink-0", selectionMode && "text-primary")}
+              title={selectionMode ? "Exit select mode" : "Select files"}
             >
-              {tree.length > 0 && getAllDirectoryPaths(tree).every(p => expandedPaths.has(p)) ? 'Collapse' : 'Expand'}
-            </button>
+              <HugeiconsIcon icon={CheckListIcon} className="h-4 w-4" />
+              <span className="sr-only">{selectionMode ? "Exit select" : "Select"}</span>
+            </Button>
           </>
         )}
         <Button
@@ -420,6 +517,9 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
               a.remove();
             }}
             onDelete={(filePath: string) => setDeleteTarget(filePath)}
+            selectionMode={selectionMode}
+            selectedPaths={selectedPaths}
+            onToggleSelect={handleToggleSelect}
             className="border-0 rounded-none"
           >
             <RenderTreeNodes nodes={tree} searchQuery={searchQuery} />
@@ -427,7 +527,34 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
         )}
       </div>
 
-      {/* Delete confirmation dialog */}
+      {/* Floating action bar for multi-select */}
+      {selectionMode && selectedPaths.size > 0 && (
+        <div className="shrink-0 border-t bg-background/95 backdrop-blur-sm px-3 py-2 flex items-center gap-2">
+          <span className="text-xs text-muted-foreground min-w-0 truncate">
+            {selectedPaths.size} selected
+          </span>
+          <div className="ml-auto flex items-center gap-1.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={exitSelectionMode}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setBatchDeleteConfirm(true)}
+            >
+              Delete {selectedPaths.size}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Single file delete confirmation dialog */}
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
         <AlertDialogContent size="sm">
           <AlertDialogHeader>
@@ -450,6 +577,39 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
               disabled={deleting}
             >
               {deleting ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Batch delete confirmation dialog */}
+      <AlertDialog open={batchDeleteConfirm} onOpenChange={(open) => { if (!open) setBatchDeleteConfirm(false); }}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-base">Delete {selectedPaths.size} items</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>This will permanently delete {selectedPaths.size} {selectedPaths.size === 1 ? 'item' : 'items'}:</p>
+                <div className="max-h-32 overflow-auto rounded bg-muted px-2 py-1 font-mono text-xs text-foreground space-y-0.5">
+                  {[...selectedPaths].slice(0, 10).map(p => (
+                    <p key={p} className="break-all">{p.split("/").pop()}</p>
+                  ))}
+                  {selectedPaths.size > 10 && (
+                    <p className="text-muted-foreground">...and {selectedPaths.size - 10} more</p>
+                  )}
+                </div>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel size="sm" disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              size="sm"
+              variant="destructive"
+              onClick={handleBatchDeleteConfirm}
+              disabled={deleting}
+            >
+              {deleting ? "Deleting..." : `Delete ${selectedPaths.size}`}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

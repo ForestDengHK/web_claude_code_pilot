@@ -52,6 +52,10 @@ interface FileTreeContextType {
   onDelete?: (path: string) => void;
   attachedPaths?: Set<string>;
   gitStatusMap?: Map<string, string>;
+  // Multi-select
+  selectionMode?: boolean;
+  selectedPaths?: Set<string>;
+  onToggleSelect?: (path: string) => void;
 }
 
 // Default noop for context default value
@@ -107,6 +111,10 @@ export type FileTreeProps = HTMLAttributes<HTMLDivElement> & {
   onExpandedChange?: (expanded: Set<string>) => void;
   attachedPaths?: Set<string>;
   gitStatusMap?: Map<string, string>;
+  // Multi-select
+  selectionMode?: boolean;
+  selectedPaths?: Set<string>;
+  onToggleSelect?: (path: string) => void;
 };
 
 export const FileTree = ({
@@ -122,6 +130,9 @@ export const FileTree = ({
   onExpandedChange,
   attachedPaths,
   gitStatusMap,
+  selectionMode,
+  selectedPaths,
+  onToggleSelect,
   className,
   children,
   ...props
@@ -144,8 +155,8 @@ export const FileTree = ({
   );
 
   const contextValue = useMemo(
-    () => ({ attachedPaths, expandedPaths, gitStatusMap, onAdd, onDelete, onDownload, onPreview, onRemove, onSelect, selectedPath, togglePath }),
-    [attachedPaths, expandedPaths, gitStatusMap, onAdd, onDelete, onDownload, onPreview, onRemove, onSelect, selectedPath, togglePath]
+    () => ({ attachedPaths, expandedPaths, gitStatusMap, onAdd, onDelete, onDownload, onPreview, onRemove, onSelect, onToggleSelect, selectedPath, selectedPaths, selectionMode, togglePath }),
+    [attachedPaths, expandedPaths, gitStatusMap, onAdd, onDelete, onDownload, onPreview, onRemove, onSelect, onToggleSelect, selectedPath, selectedPaths, selectionMode, togglePath]
   );
 
   return (
@@ -188,15 +199,22 @@ export const FileTreeFolder = ({
   children,
   ...props
 }: FileTreeFolderProps) => {
-  const { expandedPaths, togglePath, onAdd, onRemove, attachedPaths, gitStatusMap } =
+  const { expandedPaths, togglePath, onAdd, onRemove, attachedPaths, gitStatusMap, selectionMode, selectedPaths, onToggleSelect } =
     useContext(FileTreeContext);
   const isExpanded = expandedPaths.has(path);
   const isAttached = attachedPaths?.has(path) ?? false;
+  const isChecked = selectedPaths?.has(path) ?? false;
   const gitStatus = gitStatusMap?.get(path);
 
   const handleToggle = useCallback(() => {
     togglePath(path);
   }, [togglePath, path]);
+
+  const handleFolderClick = useCallback(() => {
+    if (selectionMode) {
+      onToggleSelect?.(path);
+    }
+  }, [selectionMode, onToggleSelect, path]);
 
   const handleAdd = useCallback(
     (e: React.MouseEvent) => {
@@ -229,9 +247,26 @@ export const FileTreeFolder = ({
           <Tooltip open={longPress.tooltipOpen}>
             <TooltipTrigger asChild>
               <div
-                className="group/folder flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors hover:bg-muted/50 select-none"
+                className={cn(
+                  "group/folder flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors hover:bg-muted/50 select-none",
+                  selectionMode && isChecked && "bg-primary/10"
+                )}
+                onClick={selectionMode ? handleFolderClick : undefined}
                 {...longPress.handlers}
               >
+            {selectionMode ? (
+              <span
+                className={cn(
+                  "flex size-4 items-center justify-center shrink-0 rounded border transition-colors",
+                  isChecked
+                    ? "bg-primary border-primary text-primary-foreground"
+                    : "border-muted-foreground/40 hover:border-primary"
+                )}
+                onClick={(e) => { e.stopPropagation(); onToggleSelect?.(path); }}
+              >
+                {isChecked && <CheckIcon className="size-3" />}
+              </span>
+            ) : (
             <CollapsibleTrigger asChild>
               <button
                 type="button"
@@ -246,7 +281,8 @@ export const FileTreeFolder = ({
                 />
               </button>
             </CollapsibleTrigger>
-            {gitStatus && <span className="size-1.5 rounded-full bg-yellow-500 shrink-0" />}
+            )}
+            {!selectionMode && gitStatus && <span className="size-1.5 rounded-full bg-yellow-500 shrink-0" />}
             <FileTreeIcon>
               {isExpanded ? (
                 <FolderOpenIcon className="size-4 text-blue-500" />
@@ -321,9 +357,10 @@ export const FileTreeFile = ({
   children,
   ...props
 }: FileTreeFileProps) => {
-  const { selectedPath, onSelect, onAdd, onRemove, onDownload, onDelete, attachedPaths, gitStatusMap } = useContext(FileTreeContext);
+  const { selectedPath, onSelect, onAdd, onRemove, onDownload, onDelete, attachedPaths, gitStatusMap, selectionMode, selectedPaths, onToggleSelect } = useContext(FileTreeContext);
   const isSelected = selectedPath === path;
   const isAttached = attachedPaths?.has(path) ?? false;
+  const isChecked = selectedPaths?.has(path) ?? false;
   const gitStatus = gitStatusMap?.get(path);
 
   const gitDotColor = gitStatus === 'M' ? 'bg-yellow-500'
@@ -338,8 +375,12 @@ export const FileTreeFile = ({
 
   const handleClick = useCallback(() => {
     if (longPress.cancelClick()) return;
+    if (selectionMode) {
+      onToggleSelect?.(path);
+      return;
+    }
     onSelect?.(path);
-  }, [onSelect, path, longPress.cancelClick]);
+  }, [onSelect, path, longPress, selectionMode, onToggleSelect]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -387,7 +428,8 @@ export const FileTreeFile = ({
           <div
             className={cn(
               "group/file flex cursor-pointer items-center gap-1 rounded px-2 py-1 transition-colors hover:bg-muted/50 select-none",
-              isSelected && "bg-muted",
+              isSelected && !selectionMode && "bg-muted",
+              selectionMode && isChecked && "bg-primary/10",
               className
             )}
             onClick={handleClick}
@@ -399,10 +441,26 @@ export const FileTreeFile = ({
           >
             {children ?? (
               <>
+                {/* Selection checkbox (multi-select mode) */}
+                {selectionMode && (
+                  <span
+                    className={cn(
+                      "flex size-4 items-center justify-center shrink-0 rounded border transition-colors",
+                      isChecked
+                        ? "bg-primary border-primary text-primary-foreground"
+                        : "border-muted-foreground/40 hover:border-primary"
+                    )}
+                    onClick={(e) => { e.stopPropagation(); onToggleSelect?.(path); }}
+                  >
+                    {isChecked && <CheckIcon className="size-3" />}
+                  </span>
+                )}
                 {/* Git status dot / alignment spacer */}
+                {!selectionMode && (
                 <span className="flex size-4 items-center justify-center shrink-0">
                   {gitDotColor && <span className={cn("size-1.5 rounded-full", gitDotColor)} />}
                 </span>
+                )}
                 <FileTreeIcon>
                   {icon ?? <FileIcon className="size-4 text-muted-foreground" />}
                 </FileTreeIcon>
