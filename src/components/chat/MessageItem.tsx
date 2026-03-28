@@ -11,6 +11,8 @@ import { ToolActionsGroup } from '@/components/ai-elements/tool-actions-group';
 import { CopyIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon } from 'lucide-react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Bookmark02Icon } from '@hugeicons/core-free-icons';
+import { usePanel } from '@/hooks/usePanel';
+import { DownloadMenu } from './DownloadMenu';
 import { FileAttachmentDisplay } from './FileAttachmentDisplay';
 import { TTSButton } from './TTSButton';
 import { useTTS } from '@/contexts/TTSContext';
@@ -208,6 +210,7 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+
 function TokenUsageDisplay({ usage }: { usage: TokenUsage }) {
   const totalTokens = usage.input_tokens + usage.output_tokens;
   const costStr = usage.cost_usd !== undefined && usage.cost_usd !== null
@@ -286,6 +289,25 @@ function StoredThinkingBlock({ content }: { content: string }) {
 const COLLAPSE_HEIGHT = 300;
 
 export function MessageItem({ message, searchQuery, isLatestMessage }: MessageItemProps) {
+  const { sessionTitle } = usePanel();
+
+  // Build filename base for downloads: {sessionTitle}-{YYYY-MM-DD-HH-mm}
+  const filenameBase = (() => {
+    const date = new Date(message.created_at);
+    const ts = [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, '0'),
+      String(date.getDate()).padStart(2, '0'),
+      String(date.getHours()).padStart(2, '0'),
+      String(date.getMinutes()).padStart(2, '0'),
+    ].join('-');
+    const base = (sessionTitle || 'codepilot')
+      .replace(/[/\\?%*:|"<>]/g, '')
+      .replace(/\s+/g, '-')
+      .slice(0, 80) || 'codepilot';
+    return `${base}-${ts}`;
+  })();
+
   const isUser = message.role === 'user';
   const { text, tools, thinking } = parseToolBlocks(message.content);
   const pairedTools = pairTools(tools);
@@ -509,6 +531,9 @@ export function MessageItem({ message, searchQuery, isLatestMessage }: MessageIt
           <TTSButton messageId={`msg-${message.id}`} text={displayText} />
         )}
         {displayText && <CopyButton text={displayText} />}
+        {!isUser && displayText && (
+          <DownloadMenu markdown={displayText} filenameBase={filenameBase} />
+        )}
       </div>
     </AIMessage>
   );

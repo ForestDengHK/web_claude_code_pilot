@@ -46,24 +46,42 @@ function getFilePath(input: unknown): string {
   return (inp.file_path || inp.path || inp.filePath || '') as string;
 }
 
+function getStringValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    return value
+      .filter((item): item is string => typeof item === 'string')
+      .join(' ')
+      .trim();
+  }
+  return '';
+}
+
 function getToolCategory(name: string): string {
   const lower = name.toLowerCase();
-  if (lower === 'read' || lower === 'readfile' || lower === 'read_file') return 'Read';
   if (
-    lower === 'write' || lower === 'edit' || lower === 'writefile' ||
+    lower === 'read' || lower === 'readfile' || lower === 'read_file' ||
+    lower === 'notebookread' || lower === 'notebook_read'
+  ) return 'Read';
+  if (
+    lower === 'write' || lower === 'edit' || lower === 'file_edit' || lower === 'writefile' ||
     lower === 'write_file' || lower === 'create_file' || lower === 'createfile' ||
     lower === 'notebookedit' || lower === 'notebook_edit'
   ) return 'Write';
   if (
-    lower === 'bash' || lower === 'execute' || lower === 'run' ||
+    lower === 'bash' || lower === 'command' || lower === 'execute' || lower === 'run' ||
     lower === 'shell' || lower === 'execute_command'
   ) return 'Bash';
   if (
     lower === 'search' || lower === 'glob' || lower === 'grep' ||
     lower === 'find_files' || lower === 'search_files' ||
-    lower === 'websearch' || lower === 'web_search'
+    lower === 'websearch' || lower === 'web_search' || lower === 'toolsearch'
   ) return 'Search';
   if (lower === 'skill') return 'Skill';
+  if (lower === 'agent' || lower === 'task') return 'Agent';
+  if (lower === 'webfetch' || lower === 'web_fetch') return 'Web';
+  if (lower === 'todowrite' || lower === 'todo_write') return 'Todo';
+  if (lower === 'askuserquestion' || lower === 'ask_user_question') return 'Ask';
   return name;
 }
 
@@ -79,18 +97,54 @@ function getToolOneLiner(block: MessageContentBlock & { type: 'tool_use' }): str
       detail = filePath ? extractFilename(filePath) : '';
       break;
     case 'Bash': {
-      const cmd = (inp?.command || inp?.cmd || '') as string;
+      const cmd = getStringValue(inp?.command) || getStringValue(inp?.cmd);
       detail = cmd ? (cmd.length > 60 ? cmd.slice(0, 57) + '...' : cmd) : '';
       break;
     }
     case 'Search': {
-      const pattern = (inp?.pattern || inp?.query || inp?.glob || '') as string;
+      const pattern = getStringValue(inp?.pattern) || getStringValue(inp?.query) || getStringValue(inp?.glob);
       detail = pattern ? `"${pattern.length > 50 ? pattern.slice(0, 47) + '...' : pattern}"` : '';
       break;
     }
     case 'Skill': {
-      const skillName = (inp?.skill || inp?.name || inp?.skill_name || '') as string;
+      const skillName = getStringValue(inp?.skill) || getStringValue(inp?.name) || getStringValue(inp?.skill_name);
       detail = skillName ? `/${skillName}` : '';
+      break;
+    }
+    case 'Agent': {
+      const agentType = getStringValue(inp?.subagent_type);
+      const desc = getStringValue(inp?.description);
+      if (agentType && desc) {
+        detail = `${agentType} · ${desc.length > 40 ? desc.slice(0, 37) + '...' : desc}`;
+      } else if (agentType) {
+        detail = agentType;
+      } else if (desc) {
+        detail = desc.length > 50 ? desc.slice(0, 47) + '...' : desc;
+      }
+      break;
+    }
+    case 'Web': {
+      const url = getStringValue(inp?.url);
+      if (url) {
+        try {
+          detail = new URL(url).hostname;
+        } catch {
+          detail = url.length > 50 ? url.slice(0, 47) + '...' : url;
+        }
+      }
+      break;
+    }
+    case 'Todo': {
+      const todos = Array.isArray(inp?.todos) ? inp.todos : [];
+      if (todos.length > 0) {
+        const first = getStringValue((todos[0] as Record<string, unknown> | undefined)?.content);
+        detail = `${todos.length} items${first ? ` · ${first.length > 30 ? first.slice(0, 27) + '...' : first}` : ''}`;
+      }
+      break;
+    }
+    case 'Ask': {
+      const question = getStringValue(inp?.question) || getStringValue(inp?.text);
+      detail = question ? (question.length > 50 ? question.slice(0, 47) + '...' : question) : '';
       break;
     }
     default:

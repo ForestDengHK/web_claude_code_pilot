@@ -5,7 +5,8 @@ import Link from 'next/link';
 import type { Message, MessagesResponse, ChatSession } from '@/types';
 import { ChatView } from '@/components/chat/ChatView';
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Loading02Icon, PencilEdit01Icon, Download04Icon } from "@hugeicons/core-free-icons";
+import { Loading02Icon, PencilEdit01Icon } from "@hugeicons/core-free-icons";
+import { DownloadMenu } from '@/components/chat/DownloadMenu';
 import { Input } from '@/components/ui/input';
 import { usePanel } from '@/hooks/usePanel';
 
@@ -199,13 +200,21 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
               >
                 <HugeiconsIcon icon={PencilEdit01Icon} className="h-3 w-3 text-muted-foreground" />
               </button>
-              <button
-                onClick={() => window.open(`/api/chat/sessions/${id}/export`)}
-                className="md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0 p-0.5 rounded hover:bg-muted"
-                title="Export as Markdown"
-              >
-                <HugeiconsIcon icon={Download04Icon} className="h-3 w-3 text-muted-foreground" />
-              </button>
+              <div className="md:opacity-0 md:group-hover:opacity-100 transition-opacity shrink-0">
+                <DownloadMenu
+                  markdown=""
+                  filenameBase={(sessionTitle || 'chat-export')
+                    .replace(/[/\\?%*:|"<>]/g, '')
+                    .replace(/\s+/g, '-')
+                    .slice(0, 80) || 'chat-export'}
+                  menuPlacement="bottom"
+                  fetchMarkdown={async () => {
+                    const res = await fetch(`/api/chat/sessions/${id}/export`);
+                    if (!res.ok) throw new Error('Failed to fetch session markdown');
+                    return res.text();
+                  }}
+                />
+              </div>
             </div>
           )}
         </div>
