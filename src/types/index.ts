@@ -160,6 +160,7 @@ export interface TokenUsage {
   cache_creation_input_tokens?: number;
   cost_usd?: number;
   model?: string;
+  effort?: string; // effort level used for this response (low/medium/high/max)
 }
 
 // ==========================================
@@ -493,4 +494,5 @@ export interface ClaudeStreamOptions {
   toolTimeoutSeconds?: number;
   skipPermissions?: boolean; // Per-session override for dangerously_skip_permissions
   onQueryCreated?: (query: unknown) => void; // Callback to register SDK Query for interrupt support
+  effort?: string; // Effort level for Claude models (low/medium/high/max)
 }

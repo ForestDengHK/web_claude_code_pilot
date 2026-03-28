@@ -13,6 +13,8 @@ interface CachedModel {
   value: string;
   displayName: string;
   description: string;
+  supportsEffort?: boolean;
+  supportedEffortLevels?: string[];
 }
 
 // Cache models to avoid spawning a CLI process on every request
@@ -137,6 +139,8 @@ export async function GET() {
         value: m.value,
         displayName: m.displayName,
         description: m.description,
+        supportsEffort: m.supportsEffort,
+        supportedEffortLevels: m.supportedEffortLevels,
       }));
       cachedAt = Date.now();
       return Response.json({ models: cachedModels });

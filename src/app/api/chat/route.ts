@@ -22,8 +22,8 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
-    const body: SendMessageRequest & { files?: FileAttachment[]; toolTimeout?: number } = await request.json();
-    const { session_id, content, prompt, model, mode, files, toolTimeout } = body;
+    const body: SendMessageRequest & { files?: FileAttachment[]; toolTimeout?: number; effort?: string } = await request.json();
+    const { session_id, content, prompt, model, mode, files, toolTimeout, effort } = body;
 
     if (!session_id || !content) {
       return new Response(JSON.stringify({ error: 'session_id and content are required' }), {
@@ -187,6 +187,7 @@ export async function POST(request: NextRequest) {
       toolTimeoutSeconds: toolTimeout || 120,
       skipPermissions: session.skip_permissions === 1,
       onQueryCreated: (q) => registerQuery(session_id, q as Query),
+      effort,
     });
 
     // Tee the stream: one for client, one for collecting the response

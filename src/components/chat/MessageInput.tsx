@@ -79,6 +79,12 @@ interface CodexModelInfo {
   defaultEffort?: string;
 }
 
+/** Effort info for Claude models (from SDK ModelInfo) */
+interface ClaudeModelEffortInfo {
+  supportsEffort: boolean;
+  supportedEffortLevels: string[];
+}
+
 interface PopoverItem {
   label: string;
   value: string;
@@ -487,6 +493,7 @@ export function MessageInput({
   const [inputValue, setInputValue] = useState('');
   const [dynamicModels, setDynamicModels] = useState<Array<{ value: string; label: string; group?: 'claude' | 'codex' }> | null>(null);
   const [codexModelInfo, setCodexModelInfo] = useState<Map<string, CodexModelInfo>>(new Map());
+  const [claudeEffortInfo, setClaudeEffortInfo] = useState<Map<string, ClaudeModelEffortInfo>>(new Map());
   const skillsCacheRef = useRef<Map<string, string>>(new Map());
   /** Cache of Codex skill metadata (name → path), populated from /api/codex/skills */
   const codexSkillsCacheRef = useRef<Map<string, string>>(new Map());
@@ -525,6 +532,18 @@ export function MessageInput({
       const allModels = [...claudeModels, ...codexModels];
       setDynamicModels(allModels);
 
+      // Build effort info map for Claude models
+      const claudeEffortMap = new Map<string, ClaudeModelEffortInfo>();
+      for (const m of claudeData.models || []) {
+        if (m.supportsEffort && m.supportedEffortLevels?.length > 1) {
+          claudeEffortMap.set(m.value, {
+            supportsEffort: true,
+            supportedEffortLevels: m.supportedEffortLevels,
+          });
+        }
+      }
+      setClaudeEffortInfo(claudeEffortMap);
+
       // Build effort info map for Codex models
       const infoMap = new Map<string, CodexModelInfo>();
       for (const m of codexData.models || []) {
@@ -548,10 +567,14 @@ export function MessageInput({
           // Auto-set backend based on model group
           const newBackend = preferred.group === 'codex' ? 'codex' : 'claude';
           if (newBackend !== backend) onBackendChange?.(newBackend);
-          // Auto-set default effort for Codex
+          // Auto-set default effort
           if (preferred.group === 'codex') {
             const modelData = (codexData.models || []).find((dm: { value: string }) => dm.value === preferred.value);
             if (modelData?.defaultEffort && !effort) onEffortChange?.(modelData.defaultEffort);
+          } else if (!effort) {
+            // Claude: set default effort if model supports it
+            const cEffort = claudeEffortMap.get(preferred.value);
+            if (cEffort?.supportsEffort) onEffortChange?.('high');
           }
         }
       }
@@ -560,6 +583,17 @@ export function MessageInput({
   }, []);
 
   const MODEL_OPTIONS = dynamicModels || FALLBACK_MODEL_OPTIONS;
+
+  // Auto-set default effort when Claude effort info loads for the current model
+  useEffect(() => {
+    if (!effort && modelName && claudeEffortInfo.size > 0) {
+      const info = claudeEffortInfo.get(modelName);
+      if (info?.supportsEffort) {
+        onEffortChange?.('high');
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claudeEffortInfo, modelName]);
 
   // Toggle per-session skip permissions
   const toggleSkipPermissions = useCallback(async () => {
@@ -993,21 +1027,39 @@ export function MessageInput({
   const currentModelOption = MODEL_OPTIONS.find((m) => m.value === currentModelValue) || MODEL_OPTIONS[0];
   const currentMode = MODE_OPTIONS.find((m) => m.value === mode) || MODE_OPTIONS[0];
 
-  // Reasoning effort for current Codex model (dynamic from API, not hardcoded)
-  const currentModelEfforts = codexModelInfo.get(currentModelValue)?.reasoningEfforts;
-  const currentModelInfo = codexModelInfo.get(currentModelValue);
+  // Reasoning effort — unified for both Claude and Codex models
+  const codexInfo = codexModelInfo.get(currentModelValue);
+  const claudeEffort = claudeEffortInfo.get(currentModelValue);
+
+  // Build unified effort options: { value, label }[]
+  const currentModelEfforts = (() => {
+    if (codexInfo?.reasoningEfforts && codexInfo.reasoningEfforts.length > 1) {
+      return codexInfo.reasoningEfforts; // Codex: already has value+label
+    }
+    if (claudeEffort?.supportsEffort && claudeEffort.supportedEffortLevels.length > 1) {
+      return claudeEffort.supportedEffortLevels.map(level => ({
+        value: level,
+        label: level.charAt(0).toUpperCase() + level.slice(1),
+      }));
+    }
+    return undefined;
+  })();
+
+  // Default effort: Codex uses model-specific default, Claude defaults to 'high'
+  const defaultEffort = codexInfo?.defaultEffort || (claudeEffort?.supportsEffort ? 'high' : undefined);
+
   // Validate effort: if stored effort isn't in model's supported list, fall back to default
   const supportedEffortValues = currentModelEfforts?.map(e => e.value) || [];
-  const rawEffort = effort || currentModelInfo?.defaultEffort;
+  const rawEffort = effort || defaultEffort;
   const currentEffort = rawEffort && supportedEffortValues.length > 0 && !supportedEffortValues.includes(rawEffort)
-    ? currentModelInfo?.defaultEffort || supportedEffortValues[0]
+    ? defaultEffort || supportedEffortValues[0]
     : rawEffort;
 
   /** Short effort label for the toolbar button (e.g. "Med", "Hi", "XHi") */
   const effortShortLabel = (val?: string) => {
     if (!val) return '';
     const map: Record<string, string> = {
-      none: 'No', minimal: 'Min', low: 'Lo', medium: 'Med', high: 'Hi', xhigh: 'XHi',
+      none: 'No', minimal: 'Min', low: 'Lo', medium: 'Med', high: 'Hi', xhigh: 'XHi', max: 'Max',
     };
     return map[val] || val.slice(0, 3);
   };
@@ -1256,8 +1308,14 @@ export function MessageInput({
                               onClick={() => {
                                 onModelChange?.(opt.value);
                                 if (backend !== 'claude') onBackendChange?.('claude');
-                                onEffortChange?.('');  // clear effort when switching to Claude
-                                setModelMenuOpen(false);  // Claude has no effort — close immediately
+                                // Set default effort for Claude model, or clear if not supported
+                                const cEffort = claudeEffortInfo.get(opt.value);
+                                if (cEffort?.supportsEffort) {
+                                  onEffortChange?.('high'); // Claude default
+                                } else {
+                                  onEffortChange?.('');
+                                  setModelMenuOpen(false);
+                                }
                               }}
                             >
                               <span className="font-mono text-[11px]">{opt.label}</span>

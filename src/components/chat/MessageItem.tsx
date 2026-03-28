@@ -213,10 +213,15 @@ function TokenUsageDisplay({ usage }: { usage: TokenUsage }) {
   const costStr = usage.cost_usd !== undefined && usage.cost_usd !== null
     ? ` · $${usage.cost_usd.toFixed(4)}`
     : '';
+  const effortLabel = usage.effort
+    ? { low: 'Lo', medium: 'Med', high: 'Hi', max: 'Max' }[usage.effort] ?? usage.effort
+    : null;
 
   return (
     <span className="text-xs text-muted-foreground/50">
-      {usage.model && <>{usage.model} · </>}
+      {usage.model && <>{usage.model}</>}
+      {effortLabel && <span className="ml-1 px-1 rounded bg-muted/60 font-mono">{effortLabel}</span>}
+      {(usage.model || effortLabel) && <> · </>}
       {totalTokens.toLocaleString()} tokens{costStr}
     </span>
   );

@@ -707,7 +707,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             mode,
             model: currentModel,
             ...(files && files.length > 0 ? { files } : {}),
-            ...(currentBackend === 'codex' ? { effort: currentEffort || 'high' } : {}),
+            ...(currentEffort ? { effort: currentEffort } : {}),
             ...(codexSkills && codexSkills.length > 0 ? { codexSkills } : {}),
           }),
           signal: controller.signal,
@@ -942,7 +942,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         }
       }
     },
-    [sessionId, isStreaming, setStreamingSessionId, setPendingApprovalSessionId, mode, currentModel, stopRecovery, startRecovery, currentBackend]
+    [sessionId, isStreaming, setStreamingSessionId, setPendingApprovalSessionId, mode, currentModel, stopRecovery, startRecovery, currentBackend, currentEffort]
   );
 
   // Keep sendMessageRef in sync so timeout auto-retry can call it

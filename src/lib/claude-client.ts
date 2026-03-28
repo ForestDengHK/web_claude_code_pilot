@@ -333,6 +333,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
     toolTimeoutSeconds = 0,
     skipPermissions: skipPermissionsOption,
     onQueryCreated,
+    effort,
   } = options;
 
   let heartbeatInterval: ReturnType<typeof setInterval>;
@@ -478,6 +479,10 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         if (model) {
           queryOptions.model = model;
+        }
+
+        if (effort && ['low', 'medium', 'high', 'max'].includes(effort)) {
+          queryOptions.effort = effort as 'low' | 'medium' | 'high' | 'max';
         }
 
         if (systemPrompt) {
@@ -860,6 +865,8 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
               gotResult = true;
               const resultMsg = message as SDKResultMessage;
               tokenUsage = extractTokenUsage(resultMsg);
+              // Attach the effort level used for this response so the UI can display it
+              if (tokenUsage && effort) tokenUsage.effort = effort;
               const resultPayload: Record<string, unknown> = {
                 subtype: resultMsg.subtype,
                 is_error: resultMsg.is_error,
