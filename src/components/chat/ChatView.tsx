@@ -10,6 +10,7 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { Bookmark02Icon } from '@hugeicons/core-free-icons';
 import { usePanel } from '@/hooks/usePanel';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
+import { TTSProvider } from '@/contexts/TTSContext';
 
 interface ToolUseInfo {
   id: string;
@@ -1059,30 +1060,32 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           No bookmarked messages in this session.
         </div>
       )}
-      <MessageList
-        key={bookmarkFilterActive ? 'bookmarks' : 'all'}
-        messages={displayMessages}
-        streamingContent={streamingContent}
-        thinkingContent={streamingThinking}
-        isStreaming={isStreaming}
-        toolUses={toolUses}
-        toolResults={toolResults}
-        streamingToolOutput={streamingToolOutput}
-        statusText={statusText}
-        pendingPermission={pendingPermission}
-        onPermissionResponse={handlePermissionResponse}
-        permissionResolved={permissionResolved}
-        pendingInputRequest={pendingInputRequest}
-        onInputResponse={handleInputResponse}
-        inputRequestResolved={inputRequestResolved}
-        onForceStop={() => stopStreaming(true)}
-        hasMore={hasMore}
-        loadingMore={loadingMore}
-        onLoadMore={loadEarlierMessages}
-        highlightMessageIds={highlightMessageIds}
-        activeMessageId={activeMessageId}
-        searchQuery={searchQuery}
-      />
+      <TTSProvider>
+        <MessageList
+          key={bookmarkFilterActive ? 'bookmarks' : 'all'}
+          messages={displayMessages}
+          streamingContent={streamingContent}
+          thinkingContent={streamingThinking}
+          isStreaming={isStreaming}
+          toolUses={toolUses}
+          toolResults={toolResults}
+          streamingToolOutput={streamingToolOutput}
+          statusText={statusText}
+          pendingPermission={pendingPermission}
+          onPermissionResponse={handlePermissionResponse}
+          permissionResolved={permissionResolved}
+          pendingInputRequest={pendingInputRequest}
+          onInputResponse={handleInputResponse}
+          inputRequestResolved={inputRequestResolved}
+          onForceStop={() => stopStreaming(true)}
+          hasMore={hasMore}
+          loadingMore={loadingMore}
+          onLoadMore={loadEarlierMessages}
+          highlightMessageIds={highlightMessageIds}
+          activeMessageId={activeMessageId}
+          searchQuery={searchQuery}
+        />
+      </TTSProvider>
       <MessageInput
         onSend={sendMessage}
         onCommand={handleCommand}

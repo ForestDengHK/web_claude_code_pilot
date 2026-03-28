@@ -12,6 +12,9 @@ import { CopyIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon } from 'lucide-reac
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Bookmark02Icon } from '@hugeicons/core-free-icons';
 import { FileAttachmentDisplay } from './FileAttachmentDisplay';
+import { TTSButton } from './TTSButton';
+import { useTTS } from '@/contexts/TTSContext';
+import { findTextRange, highlightRange, scrollToRange } from '@/lib/tts/highlight';
 
 interface MessageItemProps {
   message: Message;
@@ -339,6 +342,44 @@ export function MessageItem({ message, searchQuery, isLatestMessage }: MessageIt
     }
   }
 
+  // TTS highlight
+  const tts = useTTS();
+  const responseRef = useRef<HTMLDivElement>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
+
+  const isThisMessageActive = tts.activeMessageId === `msg-${message.id}`;
+
+  useEffect(() => {
+    // Cleanup previous highlight
+    cleanupRef.current?.();
+    cleanupRef.current = null;
+
+    if (!isThisMessageActive || !responseRef.current || tts.segments.length === 0) return;
+    if (tts.state !== 'playing' && tts.state !== 'paused') return;
+
+    // Find which segment is active based on currentTime
+    const activeSegment = tts.segments.find(
+      (seg, i) => tts.currentTime >= seg.start &&
+        (i === tts.segments.length - 1 || tts.currentTime < tts.segments[i + 1].start)
+    );
+    if (!activeSegment) return;
+
+    const range = findTextRange(responseRef.current, activeSegment.text);
+    if (!range) return;
+
+    cleanupRef.current = highlightRange(range, responseRef.current);
+
+    // Auto-scroll
+    const scrollContainer = responseRef.current.closest('[data-scroll-container]') ||
+      responseRef.current.closest('[data-test-id="virtuoso-scroller"]');
+    scrollToRange(range, scrollContainer);
+
+    return () => {
+      cleanupRef.current?.();
+      cleanupRef.current = null;
+    };
+  }, [isThisMessageActive, tts.currentTime, tts.segments, tts.state]);
+
   const timestamp = new Date(message.created_at).toLocaleTimeString([], {
     hour: '2-digit',
     minute: '2-digit',
@@ -410,7 +451,9 @@ export function MessageItem({ message, searchQuery, isLatestMessage }: MessageIt
               )}
             </div>
           ) : (
-            <MessageResponse>{displayText}</MessageResponse>
+            <div ref={responseRef}>
+              <MessageResponse>{displayText}</MessageResponse>
+            </div>
           )
         )}
       </MessageContent>
@@ -435,6 +478,9 @@ export function MessageItem({ message, searchQuery, isLatestMessage }: MessageIt
               fill={isBookmarked ? 'currentColor' : 'none'}
             />
           </button>
+        )}
+        {!isUser && displayText && (
+          <TTSButton messageId={`msg-${message.id}`} text={displayText} />
         )}
         {displayText && <CopyButton text={displayText} />}
       </div>
