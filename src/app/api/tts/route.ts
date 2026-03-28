@@ -12,16 +12,21 @@ const MAX_TEXT_LENGTH = 20000;
 // Target chunk size in characters (~2-4 seconds of audio each)
 const CHUNK_TARGET = 500;
 
-/** Detect if text is primarily CJK */
-function isCJK(text: string): boolean {
-  const cjkChars = text.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g);
-  return (cjkChars?.length ?? 0) / text.length > 0.3;
-}
-
+/**
+ * Pick the best voice based on text language mix.
+ *
+ * Three scenarios:
+ * - Pure English (< 5% CJK)  → AndrewMultilingual: warm, confident, natural English
+ * - Pure Chinese (> 80% CJK) → YunyangNeural: professional, clear, best native Chinese
+ * - Mixed (5-80% CJK)        → AndrewMultilingual: handles code-switching well,
+ *                               reads both English and Chinese naturally
+ */
 function pickVoice(text: string): string {
-  return isCJK(text)
-    ? 'zh-CN-XiaoxiaoNeural'
-    : 'en-US-AndrewMultilingualNeural';
+  const cjkChars = text.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g);
+  const ratio = (cjkChars?.length ?? 0) / text.length;
+
+  if (ratio > 0.8) return 'zh-CN-YunyangNeural';     // pure Chinese
+  return 'en-US-AndrewMultilingualNeural';             // English or mixed
 }
 
 /**
