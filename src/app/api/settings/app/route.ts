@@ -16,6 +16,9 @@ const ALLOWED_KEYS = [
   'stt_endpoint',
   'stt_model',
   'stt_deployment',
+  'tts_voice_en',
+  'tts_voice_zh',
+  'tts_voice_mixed',
 ];
 
 export async function GET() {

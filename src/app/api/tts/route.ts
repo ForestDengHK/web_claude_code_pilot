@@ -6,27 +6,29 @@ import { join } from 'path';
 import { randomBytes } from 'crypto';
 import { stripMarkdown } from '@/lib/tts/strip-markdown';
 import { parseSRT } from '@/lib/tts/parse-srt';
+import { getSetting } from '@/lib/db';
 import type { TTSChunk, TTSResponse } from '@/lib/tts/types';
 
 const MAX_TEXT_LENGTH = 20000;
 // Target chunk size in characters (~2-4 seconds of audio each)
 const CHUNK_TARGET = 500;
 
+// Default voices — can be overridden via Settings (tts_voice_en, tts_voice_zh, tts_voice_mixed)
+const DEFAULT_VOICE_EN = 'en-US-BrianMultilingualNeural';    // Approachable, casual, sincere
+const DEFAULT_VOICE_ZH = 'zh-CN-XiaoxiaoNeural';             // Warm, natural, versatile
+const DEFAULT_VOICE_MIXED = 'en-US-BrianMultilingualNeural'; // Multilingual handles code-switching
+
 /**
  * Pick the best voice based on text language mix.
- *
- * Three scenarios:
- * - Pure English (< 5% CJK)  → AndrewMultilingual: warm, confident, natural English
- * - Pure Chinese (> 80% CJK) → YunyangNeural: professional, clear, best native Chinese
- * - Mixed (5-80% CJK)        → AndrewMultilingual: handles code-switching well,
- *                               reads both English and Chinese naturally
+ * Reads user-configured voices from settings, falls back to defaults.
  */
 function pickVoice(text: string): string {
   const cjkChars = text.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g);
   const ratio = (cjkChars?.length ?? 0) / text.length;
 
-  if (ratio > 0.8) return 'zh-CN-YunyangNeural';     // pure Chinese
-  return 'en-US-AndrewMultilingualNeural';             // English or mixed
+  if (ratio > 0.8) return getSetting('tts_voice_zh') || DEFAULT_VOICE_ZH;
+  if (ratio > 0.05) return getSetting('tts_voice_mixed') || DEFAULT_VOICE_MIXED;
+  return getSetting('tts_voice_en') || DEFAULT_VOICE_EN;
 }
 
 /**
