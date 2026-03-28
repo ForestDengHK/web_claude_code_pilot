@@ -32,12 +32,13 @@ This fork diverges from the original CodePilot with the following major changes:
 - **In-chat search** -- Search messages within a conversation with highlighted navigation.
 - **Image lightbox** -- Full-screen image viewer with multi-image navigation.
 - **Document preview** -- Preview files in the right panel without leaving chat.
-- **Git clone** -- Clone repositories directly from the folder picker.
+- **Git clone** -- Clone repositories directly from the folder picker. Configurable clone base directory and default git host (for `user/repo` shorthand) in General Settings.
 - **Task tracking** -- View tasks created by Claude during coding sessions.
 - **Connection status indicator** -- Live server health check in the UI.
 - **Clipboard polyfill** -- Clipboard API workaround for non-HTTPS contexts (mobile via Tailscale).
 - **Dual backend: Claude Code + Codex CLI** -- Switch between Claude Code (Agent SDK) and Codex CLI backends per session. Models and skills are fetched from both backends. Context is automatically bridged when switching mid-conversation (incremental, no LLM cost).
 - **Voice input (STT)** -- Mic button in the chat input bar for speech-to-text. Configurable transcription provider in Voice Input settings.
+- **Read aloud (TTS)** -- Each assistant message has a speaker button that reads the response aloud using `edge-tts` (Microsoft Edge TTS, free, no API key required). Text is highlighted in sync with speech. Chunked parallel synthesis keeps latency low. Client-side cache makes replaying instant. Supports Play/Pause/Resume/Stop, tap-to-seek (click any text to jump to that segment), and configurable voices for English, Chinese, and mixed-language content.
 - **Virtualized scrolling** -- Message list uses react-virtuoso for smooth performance in long conversations.
 - **Draft checkpointing** -- In-progress streaming messages are saved to the database, enabling recovery if the browser tab is suspended or reconnected.
 - **Scroll-to-top button** -- Quickly jump to the top of a conversation.
@@ -49,7 +50,7 @@ This fork diverges from the original CodePilot with the following major changes:
 
 - **Conversational coding** -- Stream responses from Claude in real time with full Markdown rendering, syntax-highlighted code blocks, and tool-call visualization.
 - **Session management** -- Create, rename, archive, and resume chat sessions. Sessions are grouped by project in the sidebar with collapsible/expandable groups. Import conversations from the Claude Code CLI.
-- **Project-aware context** -- Pick a working directory per session. The right panel shows a live file tree with expand/collapse all, file previews, downloads, and copy-to-clipboard. Git clone support from the folder picker.
+- **Project-aware context** -- Pick a working directory per session. The right panel shows a live file tree with expand/collapse all, file previews, downloads, and copy-to-clipboard. Git clone from the folder picker with configurable clone directory and default git host.
 - **In-chat search** -- Search through messages within a conversation with highlighted matches and navigation.
 - **Image lightbox** -- Click images in chat to open a full-screen viewer with navigation between multiple images.
 - **Document preview** -- Preview files directly in the right panel without leaving the chat.
@@ -71,6 +72,7 @@ This fork diverges from the original CodePilot with the following major changes:
 - **Task tracking** -- View and manage tasks created by Claude during coding sessions.
 - **IM Bridge** -- Connect external IM platforms (starting with Telegram) to Web Claude Code Pilot. Chat with Claude from your phone without opening a browser. Features include: session binding, project switching via interactive menus, 11 slash commands with inline pickers, permission forwarding via inline buttons, markdown-to-HTML rendering, streaming previews, image attachments, chat clearing (deletes messages from both sides), and rate limiting. Managed from the Bridge settings page. See [Bridge Architecture](docs/bridge-architecture.md).
 - **Voice input** -- Mic button in the chat input bar for speech-to-text transcription. Configurable provider (e.g. OpenAI Whisper) in Voice Input settings.
+- **Read aloud (TTS)** -- Speaker button on each assistant message reads the response aloud via `edge-tts` (Microsoft Edge TTS, free, no API key). Text is highlighted in sync with speech as it plays. Features: Play/Pause/Resume/Stop, tap-to-seek (click any text to jump to that segment), client-side cache for instant replay, and configurable voices for English, Chinese, and mixed content (set in General Settings).
 - **Mobile-friendly** -- Responsive layout with bottom navigation, touch-friendly controls, and panel overlays for phone-sized screens. Clipboard polyfill for non-HTTPS contexts (e.g. Tailscale HTTP access).
 
 ---
@@ -85,6 +87,7 @@ This fork diverges from the original CodePilot with the following major changes:
 | **npm** | 9+ (ships with Node 20) | Required |
 | **Claude Code CLI** | Latest (`claude --version`) | Required for Claude backend; run `claude login` to authenticate |
 | **Codex CLI** | Latest (`codex --version`) | Optional; required only for Codex backend |
+| **edge-tts** | Latest (`pip install edge-tts`) | Optional; required only for Read Aloud (TTS) feature |
 
 ---
 
