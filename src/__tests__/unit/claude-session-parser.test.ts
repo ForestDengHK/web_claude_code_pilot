@@ -136,18 +136,32 @@ describe('claude-session-parser', () => {
   });
 
   describe('decodeProjectPath', () => {
-    it('should decode a simple project path', () => {
+    it('should decode a simple Unix project path', () => {
       assert.equal(parser.decodeProjectPath('-root-myproject'), '/root/myproject');
     });
 
-    it('should decode a deeper project path', () => {
+    it('should decode a deeper Unix project path', () => {
       assert.equal(
         parser.decodeProjectPath('-Users-john-projects-myapp'),
         '/Users/john/projects/myapp',
       );
     });
 
-    it('should return as-is if no leading dash', () => {
+    it('should decode a Windows-style project path (drive letter)', () => {
+      assert.equal(
+        parser.decodeProjectPath('C-Users-foo-projects-myapp'),
+        'C:\\Users\\foo\\projects\\myapp',
+      );
+    });
+
+    it('should decode a lowercase Windows drive letter', () => {
+      assert.equal(
+        parser.decodeProjectPath('d-work-repo'),
+        'D:\\work\\repo',
+      );
+    });
+
+    it('should return as-is if no leading dash and no drive letter pattern', () => {
       assert.equal(parser.decodeProjectPath('some-dir'), 'some-dir');
     });
   });

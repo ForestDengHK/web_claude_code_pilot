@@ -81,7 +81,7 @@ export function FolderPicker({ open, onOpenChange, onSelect, initialPath }: Fold
 
   // Clone tab state
   const [cloneUrl, setCloneUrl] = useState('');
-  const [cloneBaseDir, setCloneBaseDir] = useState('/Users/party/working');
+  const [cloneBaseDir, setCloneBaseDir] = useState('');
   const [defaultGitHost, setDefaultGitHost] = useState(DEFAULT_GIT_HOST);
   const [cloning, setCloning] = useState(false);
   const [cloneError, setCloneError] = useState('');
@@ -420,7 +420,7 @@ export function FolderPicker({ open, onOpenChange, onSelect, initialPath }: Fold
               />
               {repoInfo && (
                 <p className="text-xs font-mono text-muted-foreground truncate px-1">
-                  Target: {cloneBaseDir}/{repoInfo.name}
+                  Target: {cloneBaseDir || '~/working'}/{repoInfo.name}
                 </p>
               )}
             </div>

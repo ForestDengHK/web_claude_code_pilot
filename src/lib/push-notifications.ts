@@ -1,10 +1,11 @@
 import webpush from 'web-push';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { getAllPushSubscriptions, deletePushSubscription } from './db';
 
 const VAPID_KEYS_PATH = path.join(
-  process.env.HOME || process.env.USERPROFILE || '~',
+  os.homedir(),
   '.codepilot',
   'vapid-keys.json',
 );

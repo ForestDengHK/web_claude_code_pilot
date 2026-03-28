@@ -355,7 +355,7 @@ export function GeneralSection() {
             <Input
               value={cloneBaseDir}
               onChange={(e) => setCloneBaseDir(e.target.value)}
-              placeholder="/Users/party/working"
+              placeholder="~/working"
               className="font-mono text-sm"
             />
             <p className="text-[11px] text-muted-foreground">

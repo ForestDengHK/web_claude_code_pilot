@@ -147,8 +147,9 @@ export function getClaudeProjectsDir(): string {
 /**
  * Decode a Claude Code project directory name back to a filesystem path.
  *
- * Claude Code encodes absolute paths by replacing each '/' with '-'.
- * e.g., "/root/clawd" → "-root-clawd"
+ * Claude Code encodes absolute paths by replacing path separators with '-'.
+ * Unix:    "/root/clawd"    → "-root-clawd"
+ * Windows: "C:\Users\foo"   → "C-Users-foo"
  *
  * NOTE: This is lossy — directory names containing hyphens are ambiguous.
  * e.g., "-root-my-project" could be "/root/my-project" or "/root/my/project".
@@ -156,10 +157,17 @@ export function getClaudeProjectsDir(): string {
  * this function is only used as a fallback for display purposes.
  */
 export function decodeProjectPath(encodedName: string): string {
-  if (!encodedName.startsWith('-')) {
-    return encodedName;
+  // Windows-style: starts with a drive letter followed by '-', e.g., "C-Users-foo"
+  if (/^[A-Za-z]-/.test(encodedName)) {
+    const drive = encodedName[0].toUpperCase();
+    const rest = encodedName.slice(1).replace(/-/g, '\\');
+    return `${drive}:${rest}`;
   }
-  return encodedName.replace(/^-/, '/').replace(/-/g, '/');
+  // Unix-style: starts with '-', e.g., "-root-clawd"
+  if (encodedName.startsWith('-')) {
+    return encodedName.replace(/^-/, '/').replace(/-/g, '/');
+  }
+  return encodedName;
 }
 
 /**

@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { execFile } from 'child_process';
 import { stat } from 'fs/promises';
 import path from 'path';
+import os from 'os';
 import { getSetting } from '@/lib/db';
 
-const DEFAULT_BASE_DIR = '/Users/party/working';
+const DEFAULT_BASE_DIR = path.join(os.homedir(), 'working');
 const DEFAULT_GIT_HOST = 'https://github.com';
 const CLONE_TIMEOUT_MS = 120_000;
 

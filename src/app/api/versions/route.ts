@@ -5,6 +5,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 
 const execFileAsync = promisify(execFile);
+const isMac = process.platform === "darwin";
 
 interface ToolVersionInfo {
   name: string;
@@ -35,6 +36,7 @@ async function getLatestNpmVersion(pkg: string): Promise<string | null> {
 }
 
 async function getLatestBrewCaskVersion(cask: string): Promise<string | null> {
+  if (!isMac) return null;
   try {
     const { stdout } = await execFileAsync("brew", ["info", "--cask", "--json=v2", cask], {
       timeout: 15000,
@@ -44,6 +46,16 @@ async function getLatestBrewCaskVersion(cask: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Get the latest Codex CLI version — try brew cask on macOS, fallback to npm.
+ */
+async function getLatestCodexVersion(): Promise<string | null> {
+  const brewVersion = await getLatestBrewCaskVersion("codex");
+  if (brewVersion) return brewVersion;
+  // Fallback: check npm registry (works cross-platform)
+  return getLatestNpmVersion("@openai/codex");
 }
 
 function getLocalSdkVersion(): string {
@@ -67,7 +79,7 @@ export async function GET() {
       getVersion("codex", ["--version"]),
       Promise.resolve(getLocalSdkVersion()),
       getLatestNpmVersion("@anthropic-ai/claude-code"),
-      getLatestBrewCaskVersion("codex"),
+      getLatestCodexVersion(),
       getLatestNpmVersion("@anthropic-ai/claude-agent-sdk"),
     ]);
 
@@ -103,7 +115,10 @@ export async function POST(request: NextRequest) {
 
   const commands: Record<string, { cmd: string; args: string[] }> = {
     "Claude Code CLI": { cmd: "npm", args: ["install", "-g", "@anthropic-ai/claude-code@latest"] },
-    "Codex CLI": { cmd: "brew", args: ["upgrade", "--cask", "codex"] },
+    // macOS: prefer brew cask; Linux/Windows: use npm global install
+    "Codex CLI": isMac
+      ? { cmd: "brew", args: ["upgrade", "--cask", "codex"] }
+      : { cmd: "npm", args: ["install", "-g", "@openai/codex@latest"] },
     "Claude Agent SDK": { cmd: "npm", args: ["install", "@anthropic-ai/claude-agent-sdk@latest"] },
   };
 
