@@ -29,6 +29,18 @@ import type { FilePreview as FilePreviewType } from "@/types";
 
 const streamdownPlugins = { cjk, code, math, mermaid };
 
+/**
+ * Custom paragraph component for DocPreview.
+ * Streamdown wraps images in <div> (for download button / hover overlay),
+ * but MarkdownParagraph only unwraps the <p> when the sole child is <img>.
+ * README files often have badges like [![img](url)](link) where the direct
+ * child is <a>, not <img>, so the <div> ends up inside <p> → hydration error.
+ * Using <div> instead of <p> avoids the invalid nesting entirely.
+ */
+const docPreviewComponents = {
+  p: ({ node, ...rest }: Record<string, unknown>) => <div {...rest} />,
+};
+
 type ViewMode = "source" | "rendered";
 
 interface DocPreviewProps {
@@ -495,6 +507,7 @@ function RenderedView({
       <Streamdown
         className="size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:pl-6 [&_ol]:pl-6"
         plugins={streamdownPlugins}
+        components={docPreviewComponents}
       >
         {content}
       </Streamdown>
