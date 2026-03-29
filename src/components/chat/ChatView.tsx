@@ -11,6 +11,7 @@ import { Bookmark02Icon } from '@hugeicons/core-free-icons';
 import { usePanel } from '@/hooks/usePanel';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
 import { TTSProvider } from '@/contexts/TTSContext';
+import { formatCodexUsageMarkdown } from '@/lib/codex-usage';
 
 interface ToolUseInfo {
   id: string;
@@ -948,14 +949,14 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   // Keep sendMessageRef in sync so timeout auto-retry can call it
   sendMessageRef.current = sendMessage;
 
-  const handleCommand = useCallback((command: string) => {
+  const handleCommand = useCallback(async (command: string) => {
     switch (command) {
       case '/help': {
         const helpMessage: Message = {
           id: 'cmd-' + Date.now(),
           session_id: sessionId,
           role: 'assistant',
-          content: `## Available Commands\n\n### Instant Commands\n- **/help** — Show this help message\n- **/clear** — Clear conversation history\n- **/cost** — Show token usage statistics\n\n### Prompt Commands (shown as badge, add context then send)\n- **/compact** — Compress conversation context\n- **/doctor** — Diagnose project health\n- **/init** — Initialize CLAUDE.md for project\n- **/review** — Review code quality\n- **/terminal-setup** — Configure terminal settings\n- **/memory** — Edit project memory file\n\n### Custom Skills\nSkills from \`~/.claude/commands/\` and project \`.claude/commands/\` are also available via \`/\`.\n\n**Tips:**\n- Type \`/\` to browse commands and skills\n- Type \`@\` to mention files\n- Use Shift+Enter for new line\n- Select a project folder to enable file operations`,
+          content: `## Available Commands\n\n### Instant Commands\n- **/help** — Show this help message\n- **/clear** — Clear conversation history\n- **/cost** — Show token usage statistics for this session\n- **/usage** — Show account plan, Codex limits, and credits\n\n### Prompt Commands (shown as badge, add context then send)\n- **/compact** — Compress conversation context\n- **/doctor** — Diagnose project health\n- **/init** — Initialize CLAUDE.md for project\n- **/review** — Review code quality\n- **/terminal-setup** — Configure terminal settings\n- **/memory** — Edit project memory file\n\n### Custom Skills\nSkills from \`~/.claude/commands/\` and project \`.claude/commands/\` are also available via \`/\`.\n\n**Tips:**\n- Type \`/\` to browse commands and skills\n- Type \`@\` to mention files\n- Use Shift+Enter for new line\n- Select a project folder to enable file operations`,
           created_at: new Date().toISOString(),
           token_usage: null,
         };
@@ -1014,6 +1015,33 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           token_usage: null,
         };
         setMessages(prev => [...prev, costMessage]);
+        break;
+      }
+      case '/usage': {
+        let content = '## Account Usage\n\nUnable to load Codex usage data.';
+
+        try {
+          const response = await fetch('/api/codex/usage');
+          const data = await response.json();
+
+          if (!response.ok) {
+            content = `## Account Usage\n\nFailed to load Codex usage data.\n\n${data.error || 'Unknown error'}`;
+          } else {
+            content = formatCodexUsageMarkdown(data);
+          }
+        } catch (error) {
+          content = `## Account Usage\n\nFailed to load Codex usage data.\n\n${error instanceof Error ? error.message : 'Unknown error'}`;
+        }
+
+        const usageMessage: Message = {
+          id: 'cmd-' + Date.now(),
+          session_id: sessionId,
+          role: 'assistant',
+          content,
+          created_at: new Date().toISOString(),
+          token_usage: null,
+        };
+        setMessages(prev => [...prev, usageMessage]);
         break;
       }
       default:

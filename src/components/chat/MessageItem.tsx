@@ -213,19 +213,23 @@ function CopyButton({ text }: { text: string }) {
 
 function TokenUsageDisplay({ usage }: { usage: TokenUsage }) {
   const totalTokens = usage.input_tokens + usage.output_tokens;
+  const hasTokenMetrics = totalTokens > 0
+    || (usage.cache_read_input_tokens ?? 0) > 0
+    || (usage.cache_creation_input_tokens ?? 0) > 0
+    || usage.cost_usd !== undefined;
   const costStr = usage.cost_usd !== undefined && usage.cost_usd !== null
     ? ` · $${usage.cost_usd.toFixed(4)}`
     : '';
   const effortLabel = usage.effort
-    ? { low: 'Lo', medium: 'Med', high: 'Hi', max: 'Max' }[usage.effort] ?? usage.effort
+    ? { low: 'Lo', medium: 'Med', high: 'Hi', xhigh: 'XHi', max: 'Max' }[usage.effort] ?? usage.effort
     : null;
 
   return (
     <span className="text-xs text-muted-foreground/50">
       {usage.model && <>{usage.model}</>}
       {effortLabel && <span className="ml-1 px-1 rounded bg-muted/60 font-mono">{effortLabel}</span>}
-      {(usage.model || effortLabel) && <> · </>}
-      {totalTokens.toLocaleString()} tokens{costStr}
+      {hasTokenMetrics && (usage.model || effortLabel) && <> · </>}
+      {hasTokenMetrics && <>{totalTokens.toLocaleString()} tokens{costStr}</>}
     </span>
   );
 }
@@ -506,34 +510,41 @@ export function MessageItem({ message, searchQuery, isLatestMessage }: MessageIt
         )}
       </MessageContent>
 
-      {/* Footer with copy, timestamp and token usage */}
-      <div className={`flex items-center gap-2 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200 ${isUser ? 'justify-end' : ''}`}>
-        {!isUser && <span className="text-xs text-muted-foreground/50">{timestamp}</span>}
-        {!isUser && tokenUsage && <TokenUsageDisplay usage={tokenUsage} />}
+      {/* Footer with always-visible metadata and hover-visible actions */}
+      <div className={`flex items-center gap-2 ${isUser ? 'justify-end' : 'w-full justify-between'}`}>
         {!isUser && (
-          <button
-            onClick={handleBookmarkToggle}
-            className={`p-0.5 rounded transition-colors ${
-              isBookmarked
-                ? 'text-amber-500'
-                : 'text-muted-foreground/50 hover:text-muted-foreground'
-            }`}
-            title={isBookmarked ? 'Remove bookmark' : 'Bookmark this message'}
-          >
-            <HugeiconsIcon
-              icon={Bookmark02Icon}
-              size={14}
-              fill={isBookmarked ? 'currentColor' : 'none'}
-            />
-          </button>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="text-xs text-muted-foreground/50">{timestamp}</span>
+            {tokenUsage && <TokenUsageDisplay usage={tokenUsage} />}
+          </div>
         )}
-        {!isUser && displayText && (
-          <TTSButton messageId={`msg-${message.id}`} text={displayText} />
-        )}
-        {displayText && <CopyButton text={displayText} />}
-        {!isUser && displayText && (
-          <DownloadMenu markdown={displayText} filenameBase={filenameBase} />
-        )}
+
+        <div className={`flex items-center gap-2 ${!isUser ? 'md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200' : ''}`}>
+          {!isUser && (
+            <button
+              onClick={handleBookmarkToggle}
+              className={`p-0.5 rounded transition-colors ${
+                isBookmarked
+                  ? 'text-amber-500'
+                  : 'text-muted-foreground/50 hover:text-muted-foreground'
+              }`}
+              title={isBookmarked ? 'Remove bookmark' : 'Bookmark this message'}
+            >
+              <HugeiconsIcon
+                icon={Bookmark02Icon}
+                size={14}
+                fill={isBookmarked ? 'currentColor' : 'none'}
+              />
+            </button>
+          )}
+          {!isUser && displayText && (
+            <TTSButton messageId={`msg-${message.id}`} text={displayText} />
+          )}
+          {displayText && <CopyButton text={displayText} />}
+          {!isUser && displayText && (
+            <DownloadMenu markdown={displayText} filenameBase={filenameBase} />
+          )}
+        </div>
       </div>
     </AIMessage>
   );

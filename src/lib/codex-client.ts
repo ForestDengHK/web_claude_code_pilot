@@ -146,6 +146,9 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
     summary,
     skills,
   } = options;
+  const requestedEffort = effort || 'high';
+  const isMiniModel = model ? /mini/i.test(model) : false;
+  const resolvedEffort = isMiniModel && requestedEffort === 'xhigh' ? 'high' : requestedEffort;
 
   let heartbeatInterval: ReturnType<typeof setInterval>;
 
@@ -217,13 +220,7 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
           if (model) turnStartParams.model = model;
           // Always send reasoning effort to override ~/.codex/config.toml global default.
           // Schema field name is "effort" (NOT "modelReasoningEffort" — that was wrong).
-          {
-            const requestedEffort = effort || 'high';
-            const isMini = model && /mini/i.test(model);
-            // Mini models only support low/medium/high (not xhigh)
-            const validEffort = isMini && requestedEffort === 'xhigh' ? 'high' : requestedEffort;
-            turnStartParams.effort = validEffort;
-          }
+          turnStartParams.effort = resolvedEffort;
           // Reasoning summary: mini only supports 'detailed'; others default to 'concise'
           {
             const isMini = model && /mini/i.test(model);
@@ -243,7 +240,19 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
           // Message handler for all events during this turn
           messageHandler = (msg: JsonRpcMessage) => {
             try {
-              handleCodexMessage(msg, controller, codexProcess!, sessionId, threadId!, resolve, reject, abortController?.signal, turnCtx);
+              handleCodexMessage(
+                msg,
+                controller,
+                codexProcess!,
+                sessionId,
+                threadId!,
+                resolve,
+                reject,
+                model,
+                resolvedEffort,
+                abortController?.signal,
+                turnCtx,
+              );
             } catch (err) {
               reject(err);
             }
@@ -391,6 +400,8 @@ function handleCodexMessage(
   threadId: string,
   onTurnComplete: () => void,
   onError: (err: Error) => void,
+  model?: string,
+  effort?: string,
   abortSignal?: AbortSignal,
   turnCtx: { useNewReasoningProtocol: boolean } = { useNewReasoningProtocol: false },
 ): void {
@@ -541,14 +552,17 @@ function handleCodexMessage(
         }
 
         if (turn) {
-          // Extract token usage if available
+          // Codex sometimes omits usage entirely on turn/completed.
+          // Still persist model/effort so the footer can show them.
           const usage = turn.usage as Record<string, unknown> | undefined;
-          if (usage) {
+          if (usage || model || effort) {
             resultPayload.usage = {
-              input_tokens: usage.input_tokens ?? 0,
-              output_tokens: usage.output_tokens ?? 0,
-              cache_read_input_tokens: usage.cached_input_tokens ?? 0,
+              input_tokens: usage?.input_tokens ?? 0,
+              output_tokens: usage?.output_tokens ?? 0,
+              cache_read_input_tokens: usage?.cached_input_tokens ?? 0,
               cache_creation_input_tokens: 0,
+              ...(model ? { model } : {}),
+              ...(effort ? { effort } : {}),
             };
           }
         }

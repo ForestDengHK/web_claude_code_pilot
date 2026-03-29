@@ -17,6 +17,13 @@ import {
   Download04Icon,
 } from "@hugeicons/core-free-icons";
 import { cn } from '@/lib/utils';
+import {
+  extractFilename,
+  getFilePath,
+  getToolCategory,
+  getToolSummary,
+  isImagePath,
+} from '@/lib/tool-display';
 import { CodeBlock } from './CodeBlock';
 import { ImageLightbox } from './ImageLightbox';
 
@@ -31,77 +38,19 @@ interface ToolCallBlockProps {
   duration?: number;
 }
 
-// Classify tools by name
-function getToolCategory(name: string): 'read' | 'write' | 'bash' | 'search' | 'other' {
-  const lower = name.toLowerCase();
-  if (lower === 'read' || lower === 'readfile' || lower === 'read_file') return 'read';
-  if (lower === 'write' || lower === 'edit' || lower === 'writefile' || lower === 'write_file'
-    || lower === 'create_file' || lower === 'createfile'
-    || lower === 'notebookedit' || lower === 'notebook_edit') return 'write';
-  if (lower === 'bash' || lower === 'execute' || lower === 'run' || lower === 'shell'
-    || lower === 'execute_command') return 'bash';
-  if (lower === 'search' || lower === 'glob' || lower === 'grep'
-    || lower === 'find_files' || lower === 'search_files'
-    || lower === 'websearch' || lower === 'web_search') return 'search';
-  return 'other';
-}
-
 function getToolIcon(category: ReturnType<typeof getToolCategory>): IconSvgElement {
   switch (category) {
     case 'read': return File01Icon;
     case 'write': return FileEditIcon;
     case 'bash': return CommandLineIcon;
     case 'search': return Search01Icon;
+    case 'skill': return Wrench01Icon;
+    case 'agent': return Wrench01Icon;
+    case 'web': return Search01Icon;
+    case 'todo': return Wrench01Icon;
+    case 'ask': return Wrench01Icon;
     case 'other': return Wrench01Icon;
   }
-}
-
-function getToolSummary(name: string, input: unknown, category: ReturnType<typeof getToolCategory>): string {
-  const inp = input as Record<string, unknown> | undefined;
-  if (!inp) return name;
-
-  switch (category) {
-    case 'read': {
-      const path = (inp.file_path || inp.path || inp.filePath || '') as string;
-      return path ? extractFilename(path) : name;
-    }
-    case 'write': {
-      const path = (inp.file_path || inp.path || inp.filePath || '') as string;
-      return path ? extractFilename(path) : name;
-    }
-    case 'bash': {
-      const cmd = (inp.command || inp.cmd || '') as string;
-      if (cmd) {
-        const truncated = cmd.length > 80 ? cmd.slice(0, 77) + '...' : cmd;
-        return truncated;
-      }
-      return name;
-    }
-    case 'search': {
-      const pattern = (inp.pattern || inp.query || inp.glob || '') as string;
-      return pattern ? `"${pattern}"` : name;
-    }
-    default:
-      return name;
-  }
-}
-
-function extractFilename(path: string): string {
-  const parts = path.split('/');
-  return parts[parts.length - 1] || path;
-}
-
-function getFilePath(input: unknown): string {
-  const inp = input as Record<string, unknown> | undefined;
-  if (!inp) return '';
-  return (inp.file_path || inp.path || inp.filePath || '') as string;
-}
-
-const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.avif', '.bmp', '.ico'];
-
-function isImagePath(path: string): boolean {
-  const lower = path.toLowerCase();
-  return IMAGE_EXTENSIONS.some(ext => lower.endsWith(ext));
 }
 
 function ImageThumbnail({ filePath }: { filePath: string }) {

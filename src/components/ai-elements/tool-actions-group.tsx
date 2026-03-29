@@ -21,6 +21,16 @@ import {
 } from "@hugeicons/core-free-icons";
 import { ChevronRightIcon, CopyIcon, CheckIcon, XIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+  type ToolCategory,
+  extractFilename,
+  getFilePath,
+  getToolCategory,
+  getToolFullText,
+  getToolLabel,
+  getToolSummary,
+  isImagePath,
+} from '@/lib/tool-display';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useLongPress } from '@/hooks/useLongPress';
 import { useCallback } from 'react';
@@ -60,37 +70,6 @@ interface ToolActionsGroupProps {
   isLatestMessage?: boolean;
 }
 
-// ---------------------------------------------------------------------------
-// Tool categorisation
-// ---------------------------------------------------------------------------
-
-type ToolCategory = 'read' | 'write' | 'bash' | 'search' | 'skill' | 'agent' | 'web' | 'todo' | 'ask' | 'other';
-
-function getToolCategory(name: string): ToolCategory {
-  const lower = name.toLowerCase();
-  if (lower === 'skill') return 'skill';
-  if (lower === 'agent' || lower === 'task') return 'agent';
-  if (lower === 'read' || lower === 'readfile' || lower === 'read_file' || lower === 'notebookread' || lower === 'notebook_read') return 'read';
-  if (
-    lower === 'write' || lower === 'edit' || lower === 'file_edit' || lower === 'writefile' ||
-    lower === 'write_file' || lower === 'create_file' || lower === 'createfile' ||
-    lower === 'notebookedit' || lower === 'notebook_edit'
-  ) return 'write';
-  if (
-    lower === 'bash' || lower === 'command' || lower === 'execute' || lower === 'run' ||
-    lower === 'shell' || lower === 'execute_command'
-  ) return 'bash';
-  if (
-    lower === 'search' || lower === 'glob' || lower === 'grep' ||
-    lower === 'find_files' || lower === 'search_files' ||
-    lower === 'websearch' || lower === 'web_search' || lower === 'toolsearch'
-  ) return 'search';
-  if (lower === 'webfetch' || lower === 'web_fetch') return 'web';
-  if (lower === 'todowrite' || lower === 'todo_write') return 'todo';
-  if (lower === 'askuserquestion' || lower === 'ask_user_question') return 'ask';
-  return 'other';
-}
-
 function getToolIcon(category: ToolCategory): IconSvgElement {
   switch (category) {
     case 'read':   return File01Icon;
@@ -106,133 +85,9 @@ function getToolIcon(category: ToolCategory): IconSvgElement {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Summary helpers
-// ---------------------------------------------------------------------------
-
-function extractFilename(path: string): string {
-  const parts = path.split('/');
-  return parts[parts.length - 1] || path;
-}
-
-function getToolSummary(name: string, input: unknown, category: ToolCategory): string {
-  const inp = input as Record<string, unknown> | undefined;
-  if (!inp) return name;
-
-  switch (category) {
-    case 'read':
-    case 'write': {
-      const path = (inp.file_path || inp.path || inp.filePath || '') as string;
-      return path ? extractFilename(path) : name;
-    }
-    case 'bash': {
-      const cmd = (inp.command || inp.cmd || '') as string;
-      if (cmd) return cmd.length > 60 ? cmd.slice(0, 57) + '...' : cmd;
-      return name;
-    }
-    case 'search': {
-      const pattern = (inp.pattern || inp.query || inp.glob || '') as string;
-      return pattern ? `"${pattern.length > 50 ? pattern.slice(0, 47) + '...' : pattern}"` : name;
-    }
-    case 'skill': {
-      const skillName = (inp.skill || inp.name || inp.skill_name || '') as string;
-      const args = (inp.args || '') as string;
-      if (skillName && args) return `/${skillName} ${args.length > 40 ? args.slice(0, 37) + '...' : args}`;
-      if (skillName) return `/${skillName}`;
-      return name;
-    }
-    case 'agent': {
-      const agentType = (inp.subagent_type || '') as string;
-      const desc = (inp.description || '') as string;
-      if (agentType && desc) return `${agentType} · ${desc.length > 40 ? desc.slice(0, 37) + '...' : desc}`;
-      if (agentType) return agentType;
-      if (desc) return desc.length > 50 ? desc.slice(0, 47) + '...' : desc;
-      return name;
-    }
-    case 'web': {
-      const url = (inp.url || '') as string;
-      if (url) {
-        try {
-          const hostname = new URL(url).hostname;
-          return hostname.length > 40 ? hostname.slice(0, 37) + '...' : hostname;
-        } catch { return url.length > 50 ? url.slice(0, 47) + '...' : url; }
-      }
-      return name;
-    }
-    case 'todo': {
-      const todos = inp.todos as Array<Record<string, unknown>> | undefined;
-      if (todos && todos.length > 0) {
-        const first = (todos[0].content || '') as string;
-        return `${todos.length} items · ${first.length > 30 ? first.slice(0, 27) + '...' : first}`;
-      }
-      return name;
-    }
-    case 'ask': {
-      const question = (inp.question || inp.text || '') as string;
-      return question ? (question.length > 50 ? question.slice(0, 47) + '...' : question) : name;
-    }
-    default:
-      return name;
-  }
-}
-
-/** Full untruncated text for tooltip display */
-function getToolFullText(name: string, input: unknown, category: ToolCategory): string {
-  const inp = input as Record<string, unknown> | undefined;
-  if (!inp) return name;
-  switch (category) {
-    case 'bash': return (inp.command || inp.cmd || name) as string;
-    case 'search': {
-      const pattern = (inp.pattern || inp.query || inp.glob || '') as string;
-      return pattern ? `"${pattern}"` : name;
-    }
-    case 'skill': {
-      const skillName = (inp.skill || inp.name || inp.skill_name || '') as string;
-      const args = (inp.args || '') as string;
-      return skillName ? `/${skillName}${args ? ' ' + args : ''}` : name;
-    }
-    case 'agent': {
-      const agentType = (inp.subagent_type || '') as string;
-      const desc = (inp.description || '') as string;
-      const prompt = (inp.prompt || '') as string;
-      const parts: string[] = [];
-      if (agentType) parts.push(`[${agentType}]`);
-      if (desc) parts.push(desc);
-      if (prompt) parts.push(`\n${prompt.length > 200 ? prompt.slice(0, 197) + '...' : prompt}`);
-      return parts.length > 0 ? parts.join(' ') : name;
-    }
-    case 'web': {
-      const url = (inp.url || '') as string;
-      return url || name;
-    }
-    case 'ask': {
-      const question = (inp.question || inp.text || '') as string;
-      return question || name;
-    }
-    default: return getToolSummary(name, input, category);
-  }
-}
-
-function getFilePath(input: unknown): string {
-  const inp = input as Record<string, unknown> | undefined;
-  if (!inp) return '';
-  return (inp.file_path || inp.path || inp.filePath || '') as string;
-}
-
 function truncatePath(path: string, maxLen = 50): string {
   if (path.length <= maxLen) return path;
   return '...' + path.slice(path.length - maxLen + 3);
-}
-
-// ---------------------------------------------------------------------------
-// Image detection
-// ---------------------------------------------------------------------------
-
-const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.avif', '.bmp', '.ico'];
-
-function isImagePath(path: string): boolean {
-  const lower = path.toLowerCase();
-  return IMAGE_EXTENSIONS.some(ext => lower.endsWith(ext));
 }
 
 function ImagePreview({ filePath }: { filePath: string }) {
@@ -320,13 +175,7 @@ function ToolActionRow({ tool, isStreaming }: { tool: ToolAction; isStreaming: b
   const status = getStatus(tool, isStreaming);
   const longPress = useLongPress();
 
-  const label = category === 'bash' ? ''
-    : category === 'skill' ? 'Skill'
-    : category === 'agent' ? 'Agent'
-    : category === 'web' ? 'Fetch'
-    : category === 'todo' ? 'Todo'
-    : category === 'ask' ? 'Ask'
-    : tool.name;
+  const label = getToolLabel(tool.name, category);
 
   return (
     <div className="flex items-center gap-2 px-2 py-1 min-h-[28px] text-xs hover:bg-muted/30 rounded-sm transition-colors">
@@ -394,7 +243,6 @@ function getRunningDescription(tools: ToolAction[]): { summary: string; fullText
 export function ToolActionsGroup({
   tools,
   isStreaming = false,
-  streamingToolOutput: _streamingToolOutput,
   isLatestMessage = false,
 }: ToolActionsGroupProps) {
   const hasRunningTool = isStreaming && tools.some((t) => t.result === undefined);
@@ -406,6 +254,7 @@ export function ToolActionsGroup({
 
   // Track whether user has manually toggled and their chosen state
   const [userExpandedState, setUserExpandedState] = useState<boolean | null>(null);
+  const headerLongPress = useLongPress();
 
   // Derived: if user has toggled, use their choice; otherwise auto-expand based on streaming state or image writes
   const expanded = userExpandedState !== null ? userExpandedState : (hasRunningTool || isStreaming || hasImageWrite || isLatestMessage);
@@ -415,7 +264,6 @@ export function ToolActionsGroup({
   const runningCount = isStreaming ? tools.filter((t) => t.result === undefined).length : 0;
   const doneCount = tools.length - runningCount;
   const { summary: runningDesc, fullText: runningFullText } = isStreaming ? getRunningDescription(tools) : { summary: '', fullText: '' };
-  const headerLongPress = useLongPress();
 
   const handleToggle = () => {
     setUserExpandedState((prev) => prev !== null ? !prev : !expanded);
