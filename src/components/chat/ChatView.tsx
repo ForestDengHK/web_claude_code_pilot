@@ -10,8 +10,10 @@ import { HugeiconsIcon } from '@hugeicons/react';
 import { Bookmark02Icon } from '@hugeicons/core-free-icons';
 import { usePanel } from '@/hooks/usePanel';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
-import { TTSProvider } from '@/contexts/TTSContext';
+import type { RateLimitInfo } from '@/hooks/useSSEStream';
 import { formatCodexUsageMarkdown } from '@/lib/codex-usage';
+import { formatClaudeUsageMarkdown } from '@/lib/claude-usage';
+import type { ClaudeAccountInfo } from '@/lib/claude-usage';
 
 interface ToolUseInfo {
   id: string;
@@ -90,6 +92,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [inputRequestResolved, setInputRequestResolved] = useState(false);
   const [streamingToolOutput, setStreamingToolOutput] = useState('');
   const toolTimeoutRef = useRef<{ toolName: string; elapsedSeconds: number } | null>(null);
+  // Rate limit info from Claude SDK (captured during streaming), keyed by rateLimitType
+  const rateLimitsRef = useRef<Map<string, RateLimitInfo>>(new Map());
   // Refs to track tool data for building optimistic message (React state may be stale in async context)
   const toolUsesRef = useRef<ToolUseInfo[]>([]);
   const toolResultsRef = useRef<ToolResultInfo[]>([]);
@@ -810,6 +814,10 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           onToolTimeout: (toolName, elapsedSeconds) => {
             toolTimeoutRef.current = { toolName, elapsedSeconds };
           },
+          onRateLimit: (info) => {
+            const key = info.rateLimitType || 'default';
+            rateLimitsRef.current.set(key, info);
+          },
           onHeartbeat: () => {
             lastSseDataRef.current = Date.now();
           },
@@ -956,7 +964,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           id: 'cmd-' + Date.now(),
           session_id: sessionId,
           role: 'assistant',
-          content: `## Available Commands\n\n### Instant Commands\n- **/help** — Show this help message\n- **/clear** — Clear conversation history\n- **/cost** — Show token usage statistics for this session\n- **/usage** — Show account plan, Codex limits, and credits\n\n### Prompt Commands (shown as badge, add context then send)\n- **/compact** — Compress conversation context\n- **/doctor** — Diagnose project health\n- **/init** — Initialize CLAUDE.md for project\n- **/review** — Review code quality\n- **/terminal-setup** — Configure terminal settings\n- **/memory** — Edit project memory file\n\n### Custom Skills\nSkills from \`~/.claude/commands/\` and project \`.claude/commands/\` are also available via \`/\`.\n\n**Tips:**\n- Type \`/\` to browse commands and skills\n- Type \`@\` to mention files\n- Use Shift+Enter for new line\n- Select a project folder to enable file operations`,
+          content: `## Available Commands\n\n### Instant Commands\n- **/help** — Show this help message\n- **/clear** — Clear conversation history\n- **/cost** — Show token usage statistics for this session\n- **/usage** — Show account info and usage\n\n### Prompt Commands (shown as badge, add context then send)\n- **/compact** — Compress conversation context\n- **/doctor** — Diagnose project health\n- **/init** — Initialize CLAUDE.md for project\n- **/review** — Review code quality\n- **/terminal-setup** — Configure terminal settings\n- **/memory** — Edit project memory file\n\n### Custom Skills\nSkills from \`~/.claude/commands/\` and project \`.claude/commands/\` are also available via \`/\`.\n\n**Tips:**\n- Type \`/\` to browse commands and skills\n- Type \`@\` to mention files\n- Use Shift+Enter for new line\n- Select a project folder to enable file operations`,
           created_at: new Date().toISOString(),
           token_usage: null,
         };
@@ -1018,19 +1026,46 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         break;
       }
       case '/usage': {
-        let content = '## Account Usage\n\nUnable to load Codex usage data.';
+        let content: string;
 
-        try {
-          const response = await fetch('/api/codex/usage');
-          const data = await response.json();
-
-          if (!response.ok) {
-            content = `## Account Usage\n\nFailed to load Codex usage data.\n\n${data.error || 'Unknown error'}`;
-          } else {
-            content = formatCodexUsageMarkdown(data);
+        if (currentBackend === 'codex') {
+          content = '## Account Usage\n\nLoading Codex usage data...';
+          try {
+            const response = await fetch('/api/codex/usage');
+            const data = await response.json();
+            if (!response.ok) {
+              content = `## Account Usage\n\nFailed to load Codex usage data.\n\n${data.error || 'Unknown error'}`;
+            } else {
+              content = formatCodexUsageMarkdown(data);
+            }
+          } catch (error) {
+            content = `## Account Usage\n\nFailed to load Codex usage data.\n\n${error instanceof Error ? error.message : 'Unknown error'}`;
           }
-        } catch (error) {
-          content = `## Account Usage\n\nFailed to load Codex usage data.\n\n${error instanceof Error ? error.message : 'Unknown error'}`;
+        } else {
+          // Claude backend: fetch account info + server-cached rate limits
+          let account: ClaudeAccountInfo | null = null;
+          let serverRateLimits: RateLimitInfo[] = [];
+          try {
+            const response = await fetch('/api/claude-usage');
+            if (response.ok) {
+              const data = await response.json();
+              account = data.account || null;
+              serverRateLimits = Array.isArray(data.rateLimits) ? data.rateLimits : [];
+            }
+          } catch { /* proceed without account info */ }
+
+          // Merge: prefer fresh frontend-cached rate limits, fill gaps from server
+          const merged = new Map<string, RateLimitInfo>();
+          for (const rl of serverRateLimits) {
+            merged.set(rl.rateLimitType || 'default', rl);
+          }
+          // Frontend cache (from current session streaming) overrides server cache
+          for (const [key, rl] of rateLimitsRef.current.entries()) {
+            merged.set(key, rl);
+          }
+          const allRateLimits = Array.from(merged.values());
+
+          content = formatClaudeUsageMarkdown(account, messages, allRateLimits);
         }
 
         const usageMessage: Message = {
@@ -1048,7 +1083,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         // This shouldn't be reached since non-immediate commands are handled via badge
         sendMessage(command);
     }
-  }, [sessionId, sendMessage, messages]);
+  }, [sessionId, sendMessage, messages, currentBackend]);
 
   return (
     <div className="flex h-full min-h-0 flex-col relative">
@@ -1088,32 +1123,30 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           No bookmarked messages in this session.
         </div>
       )}
-      <TTSProvider>
-        <MessageList
-          key={bookmarkFilterActive ? 'bookmarks' : 'all'}
-          messages={displayMessages}
-          streamingContent={streamingContent}
-          thinkingContent={streamingThinking}
-          isStreaming={isStreaming}
-          toolUses={toolUses}
-          toolResults={toolResults}
-          streamingToolOutput={streamingToolOutput}
-          statusText={statusText}
-          pendingPermission={pendingPermission}
-          onPermissionResponse={handlePermissionResponse}
-          permissionResolved={permissionResolved}
-          pendingInputRequest={pendingInputRequest}
-          onInputResponse={handleInputResponse}
-          inputRequestResolved={inputRequestResolved}
-          onForceStop={() => stopStreaming(true)}
-          hasMore={hasMore}
-          loadingMore={loadingMore}
-          onLoadMore={loadEarlierMessages}
-          highlightMessageIds={highlightMessageIds}
-          activeMessageId={activeMessageId}
-          searchQuery={searchQuery}
-        />
-      </TTSProvider>
+      <MessageList
+        key={bookmarkFilterActive ? 'bookmarks' : 'all'}
+        messages={displayMessages}
+        streamingContent={streamingContent}
+        thinkingContent={streamingThinking}
+        isStreaming={isStreaming}
+        toolUses={toolUses}
+        toolResults={toolResults}
+        streamingToolOutput={streamingToolOutput}
+        statusText={statusText}
+        pendingPermission={pendingPermission}
+        onPermissionResponse={handlePermissionResponse}
+        permissionResolved={permissionResolved}
+        pendingInputRequest={pendingInputRequest}
+        onInputResponse={handleInputResponse}
+        inputRequestResolved={inputRequestResolved}
+        onForceStop={() => stopStreaming(true)}
+        hasMore={hasMore}
+        loadingMore={loadingMore}
+        onLoadMore={loadEarlierMessages}
+        highlightMessageIds={highlightMessageIds}
+        activeMessageId={activeMessageId}
+        searchQuery={searchQuery}
+      />
       <MessageInput
         onSend={sendMessage}
         onCommand={handleCommand}
