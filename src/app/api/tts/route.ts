@@ -9,7 +9,7 @@ import { parseSRT } from '@/lib/tts/parse-srt';
 import { getSetting } from '@/lib/db';
 import type { TTSChunk, TTSResponse } from '@/lib/tts/types';
 
-const MAX_TEXT_LENGTH = 20000;
+const MAX_TEXT_LENGTH = 100000;
 // Target chunk size in characters (~2-4 seconds of audio each)
 const CHUNK_TARGET = 500;
 
@@ -32,12 +32,40 @@ function pickVoice(text: string): string {
 }
 
 /**
+ * Force-split a long string at word/CJK boundaries, respecting a hard max.
+ * Used as a last resort when paragraph/sentence splitting leaves oversized chunks.
+ */
+function forceSplit(text: string, maxLen: number): string[] {
+  const parts: string[] = [];
+  let remaining = text;
+  while (remaining.length > maxLen) {
+    let splitAt = maxLen;
+    // Try to split at a space, comma, or CJK boundary within the last 20%
+    const searchFrom = Math.floor(maxLen * 0.8);
+    for (let i = maxLen; i >= searchFrom; i--) {
+      const ch = remaining[i];
+      if (ch === ' ' || ch === ',' || ch === '，' || ch === '。' || ch === '\n') {
+        splitAt = i + 1;
+        break;
+      }
+    }
+    parts.push(remaining.slice(0, splitAt).trim());
+    remaining = remaining.slice(splitAt).trim();
+  }
+  if (remaining) parts.push(remaining);
+  return parts;
+}
+
+/**
  * Split plain text into chunks at sentence/paragraph boundaries.
  * Each chunk is roughly CHUNK_TARGET chars, split at natural boundaries.
+ * A hard max (CHUNK_TARGET * 3) ensures no chunk is too large for edge-tts.
  */
 function splitIntoChunks(text: string): string[] {
   // Short text: no splitting needed
   if (text.length <= CHUNK_TARGET * 1.5) return [text];
+
+  const hardMax = CHUNK_TARGET * 3; // ~1500 chars — safe for edge-tts
 
   // Split into paragraphs first
   const paragraphs = text.split(/\n\n+/);
@@ -57,7 +85,7 @@ function splitIntoChunks(text: string): string[] {
         chunks.push(current.trim());
         current = '';
       }
-      const sentences = para.split(/(?<=[.!?。！？])\s+/);
+      const sentences = para.split(/(?<=[.!?。！？,，;；])\s*/);
       let sentenceChunk = '';
       for (const s of sentences) {
         if (sentenceChunk && (sentenceChunk.length + s.length) > CHUNK_TARGET) {
@@ -78,7 +106,17 @@ function splitIntoChunks(text: string): string[] {
     chunks.push(current.trim());
   }
 
-  return chunks.filter(c => c.length > 0);
+  // Safety pass: force-split any chunk that's still too large
+  const safeChunks: string[] = [];
+  for (const chunk of chunks) {
+    if (chunk.length > hardMax) {
+      safeChunks.push(...forceSplit(chunk, hardMax));
+    } else if (chunk.length > 0) {
+      safeChunks.push(chunk);
+    }
+  }
+
+  return safeChunks;
 }
 
 export async function POST(request: NextRequest) {
@@ -109,16 +147,23 @@ export async function POST(request: NextRequest) {
   const textChunks = splitIntoChunks(plain);
   const batchId = randomBytes(4).toString('hex');
 
-  // Synthesize all chunks in parallel
-  const chunkPromises = textChunks.map((chunk, i) => {
-    const id = `${batchId}-${i}`;
-    const textPath = join(tmpdir(), `codepilot-tts-${id}.txt`);
-    const srtPath = join(tmpdir(), `codepilot-tts-${id}.srt`);
-    return synthesizeChunk(chunk, voice, textPath, srtPath);
-  });
-
+  // Synthesize chunks with limited concurrency to avoid overwhelming edge-tts
+  const MAX_CONCURRENT = 5;
   try {
-    const results = await Promise.all(chunkPromises);
+    const results: TTSChunk[] = [];
+    for (let start = 0; start < textChunks.length; start += MAX_CONCURRENT) {
+      const batch = textChunks.slice(start, start + MAX_CONCURRENT);
+      const batchResults = await Promise.all(
+        batch.map((chunk, j) => {
+          const i = start + j;
+          const id = `${batchId}-${i}`;
+          const textPath = join(tmpdir(), `codepilot-tts-${id}.txt`);
+          const srtPath = join(tmpdir(), `codepilot-tts-${id}.srt`);
+          return synthesizeChunk(chunk, voice, textPath, srtPath);
+        })
+      );
+      results.push(...batchResults);
+    }
     const response: TTSResponse = { chunks: results };
     return NextResponse.json(response);
   } catch (err) {

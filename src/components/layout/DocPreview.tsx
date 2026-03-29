@@ -25,6 +25,9 @@ import { code } from "@streamdown/code";
 import { math } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
 import { usePanel } from "@/hooks/usePanel";
+import { useTTS } from "@/contexts/TTSContext";
+import { TTSButton } from "@/components/chat/TTSButton";
+import { findTextRange, highlightRange, scrollToRange } from "@/lib/tts/highlight";
 import type { FilePreview as FilePreviewType } from "@/types";
 
 const streamdownPlugins = { cjk, code, math, mermaid };
@@ -97,6 +100,11 @@ function isImage(filePath: string): boolean {
   return IMAGE_EXTENSIONS.has(getExtension(filePath));
 }
 
+function isMarkdown(filePath: string): boolean {
+  const ext = getExtension(filePath);
+  return ext === ".md" || ext === ".mdx";
+}
+
 export function DocPreview({
   filePath,
   viewMode,
@@ -123,6 +131,72 @@ export function DocPreview({
   const isPdfFile = isPdf(filePath);
   const isImageFile = isImage(filePath);
   const isBinaryPreview = isPdfFile || isImageFile;
+  const isMarkdownFile = isMarkdown(filePath);
+
+  // TTS for markdown preview
+  const ttsMessageId = `file-preview-${filePath}`;
+  const tts = useTTS();
+  const renderedContentRef = useRef<HTMLDivElement>(null);
+  const ttsCleanupRef = useRef<(() => void) | null>(null);
+  const isThisFileActive = tts.activeMessageId === ttsMessageId;
+
+  // TTS highlight effect
+  useEffect(() => {
+    ttsCleanupRef.current?.();
+    ttsCleanupRef.current = null;
+
+    if (!isThisFileActive || !renderedContentRef.current) return;
+    if (tts.activeSegmentIndex < 0 || tts.activeSegmentIndex >= tts.segments.length) return;
+
+    const activeSegment = tts.segments[tts.activeSegmentIndex];
+    const range = findTextRange(renderedContentRef.current, activeSegment.text);
+    if (!range) return;
+
+    ttsCleanupRef.current = highlightRange(range, renderedContentRef.current);
+
+    // Auto-scroll within the preview's scroll container
+    const scrollContainer = renderedContentRef.current.closest('.flex-1.min-h-0.overflow-auto');
+    scrollToRange(range, scrollContainer);
+
+    return () => {
+      ttsCleanupRef.current?.();
+      ttsCleanupRef.current = null;
+    };
+  }, [isThisFileActive, tts.activeSegmentIndex, tts.segments]);
+
+  // Stop TTS when file changes or component unmounts
+  useEffect(() => {
+    return () => {
+      if (tts.activeMessageId?.startsWith('file-preview-')) {
+        tts.stop();
+      }
+    };
+  }, [filePath]);
+
+  // Tap-to-seek handler for markdown rendered view
+  const handleSeekClick = useCallback((e: React.MouseEvent) => {
+    if (!isThisFileActive || !renderedContentRef.current) return;
+    if (tts.state !== 'playing' && tts.state !== 'paused') return;
+    if (tts.segments.length === 0) return;
+
+    const target = e.target as HTMLElement;
+    if (target.closest('button, a')) return;
+
+    for (let i = 0; i < tts.segments.length; i++) {
+      const range = findTextRange(renderedContentRef.current, tts.segments[i].text);
+      if (!range) continue;
+
+      const rects = range.getClientRects();
+      for (let r = 0; r < rects.length; r++) {
+        const rect = rects[r];
+        if (e.clientX >= rect.left && e.clientX <= rect.right &&
+            e.clientY >= rect.top && e.clientY <= rect.bottom) {
+          tts.seekToSegment(i);
+          return;
+        }
+      }
+    }
+  }, [isThisFileActive, tts]);
 
   useEffect(() => {
     // Reset edit mode when file changes
@@ -283,6 +357,10 @@ export function DocPreview({
               <ViewModeToggle value={viewMode} onChange={onViewModeChange} />
             )}
 
+            {preview && !loading && !error && isMarkdownFile && (
+              <TTSButton messageId={ttsMessageId} text={preview.content} />
+            )}
+
             {preview && !loading && !error && !isBinaryPreview && (
               <Button variant="ghost" size="icon-sm" onClick={handleEnterEdit} title="Edit file">
                 <HugeiconsIcon icon={PencilEdit02Icon} className="h-3.5 w-3.5" />
@@ -354,7 +432,12 @@ export function DocPreview({
           <PdfRenderedView filePath={filePath} />
         ) : preview ? (
           viewMode === "rendered" && canRender ? (
-            <RenderedView content={preview.content} filePath={filePath} />
+            <RenderedView
+              content={preview.content}
+              filePath={filePath}
+              contentRef={isMarkdownFile ? renderedContentRef : undefined}
+              onSeekClick={isThisFileActive ? handleSeekClick : undefined}
+            />
           ) : (
             <SourceView preview={preview} isDark={isDark} />
           )
@@ -451,9 +534,13 @@ function SourceView({ preview, isDark }: { preview: FilePreviewType; isDark: boo
 function RenderedView({
   content,
   filePath,
+  contentRef,
+  onSeekClick,
 }: {
   content: string;
   filePath: string;
+  contentRef?: React.RefObject<HTMLDivElement | null>;
+  onSeekClick?: (e: React.MouseEvent) => void;
 }) {
   if (isHtml(filePath)) {
     // Serve HTML via path-based URL so relative resources (CSS, JS, images)
@@ -503,7 +590,11 @@ function RenderedView({
 
   // Markdown / MDX
   return (
-    <div className="px-6 py-4 overflow-x-hidden break-words">
+    <div
+      ref={contentRef}
+      className="px-6 py-4 overflow-x-hidden break-words"
+      onClick={onSeekClick}
+    >
       <Streamdown
         className="size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:pl-6 [&_ol]:pl-6"
         plugins={streamdownPlugins}

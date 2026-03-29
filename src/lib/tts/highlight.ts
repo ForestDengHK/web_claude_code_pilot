@@ -6,14 +6,19 @@
  * The challenge: TTS segments come from stripped text (no code, no emoji),
  * but the DOM still has those elements.
  *
- * Strategy: Use raw text node concatenation (no artificial spaces) and
- * subsequence matching — walk through the search text character by character,
- * finding each character in the accumulated DOM text. This handles any
- * amount of extra content (code, emoji, bold markers) between characters.
+ * Strategy:
+ * 1. Table-derived text ("Header: Value, ...") → highlight the matching <tr>
+ * 2. Exact string match in concatenated text nodes (fast path)
+ * 3. Subsequence match (handles code/emoji in DOM)
+ * 4. Alphanumeric-only fallback (handles punctuation mismatches)
  */
 export function findTextRange(container: HTMLElement, searchText: string): Range | null {
   const search = searchText.replace(/\s+/g, ' ').trim();
   if (!search) return null;
+
+  // 1. Table row matching — detect "Header: Value, Header: Value." pattern
+  const tableRange = findTableRowMatch(container, search);
+  if (tableRange) return tableRange;
 
   // Collect all text nodes with their raw content
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
@@ -30,25 +35,123 @@ export function findTextRange(container: HTMLElement, searchText: string): Range
 
   if (!accumulated) return null;
 
-  // Try exact match first (fast path)
+  // 2. Try exact match (fast path)
   const exactIdx = accumulated.indexOf(search);
   if (exactIdx !== -1) {
     return buildRange(textNodes, exactIdx, exactIdx + search.length);
   }
 
-  // Subsequence match: find the first and last characters of the search text
+  // 3. Subsequence match: find the first and last characters of the search text
   // in the accumulated DOM text, allowing extra content in between.
   // This handles cases like:
   //   search: "目标目录 () 写死了"  (code stripped, empty parens)
   //   DOM:    "目标目录 (/Users/party/working) 写死了"  (code still present)
 
   const firstMatchStart = findSubsequenceStart(accumulated, search);
-  if (firstMatchStart === -1) return null;
+  if (firstMatchStart !== -1) {
+    const lastMatchEnd = findSubsequenceEnd(accumulated, search, firstMatchStart);
+    if (lastMatchEnd !== -1) {
+      return buildRange(textNodes, firstMatchStart, lastMatchEnd);
+    }
+  }
 
-  const lastMatchEnd = findSubsequenceEnd(accumulated, search, firstMatchStart);
-  if (lastMatchEnd === -1) return null;
+  // 4. Alphanumeric-only fallback — strip punctuation from search then match
+  const alphaMatch = findAlphaMatch(accumulated, search);
+  if (alphaMatch) {
+    return buildRange(textNodes, alphaMatch.start, alphaMatch.end);
+  }
 
-  return buildRange(textNodes, firstMatchStart, lastMatchEnd);
+  return null;
+}
+
+/**
+ * Match table-derived TTS text ("Header: Value, Header: Value.") to DOM <tr> rows.
+ *
+ * The TTS reads tables as "Col1: Val1, Col2: Val2." per row, but the DOM has
+ * the values in <td> cells. We find cells matching the values and highlight
+ * their parent <tr>.
+ */
+function findTableRowMatch(container: HTMLElement, searchText: string): Range | null {
+  // Detect "Key: Value" pattern (at least 1 pair)
+  const pairPattern = /([\w\u4e00-\u9fff\u3400-\u4dbf]+)\s*:\s*([^,.\n]+)/g;
+  const pairs: { header: string; value: string }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = pairPattern.exec(searchText)) !== null) {
+    pairs.push({ header: m[1].trim(), value: m[2].trim() });
+  }
+  if (pairs.length < 1) return null;
+
+  // Only trigger if the container actually has a table
+  const cells = container.querySelectorAll('td');
+  if (cells.length === 0) return null;
+
+  const values = pairs.map(p => p.value.toLowerCase());
+
+  // Find the <tr> whose cells best match our values
+  const rows = container.querySelectorAll('tbody tr, tr');
+  let bestRow: Element | null = null;
+  let bestScore = 0;
+
+  for (const row of rows) {
+    const rowCells = row.querySelectorAll('td');
+    if (rowCells.length === 0) continue; // skip header rows (th only)
+
+    let score = 0;
+    for (const cell of rowCells) {
+      const cellText = (cell.textContent || '').trim().toLowerCase();
+      if (values.some(v => cellText.includes(v) || v.includes(cellText))) {
+        score++;
+      }
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestRow = row;
+    }
+  }
+
+  if (!bestRow || bestScore === 0) return null;
+
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(bestRow);
+    return range;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fallback: strip non-alphanumeric characters, then try to find matching words
+ * sequentially in the DOM text.
+ * Handles cases where TTS text has punctuation (colons, commas, periods)
+ * that doesn't exist in the DOM.
+ */
+function findAlphaMatch(
+  domText: string,
+  searchText: string,
+): { start: number; end: number } | null {
+  // Extract significant words (2+ chars) from search text
+  const words = searchText.match(/[\w\u4e00-\u9fff\u3400-\u4dbf]{2,}/gu);
+  if (!words || words.length < 2) return null;
+
+  // Find each word in the DOM, tracking positions
+  const positions: { pos: number; end: number }[] = [];
+  let searchFrom = 0;
+  for (const word of words) {
+    const pos = domText.indexOf(word, searchFrom);
+    if (pos !== -1) {
+      positions.push({ pos, end: pos + word.length });
+      if (pos >= searchFrom) searchFrom = pos + word.length;
+    }
+  }
+
+  if (positions.length < 2) return null;
+
+  return {
+    start: positions[0].pos,
+    end: positions[positions.length - 1].end,
+  };
 }
 
 /**
@@ -94,8 +197,19 @@ function findSubsequenceEnd(domText: string, search: string, afterPos: number): 
     if (sIdx !== -1) return sIdx + shorter.length;
   }
 
-  // Last resort: just use a fixed length from start
-  return Math.min(afterPos + search.length + 20, domText.length);
+  // Fallback: try suffix with punctuation stripped
+  const cleanSearch = search.replace(/[^a-zA-Z0-9\u4e00-\u9fff\u3400-\u4dbf\s]/g, '').trim();
+  if (cleanSearch) {
+    const cleanSuffixLen = Math.min(6, cleanSearch.length);
+    for (let len = cleanSuffixLen; len >= 2; len--) {
+      const cleanSuffix = cleanSearch.slice(-len);
+      const cIdx = domText.indexOf(cleanSuffix, afterPos);
+      if (cIdx !== -1) return cIdx + cleanSuffix.length;
+    }
+  }
+
+  // Last resort — return -1 to let the caller try other strategies
+  return -1;
 }
 
 /** Build a DOM Range from raw accumulated text offsets */

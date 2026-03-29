@@ -10,6 +10,7 @@ import { RightPanel } from "./RightPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { DocPreview } from "./DocPreview";
 import { PanelContext, type PanelContent, type PreviewViewMode } from "@/hooks/usePanel";
+import { TTSProvider } from "@/contexts/TTSContext";
 
 /**
  * Polyfill navigator.clipboard for non-secure contexts (HTTP via Tailscale on mobile).
@@ -266,6 +267,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <PanelContext.Provider value={panelContextValue}>
+      <TTSProvider>
       <TooltipProvider delayDuration={300}>
         <div className="flex h-screen overflow-hidden pb-14 md:pb-0">
           <NavRail
@@ -307,6 +309,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           skipPermissionsActive={skipPermissionsActive}
         />
       </TooltipProvider>
+      </TTSProvider>
     </PanelContext.Provider>
   );
 }
