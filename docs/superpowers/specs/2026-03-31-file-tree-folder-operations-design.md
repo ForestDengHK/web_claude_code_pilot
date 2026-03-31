@@ -58,24 +58,32 @@ Uploads one or more files to a target directory.
 - `files` (File[]) — one or more files
 
 **Processing:**
-1. Validate `targetDir` is within `baseDir` using existing `isPathSafe()`
-2. Validate `targetDir` exists and is a directory
-3. Write each file with its original filename (no timestamp prefix)
-4. If a file with the same name already exists, overwrite it silently
+1. Resolve `baseDir`; if absent, fall back to `os.homedir()` (matching existing endpoints)
+2. Reject filesystem root via `isRootPath(resolvedBase)` → 403
+3. Validate `targetDir` is within `baseDir` using `isPathSafe()`
+4. Validate `targetDir` exists → 404 if not found
+5. Validate `targetDir` is a directory → 400 if it's a file
+6. Write each file with its original filename (no timestamp prefix)
+7. If a file with the same name already exists, overwrite it
 
 **Response:**
 ```json
 {
   "success": true,
   "files": [
-    { "name": "logo.png", "path": "/abs/path/to/logo.png", "size": 12345 }
+    { "name": "logo.png", "path": "/abs/path/to/logo.png", "size": 12345, "overwritten": false }
   ]
 }
 ```
 
+The `overwritten` field indicates whether the file replaced an existing one, so the client can show an informational toast (e.g., "Replaced 2 existing files").
+
+**Upload size limit:** Configure the App Router route segment to allow up to 50 MB (`export const runtime = 'nodejs'` + body size config), since project assets can be larger than the Next.js default 4 MB.
+
 **Errors:**
 - 400: missing parameters, targetDir is not a directory
-- 403: path outside baseDir scope
+- 403: path outside baseDir scope, or baseDir is filesystem root
+- 404: targetDir does not exist
 - 500: write failure
 
 #### `POST /api/files/mkdir`
@@ -92,11 +100,13 @@ Creates a new subdirectory.
 ```
 
 **Processing:**
-1. Validate `parentDir` is within `baseDir` using `isPathSafe()`
-2. Validate `name` contains no illegal characters (`/`, `\`, `..`, `:`, `*`, `?`, `"`, `<`, `>`, `|`, null bytes)
-3. Validate `name` is not empty and not just whitespace
-4. `fs.mkdir()` — single level, not recursive
-5. If directory already exists, return 409
+1. Resolve `baseDir`; if absent, fall back to `os.homedir()` (matching existing endpoints)
+2. Reject filesystem root via `isRootPath(resolvedBase)` → 403
+3. Validate `parentDir` is within `baseDir` using `isPathSafe()`
+4. Validate `name` is not empty and not just whitespace
+5. Validate `name` contains no illegal characters or sequences: `/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, `|`, null bytes. Also reject any name containing the substring `..` (blocks `..`, `...`, `foo..bar`, etc.). Dot-prefixed names (e.g., `.hidden`) are allowed.
+6. `fs.mkdir()` — single level, not recursive
+7. If directory already exists, return 409
 
 **Response:**
 ```json
@@ -108,7 +118,7 @@ Creates a new subdirectory.
 
 **Errors:**
 - 400: missing parameters, invalid name
-- 403: path outside baseDir scope
+- 403: path outside baseDir scope, or baseDir is filesystem root
 - 409: directory already exists
 - 500: mkdir failure
 
@@ -125,36 +135,40 @@ Add two new callbacks to the context interface:
 ```typescript
 onUpload?: (dirPath: string) => void;
 onCreateFolder?: (dirPath: string) => void;
-// onDelete already exists
+// onDelete already exists in context, but FileTreeFolder does not currently consume it — see below
 ```
 
 #### `FileTreeFolder` Changes (ai-elements/file-tree.tsx)
 
 Add a `DropdownMenu` (reusing the existing component from file rows) with three menu items: Upload files, New folder, Delete.
 
-The ⋯ button sits between the folder name and the +/- attach button, within the `ml-auto` action area. Visibility follows the same hover pattern as file rows.
+**Layout:** The folder's action area (`<span className="ml-auto ...">`) must be expanded to include the DropdownMenu before the +/- button, mirroring the file row's `ml-auto` span structure (CopyNameButton → DropdownMenu → +/- button). Visibility follows the same hover pattern as file rows.
 
-"Upload files" triggers a hidden `<input type="file" multiple accept="*/*">` element's click. The input's `onChange` handler calls the `onUpload` context callback.
+**Important:** `FileTreeFolder` must newly consume `onDelete` from context — it currently does not. The Delete menu item calls `onDelete?.(path)`.
+
+**Upload flow in the UI layer:** When the user clicks "Upload files" in the ⋯ menu, the `FileTreeFolder` component calls `onUpload?.(path)`. This is a simple `(dirPath: string) => void` callback that signals intent — it does NOT trigger a file input directly. The hidden `<input type="file">` lives in `FileTree.tsx` (the orchestrator), not in the ai-elements component. See the orchestration section below for details.
 
 #### `FileTree.tsx` Orchestration Changes
 
 Implements the three operations:
 
 **Upload handler:**
-1. Receives `dirPath` from context callback
-2. Triggers hidden file input click
-3. On file selection, builds `FormData` with `targetDir`, `baseDir`, and files
-4. `POST /api/files/upload`
-5. On success: dispatches `refresh-file-tree`, auto-expands the target folder
-6. On failure: shows toast error
-7. During upload: sets loading state on the folder (spinner replaces folder icon)
+1. Receives `dirPath` from `onUpload` callback; stores it in a ref (e.g., `uploadTargetRef`)
+2. Triggers hidden `<input type="file" multiple accept="*/*">` click — this input lives in `FileTree.tsx` as a persistent hidden element
+3. On file selection (`onChange`), reads `uploadTargetRef.current` to know the target directory
+4. Builds `FormData` with `targetDir`, `baseDir`, and files
+5. `POST /api/files/upload`
+6. On success: dispatches `window.dispatchEvent(new CustomEvent('refresh-file-tree'))`, auto-expands the target folder by adding `dirPath` to `expandedPaths` state (note: this may trigger `lazyLoadEmptyDirs` for newly populated directories)
+7. If response includes overwritten files: toast "Uploaded N files (replaced M existing)"
+8. On failure: shows toast error
+9. During upload: sets loading state on the folder (spinner replaces folder icon)
 
 **Create folder handler:**
 1. Receives `dirPath` from context callback
 2. Opens a dialog (reusing AlertDialog) with an Input for folder name
 3. Client-side validation: non-empty, no illegal characters
 4. `POST /api/files/mkdir`
-5. On success: dispatches `refresh-file-tree`, auto-expands parent folder
+5. On success: dispatches `window.dispatchEvent(new CustomEvent('refresh-file-tree'))`, auto-expands parent folder by adding `dirPath` to `expandedPaths` state
 6. On 409: toast "Folder already exists"
 7. On failure: toast error
 
@@ -174,7 +188,7 @@ Upload:
     → user selects files → onChange fires
     → FormData { targetDir, baseDir, files[] }
     → POST /api/files/upload
-    → server: isPathSafe → fs.writeFile per file
+    → server: isRootPath + isPathSafe → fs.writeFile per file
     → response { success, files[] }
     → dispatch('refresh-file-tree') + expand folder
 
@@ -183,7 +197,7 @@ Create folder:
     → AlertDialog opens with Input
     → user types name → clicks Create
     → POST /api/files/mkdir { parentDir, name, baseDir }
-    → server: isPathSafe + validate name → fs.mkdir
+    → server: isRootPath + isPathSafe + validate name → fs.mkdir
     → response { success, path }
     → dispatch('refresh-file-tree') + expand folder
 
@@ -192,7 +206,7 @@ Delete folder:
     → AlertDialog with recursive-delete warning
     → user confirms
     → DELETE /api/files?path=...&baseDir=...
-    → server: isPathSafe → fs.rm(recursive)
+    → server: isRootPath + isPathSafe → fs.rm(recursive)
     → response { success }
     → dispatch('refresh-file-tree')
 ```
@@ -201,7 +215,7 @@ Delete folder:
 
 | Situation | Handling |
 |-----------|----------|
-| Upload file with same name as existing | Silent overwrite (matches VS Code / GitHub) |
+| Upload file with same name as existing | Overwrite; server response includes `overwritten: true` per file, client shows informational toast. Conscious trade-off: simpler flow at the cost of no pre-confirmation. Acceptable because the file tree shows the result immediately and git provides recovery. |
 | Create folder with existing name | 409 → toast "Folder already exists" |
 | Illegal characters in folder name | Client-side validation blocks request |
 | Empty file selection | Ignored, no request sent |
