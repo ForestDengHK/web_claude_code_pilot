@@ -61,9 +61,7 @@ const RENDERABLE_EXTENSIONS = new Set([
   ".pdf",
 ]);
 
-const IMAGE_EXTENSIONS = new Set([
-  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp", ".ico",
-]);
+import { IMAGE_EXTENSIONS_SET as IMAGE_EXTENSIONS } from '@/lib/config';
 
 function getExtension(filePath: string): string {
   const dot = filePath.lastIndexOf(".");

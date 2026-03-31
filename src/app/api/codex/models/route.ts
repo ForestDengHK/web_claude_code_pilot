@@ -21,7 +21,7 @@ interface CachedModel {
 // Cache models to avoid spawning a Codex process on every request
 let cachedModels: CachedModel[] | null = null;
 let cachedAt = 0;
-const CACHE_TTL = 60 * 60 * 1000; // 1 hour
+import { MODELS_CACHE_TTL as CACHE_TTL } from '@/lib/config';
 
 const TEMP_SESSION_ID = '__codex_models__';
 

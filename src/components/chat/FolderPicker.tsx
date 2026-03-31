@@ -39,7 +39,7 @@ interface FavoriteDir {
 
 type TabId = 'browse' | 'clone';
 
-const DEFAULT_GIT_HOST = 'https://github.com';
+import { DEFAULT_GIT_HOST } from '@/lib/config';
 
 function extractRepoInfo(url: string, gitHost: string = DEFAULT_GIT_HOST): { name: string; cloneUrl: string } | null {
   const trimmed = url.trim();

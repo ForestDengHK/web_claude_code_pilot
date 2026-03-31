@@ -1,7 +1,7 @@
 "use client";
 
 import type { UIMessage } from "ai";
-import type { ComponentProps, HTMLAttributes, ReactElement } from "react";
+import type { ComponentProps, HTMLAttributes, ReactElement, ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -21,7 +21,9 @@ import { math } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
 import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DownloadIcon } from "lucide-react";
 import {
+  Children,
   createContext,
+  isValidElement,
   memo,
   useCallback,
   useContext,
@@ -459,8 +461,70 @@ const CustomTable = memo(
 );
 CustomTable.displayName = "CustomTable";
 
+// ---------------------------------------------------------------------------
+// Custom paragraph — Streamdown wraps markdown paragraphs in <p>, but plugins
+// (code blocks, mermaid, math, etc.) may render <div> children inside them,
+// which violates HTML nesting rules (<p> cannot contain block elements) and
+// causes React hydration warnings. This component detects block-level children
+// and falls back to <div> with identical styling when needed.
+// ---------------------------------------------------------------------------
+
+/** Tags that are block-level and cannot appear inside <p> */
+const BLOCK_TAGS = new Set([
+  "div",
+  "pre",
+  "table",
+  "ul",
+  "ol",
+  "blockquote",
+  "figure",
+  "section",
+  "aside",
+  "details",
+  "form",
+  "fieldset",
+  "header",
+  "footer",
+  "nav",
+  "article",
+  "main",
+  "hr",
+  "h1", "h2", "h3", "h4", "h5", "h6",
+]);
+
+function hasBlockChild(children: ReactNode): boolean {
+  let found = false;
+  Children.forEach(children, (child) => {
+    if (found) return;
+    if (isValidElement(child)) {
+      // Check direct element type (intrinsic HTML tag name)
+      if (typeof child.type === "string" && BLOCK_TAGS.has(child.type)) {
+        found = true;
+      }
+    }
+  });
+  return found;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const streamdownComponents = { table: CustomTable as any };
+const CustomParagraph = memo(({ node, className, children, ...props }: any) => {
+  if (hasBlockChild(children)) {
+    return (
+      <div className={className} {...props}>
+        {children}
+      </div>
+    );
+  }
+  return (
+    <p className={className} {...props}>
+      {children}
+    </p>
+  );
+});
+CustomParagraph.displayName = "CustomParagraph";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const streamdownComponents = { table: CustomTable as any, p: CustomParagraph as any };
 
 export const MessageResponse = memo(
   ({ className, ...props }: MessageResponseProps) => (

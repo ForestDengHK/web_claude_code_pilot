@@ -2,7 +2,7 @@
  * Telegram-specific utility functions for the bridge adapter.
  */
 
-const TELEGRAM_API = 'https://api.telegram.org';
+import { TELEGRAM_API } from '@/lib/config';
 
 export interface TelegramSendResult {
   ok: boolean;

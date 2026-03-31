@@ -6,8 +6,7 @@ import os from 'os';
 import { getSetting } from '@/lib/db';
 
 const DEFAULT_BASE_DIR = path.join(os.homedir(), 'working');
-const DEFAULT_GIT_HOST = 'https://github.com';
-const CLONE_TIMEOUT_MS = 120_000;
+import { DEFAULT_GIT_HOST, CLONE_TIMEOUT_MS } from '@/lib/config';
 
 function extractRepoName(url: string, gitHost: string = DEFAULT_GIT_HOST): { name: string; cloneUrl: string } | null {
   const trimmed = url.trim();

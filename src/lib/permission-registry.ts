@@ -10,7 +10,7 @@ interface PendingPermission {
   permEvent?: PermissionRequestEvent;
 }
 
-const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+import { REGISTRY_TIMEOUT_MS as TIMEOUT_MS } from '@/lib/config';
 
 // Use globalThis to ensure the Map is shared across all module instances.
 // In Next.js dev mode (Turbopack), different API routes may load separate

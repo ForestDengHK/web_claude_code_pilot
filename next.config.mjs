@@ -12,6 +12,11 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '100mb',
+    },
+  },
   env: {
     NEXT_PUBLIC_APP_VERSION: pkg.version,
   },

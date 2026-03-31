@@ -13,6 +13,17 @@ interface ToolResultInfo {
   is_error?: boolean;
 }
 
+export interface RateLimitInfo {
+  status: 'allowed' | 'allowed_warning' | 'rejected';
+  resetsAt?: number;
+  rateLimitType?: string;
+  utilization?: number;
+  overageStatus?: 'allowed' | 'allowed_warning' | 'rejected';
+  overageResetsAt?: number;
+  isUsingOverage?: boolean;
+  surpassedThreshold?: number;
+}
+
 export interface SSECallbacks {
   onText: (accumulated: string) => void;
   onThinking: (delta: string) => void;
@@ -25,6 +36,7 @@ export interface SSECallbacks {
   onPermissionRequest: (data: PermissionRequestEvent) => void;
   onInputRequest: (data: InputRequestEvent) => void;
   onToolTimeout: (toolName: string, elapsedSeconds: number) => void;
+  onRateLimit?: (info: RateLimitInfo) => void;
   onHeartbeat?: () => void;
   onError: (accumulated: string) => void;
 }
@@ -154,6 +166,16 @@ function handleSSEEvent(
       return accumulated;
     }
 
+    case 'rate_limit': {
+      try {
+        const rlData: RateLimitInfo = JSON.parse(event.data);
+        callbacks.onRateLimit?.(rlData);
+      } catch {
+        // skip malformed rate_limit data
+      }
+      return accumulated;
+    }
+
     case 'heartbeat': {
       callbacks.onHeartbeat?.();
       return accumulated;
@@ -269,6 +291,7 @@ export function useSSEStream() {
         onPermissionRequest: (d) => callbacksRef.current?.onPermissionRequest(d),
         onInputRequest: (d) => callbacksRef.current?.onInputRequest(d),
         onToolTimeout: (n, s) => callbacksRef.current?.onToolTimeout(n, s),
+        onRateLimit: (i) => callbacksRef.current?.onRateLimit?.(i),
         onHeartbeat: () => callbacksRef.current?.onHeartbeat?.(),
         onError: (a) => callbacksRef.current?.onError(a),
       };

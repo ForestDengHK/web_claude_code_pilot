@@ -76,9 +76,9 @@ describe('closeDb', () => {
 
   it('should clean up WAL files after close', () => {
     // Force some writes to create WAL
-    createSession('WAL Test 1');
-    createSession('WAL Test 2');
-    createSession('WAL Test 3');
+    createSession('WAL Test 1', undefined, undefined, tmpDir);
+    createSession('WAL Test 2', undefined, undefined, tmpDir);
+    createSession('WAL Test 3', undefined, undefined, tmpDir);
 
     const dbPath = path.join(tmpDir, 'codepilot.db');
     assert.ok(fs.existsSync(dbPath));

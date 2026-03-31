@@ -21,11 +21,10 @@ import type { MessageContentBlock } from '@/types';
 // Constants
 // ==========================================
 
-/** Maximum file size (50 MB) to prevent memory issues with very large sessions */
-const MAX_FILE_SIZE = 50 * 1024 * 1024;
+import { MAX_SESSION_FILE_SIZE as MAX_FILE_SIZE, SESSION_ACTIVE_THRESHOLD_MS } from '@/lib/config';
 
 /** Default threshold (ms) for considering a session "active" based on file modification time. */
-const DEFAULT_ACTIVE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+const DEFAULT_ACTIVE_THRESHOLD_MS = SESSION_ACTIVE_THRESHOLD_MS;
 
 // ==========================================
 // Types for Claude Code JSONL entries

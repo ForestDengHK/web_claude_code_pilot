@@ -345,6 +345,7 @@ export type SSEEventType =
   | 'error'              // error occurred
   | 'permission_request' // permission approval needed
   | 'input_request'      // AskUserQuestion mid-stream prompt
+  | 'rate_limit'         // rate limit info from Claude
   | 'heartbeat'          // keepalive signal for connection health
   | 'done';              // stream complete
 

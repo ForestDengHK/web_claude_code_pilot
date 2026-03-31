@@ -45,8 +45,7 @@ import type { FileAttachment } from '@/types';
 import { nanoid } from 'nanoid';
 import { useVoiceInput } from '@/hooks/useVoiceInput';
 
-// Max file size — generous limit since files are saved to disk and read by Claude Code tools
-const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+import { MAX_UPLOAD_FILE_SIZE as MAX_FILE_SIZE } from '@/lib/config';
 
 /** Codex skill reference resolved from `$skill-name` in user input. */
 interface CodexSkillRef {
@@ -111,7 +110,7 @@ const BUILT_IN_COMMANDS: PopoverItem[] = [
   { label: 'help', value: '/help', description: 'Show available commands and tips', builtIn: true, immediate: true, icon: HelpCircleIcon },
   { label: 'clear', value: '/clear', description: 'Clear conversation history', builtIn: true, immediate: true, icon: Delete02Icon },
   { label: 'cost', value: '/cost', description: 'Show token usage statistics', builtIn: true, immediate: true, icon: Coins01Icon },
-  { label: 'usage', value: '/usage', description: 'Show account usage and Codex limits', builtIn: true, immediate: true, icon: GlobalIcon },
+  { label: 'usage', value: '/usage', description: 'Show account info and usage', builtIn: true, immediate: true, icon: GlobalIcon },
   { label: 'compact', value: '/compact', description: 'Compress conversation context', builtIn: true, icon: FileZipIcon },
   { label: 'doctor', value: '/doctor', description: 'Diagnose project health', builtIn: true, icon: Stethoscope02Icon },
   { label: 'init', value: '/init', description: 'Initialize CLAUDE.md for project', builtIn: true, icon: FileEditIcon },
@@ -678,9 +677,9 @@ export function MessageInput({
     const builtInNames = new Set(BUILT_IN_COMMANDS.map(c => c.label));
     const uniqueSkills = apiSkills.filter(s => !builtInNames.has(s.label));
 
-    // When Codex is active, only show CodePilot-native commands (help, clear, cost)
+    // When Codex is active, only show CodePilot-native commands (help, clear, cost, usage)
     // and hide Claude-specific ones (compact, doctor, init, review, etc.)
-    const CODEX_SAFE_COMMANDS = new Set(['help', 'clear', 'cost']);
+    const CODEX_SAFE_COMMANDS = new Set(['help', 'clear', 'cost', 'usage']);
     const commands = backend === 'codex'
       ? BUILT_IN_COMMANDS.filter(c => CODEX_SAFE_COMMANDS.has(c.label))
       : BUILT_IN_COMMANDS;

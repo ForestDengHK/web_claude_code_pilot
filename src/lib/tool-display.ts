@@ -10,7 +10,7 @@ export type ToolCategory =
   | 'ask'
   | 'other';
 
-const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.avif', '.bmp', '.ico'];
+import { IMAGE_EXTENSIONS } from '@/lib/config';
 const STOPWORDS = new Set(['the', 'and', 'for', 'with', 'from']);
 
 function normalizeToolName(name: string): string {

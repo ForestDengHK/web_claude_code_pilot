@@ -7,6 +7,7 @@ import type {
   SDKPartialAssistantMessage,
   SDKSystemMessage,
   SDKToolProgressMessage,
+  SDKRateLimitEvent,
   Options,
   McpStdioServerConfig,
   McpSSEServerConfig,
@@ -19,6 +20,7 @@ import type {
 import type { ClaudeStreamOptions, SSEEvent, TokenUsage, MCPServerConfig, PermissionRequestEvent, InputRequestEvent, FileAttachment } from '@/types';
 import { registerPendingPermission } from './permission-registry';
 import { registerPendingInputRequest } from './input-request-registry';
+import { cacheRateLimit } from './rate-limit-cache';
 import { getSetting, getActiveProvider, getSession } from './db';
 import { sendPushNotification } from './push-notifications';
 import { findClaudeBinary, findGitBash, getExpandedPath } from './platform';
@@ -861,6 +863,18 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
               break;
             }
 
+            case 'rate_limit_event': {
+              const rlEvent = message as SDKRateLimitEvent;
+              const rlInfo = rlEvent.rate_limit_info;
+              // Cache server-side so /api/claude-usage can return it
+              cacheRateLimit(rlInfo as unknown as Record<string, unknown>);
+              controller.enqueue(formatSSE({
+                type: 'rate_limit',
+                data: JSON.stringify(rlInfo),
+              }));
+              break;
+            }
+
             case 'result': {
               gotResult = true;
               const resultMsg = message as SDKResultMessage;
@@ -883,6 +897,15 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
                 type: 'result',
                 data: JSON.stringify(resultPayload),
               }));
+              break;
+            }
+
+            default: {
+              // Log unhandled message types for debugging
+              const msgType = (message as { type: string }).type;
+              if (!['auth_status', 'session_state_changed', 'files_persisted', 'tool_use_summary', 'hook_started', 'hook_progress', 'hook_response', 'task_notification', 'task_started', 'task_progress', 'status', 'api_retry', 'compact_boundary'].includes(msgType)) {
+                console.log(`[claude-client] Unhandled message type: ${msgType}`, JSON.stringify(message).slice(0, 200));
+              }
               break;
             }
           }

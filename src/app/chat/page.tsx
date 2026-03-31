@@ -9,6 +9,9 @@ import { MessageList } from '@/components/chat/MessageList';
 import { MessageInput } from '@/components/chat/MessageInput';
 import { usePanel } from '@/hooks/usePanel';
 import { formatCodexUsageMarkdown } from '@/lib/codex-usage';
+import { formatClaudeUsageMarkdown } from '@/lib/claude-usage';
+import type { ClaudeAccountInfo } from '@/lib/claude-usage';
+import type { RateLimitInfo } from '@/hooks/useSSEStream';
 
 interface ToolUseInfo {
   id: string;
@@ -402,7 +405,7 @@ export default function NewChatPage() {
           id: 'cmd-' + Date.now(),
           session_id: '',
           role: 'assistant',
-          content: `## Available Commands\n\n- **/help** - Show this help message\n- **/clear** - Clear conversation history\n- **/compact** - Compress conversation context\n- **/cost** - Show token usage statistics for this session\n- **/usage** - Show account plan, Codex limits, and credits\n- **/doctor** - Check system health\n- **/init** - Initialize CLAUDE.md\n- **/review** - Start code review\n- **/terminal-setup** - Configure terminal\n\n**Tips:**\n- Type \`@\` to mention files\n- Use Shift+Enter for new line\n- Select a project folder to enable file operations`,
+          content: `## Available Commands\n\n- **/help** - Show this help message\n- **/clear** - Clear conversation history\n- **/compact** - Compress conversation context\n- **/cost** - Show token usage statistics for this session\n- **/usage** - Show account info and usage\n- **/doctor** - Check system health\n- **/init** - Initialize CLAUDE.md\n- **/review** - Start code review\n- **/terminal-setup** - Configure terminal\n\n**Tips:**\n- Type \`@\` to mention files\n- Use Shift+Enter for new line\n- Select a project folder to enable file operations`,
           created_at: new Date().toISOString(),
           token_usage: null,
         };
@@ -425,19 +428,34 @@ export default function NewChatPage() {
         break;
       }
       case '/usage': {
-        let content = '## Account Usage\n\nUnable to load Codex usage data.';
+        let content: string;
 
-        try {
-          const response = await fetch('/api/codex/usage');
-          const data = await response.json();
-
-          if (!response.ok) {
-            content = `## Account Usage\n\nFailed to load Codex usage data.\n\n${data.error || 'Unknown error'}`;
-          } else {
-            content = formatCodexUsageMarkdown(data);
+        if (selectedBackend === 'codex') {
+          content = '## Account Usage\n\nLoading Codex usage data...';
+          try {
+            const response = await fetch('/api/codex/usage');
+            const data = await response.json();
+            if (!response.ok) {
+              content = `## Account Usage\n\nFailed to load Codex usage data.\n\n${data.error || 'Unknown error'}`;
+            } else {
+              content = formatCodexUsageMarkdown(data);
+            }
+          } catch (error) {
+            content = `## Account Usage\n\nFailed to load Codex usage data.\n\n${error instanceof Error ? error.message : 'Unknown error'}`;
           }
-        } catch (error) {
-          content = `## Account Usage\n\nFailed to load Codex usage data.\n\n${error instanceof Error ? error.message : 'Unknown error'}`;
+        } else {
+          // Claude backend: fetch account info + server-cached rate limits
+          let account: ClaudeAccountInfo | null = null;
+          let rateLimits: RateLimitInfo[] = [];
+          try {
+            const response = await fetch('/api/claude-usage');
+            if (response.ok) {
+              const data = await response.json();
+              account = data.account || null;
+              rateLimits = Array.isArray(data.rateLimits) ? data.rateLimits : [];
+            }
+          } catch { /* proceed without account info */ }
+          content = formatClaudeUsageMarkdown(account, messages, rateLimits);
         }
 
         const usageMessage: Message = {
@@ -454,7 +472,7 @@ export default function NewChatPage() {
       default:
         sendFirstMessage(command);
     }
-  }, [sendFirstMessage]);
+  }, [sendFirstMessage, selectedBackend, messages]);
 
   // Filter recent dirs that are not already in favorites
   const favoritePaths = new Set(favorites.map(f => f.path));

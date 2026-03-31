@@ -15,6 +15,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { FileTreeNode } from "@/types";
 import {
@@ -22,6 +28,7 @@ import {
   FileTreeFolder,
   FileTreeFile,
 } from "@/components/ai-elements/file-tree";
+import { EllipsisIcon, UploadIcon, FolderPlusIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 const PREVIEWABLE_EXTENSIONS = new Set([
@@ -160,6 +167,17 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false);
+
+  // Folder operations — upload
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadTargetRef = useRef<string | null>(null);
+  // Folder operations — new folder dialog
+  const [createFolderTarget, setCreateFolderTarget] = useState<string | null>(null);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  // Note: folder deletion reuses the existing deleteTarget/handleDeleteConfirm flow
 
   const abortRef = useRef<AbortController | null>(null);
   const lazyLoadingRef = useRef<Set<string>>(new Set());
@@ -401,6 +419,125 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
     }
   }, [selectedPaths, workingDirectory, fetchTree, exitSelectionMode]);
 
+  // --- Folder operations ---
+
+  const handleUpload = useCallback((dirPath: string) => {
+    uploadTargetRef.current = dirPath;
+    // Reset the input so onChange fires even if the same file is re-selected
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+      fileInputRef.current.click();
+    }
+  }, []);
+
+  const handleFileInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    const targetDir = uploadTargetRef.current;
+    if (!files || files.length === 0 || !targetDir || !workingDirectory) return;
+
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('targetDir', targetDir);
+      formData.append('baseDir', workingDirectory);
+      for (let i = 0; i < files.length; i++) {
+        formData.append('files', files[i]);
+      }
+
+      const res = await fetch('/api/files/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const overwritten = data.files?.filter((f: { overwritten: boolean }) => f.overwritten).length ?? 0;
+        const total = data.files?.length ?? 0;
+
+        // Auto-expand the target folder
+        setExpandedPaths(prev => {
+          const next = new Set(prev);
+          next.add(targetDir);
+          return next;
+        });
+
+        // Refresh tree directly (equivalent to dispatching refresh-file-tree,
+        // but more direct since fetchTree is in the same component)
+        fetchTree();
+
+        // Log feedback (no toast library in project; user-visible feedback
+        // is deferred — the tree refresh itself shows the result immediately)
+        if (overwritten > 0) {
+          console.log(`Uploaded ${total} file(s), replaced ${overwritten} existing`);
+        }
+      } else {
+        const data = await res.json().catch(() => null);
+        console.error('Upload failed:', data?.error || res.statusText);
+      }
+    } catch (err) {
+      console.error('Upload failed:', err);
+    } finally {
+      setUploading(false);
+      uploadTargetRef.current = null;
+    }
+  }, [workingDirectory, fetchTree]);
+
+  const handleCreateFolder = useCallback((dirPath: string) => {
+    setCreateFolderTarget(dirPath);
+    setNewFolderName("");
+    setCreateError(null);
+  }, []);
+
+  const handleCreateFolderConfirm = useCallback(async () => {
+    if (!createFolderTarget || !workingDirectory) return;
+
+    const trimmed = newFolderName.trim();
+    if (!trimmed) {
+      setCreateError("Name cannot be empty");
+      return;
+    }
+
+    // Client-side validation matching the server regex
+    if (/[/\\:*?"<>|\0]|\.\./.test(trimmed)) {
+      setCreateError("Name contains invalid characters");
+      return;
+    }
+
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const res = await fetch('/api/files/mkdir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentDir: createFolderTarget,
+          name: trimmed,
+          baseDir: workingDirectory,
+        }),
+      });
+
+      if (res.ok) {
+        // Auto-expand the parent folder
+        setExpandedPaths(prev => {
+          const next = new Set(prev);
+          next.add(createFolderTarget);
+          return next;
+        });
+        fetchTree();
+        setCreateFolderTarget(null);
+      } else if (res.status === 409) {
+        setCreateError("A folder with this name already exists");
+      } else {
+        const data = await res.json().catch(() => null);
+        setCreateError(data?.error || "Failed to create folder");
+      }
+    } catch {
+      setCreateError("Network error");
+    } finally {
+      setCreating(false);
+    }
+  }, [createFolderTarget, newFolderName, workingDirectory, fetchTree]);
+
   // Get all directory paths in the tree for expand/collapse all
   const getAllDirectoryPaths = useCallback((nodes: FileTreeNode[]): string[] => {
     const paths: string[] = [];
@@ -454,6 +591,26 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
               <span className="sr-only">{selectionMode ? "Exit select" : "Select"}</span>
             </Button>
           </>
+        )}
+        {workingDirectory && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon-sm" className="h-8 w-8 shrink-0" title="More actions">
+                <EllipsisIcon className="h-4 w-4" />
+                <span className="sr-only">More actions</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[140px]">
+              <DropdownMenuItem onClick={() => handleUpload(workingDirectory)}>
+                <UploadIcon className="size-4" />
+                Upload files here
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleCreateFolder(workingDirectory)}>
+                <FolderPlusIcon className="size-4" />
+                New folder here
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
         <Button
           variant="ghost"
@@ -514,6 +671,8 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
               a.remove();
             }}
             onDelete={(filePath: string) => setDeleteTarget(filePath)}
+            onUpload={handleUpload}
+            onCreateFolder={handleCreateFolder}
             selectionMode={selectionMode}
             selectedPaths={selectedPaths}
             onToggleSelect={handleToggleSelect}
@@ -555,10 +714,18 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
         <AlertDialogContent size="sm">
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-base">Delete file</AlertDialogTitle>
+            <AlertDialogTitle className="text-base">
+              {deleteTarget && findNode(tree, deleteTarget)?.type === 'directory'
+                ? 'Delete folder'
+                : 'Delete file'}
+            </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2">
-                <p>This will permanently delete:</p>
+                <p>
+                  {deleteTarget && findNode(tree, deleteTarget)?.type === 'directory'
+                    ? 'This will permanently delete the folder and all its contents:'
+                    : 'This will permanently delete:'}
+                </p>
                 <p className="rounded bg-muted px-2 py-1 font-mono text-xs text-foreground break-all">
                   {deleteTarget?.split("/").pop()}
                 </p>
@@ -608,6 +775,54 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
             >
               {deleting ? "Deleting..." : `Delete ${selectedPaths.size}`}
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Hidden file input for folder upload */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept="*/*"
+        className="hidden"
+        onChange={handleFileInputChange}
+      />
+
+      {/* New folder dialog */}
+      <AlertDialog open={!!createFolderTarget} onOpenChange={(open) => { if (!open) setCreateFolderTarget(null); }}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-base">New folder</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>Create a new folder in:</p>
+                <p className="rounded bg-muted px-2 py-1 font-mono text-xs text-foreground break-all">
+                  {createFolderTarget?.split("/").pop()}
+                </p>
+                <Input
+                  placeholder="Folder name"
+                  value={newFolderName}
+                  onChange={(e) => { setNewFolderName(e.target.value); setCreateError(null); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleCreateFolderConfirm(); }}
+                  autoFocus
+                  className="h-8 text-sm"
+                />
+                {createError && (
+                  <p className="text-xs text-destructive">{createError}</p>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel size="sm" disabled={creating}>Cancel</AlertDialogCancel>
+            <Button
+              size="sm"
+              onClick={handleCreateFolderConfirm}
+              disabled={creating || !newFolderName.trim()}
+            >
+              {creating ? "Creating..." : "Create"}
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

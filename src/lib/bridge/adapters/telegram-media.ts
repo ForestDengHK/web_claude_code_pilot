@@ -5,11 +5,7 @@
 import crypto from 'crypto';
 import type { FileAttachment } from '@/types';
 import { getSetting } from '../../db';
-
-const TELEGRAM_API = 'https://api.telegram.org';
-
-// Max file size: 20 MB (Telegram Bot API limit for getFile)
-const MAX_FILE_SIZE = 20 * 1024 * 1024;
+import { MAX_TELEGRAM_FILE_SIZE as MAX_FILE_SIZE, TELEGRAM_API, TELEGRAM_OPTIMAL_LONG_EDGE } from '@/lib/config';
 
 export interface TelegramPhotoSize {
   file_id: string;
@@ -33,8 +29,7 @@ export interface MediaDownloadResult {
   rejectedMessage?: string;
 }
 
-// Claude vision optimal long edge
-const OPTIMAL_LONG_EDGE = 1568;
+const OPTIMAL_LONG_EDGE = TELEGRAM_OPTIMAL_LONG_EDGE;
 
 const SUPPORTED_IMAGE_MIMES = new Set([
   'image/jpeg',

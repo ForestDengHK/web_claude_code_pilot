@@ -34,13 +34,17 @@ function extractTextContent(content: string): string {
   return content;
 }
 
-const dataDir = process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.codepilot');
-const DB_PATH = path.join(dataDir, 'codepilot.db');
-
 let db: Database.Database | null = null;
+
+/** Compute DB path at call-time so tests can override CLAUDE_GUI_DATA_DIR before first open. */
+function getDbPath(): string {
+  const dataDir = process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.codepilot');
+  return path.join(dataDir, 'codepilot.db');
+}
 
 export function getDb(): Database.Database {
   if (!db) {
+    const DB_PATH = getDbPath();
     const dir = path.dirname(DB_PATH);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
@@ -214,10 +218,6 @@ function migrateDb(db: Database.Database): void {
   if (!msgColNames.includes('backend')) {
     db.exec("ALTER TABLE messages ADD COLUMN backend TEXT");
   }
-  if (!msgColNames.includes('status')) {
-    db.exec("ALTER TABLE messages ADD COLUMN status TEXT NOT NULL DEFAULT 'complete'");
-  }
-
   if (!msgColNames.includes('status')) {
     db.exec("ALTER TABLE messages ADD COLUMN status TEXT NOT NULL DEFAULT 'complete'");
   }

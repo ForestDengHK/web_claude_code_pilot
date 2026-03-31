@@ -33,6 +33,7 @@ import {
   _getState,
 } from '../../lib/bridge/bridge-manager';
 import { resolve, bindSession } from '../../lib/bridge/channel-router';
+import { getChannelBinding } from '../../lib/bridge/bridge-db';
 import { closeDb, setSetting } from '../../lib/db';
 
 // ==========================================
@@ -363,7 +364,8 @@ async function main() {
     assert.ok(adapter.sentMessages.length >= 1);
     assert.ok(adapter.sentMessages[0].text.includes('deactivated'));
 
-    const binding = resolve(addr);
+    // Use getChannelBinding (not resolve) because resolve filters out inactive bindings
+    const binding = getChannelBinding('telegram', 'stop-test-chat');
     assert.ok(binding);
     assert.equal(binding!.active, false);
   });
@@ -412,9 +414,11 @@ async function main() {
     await _routeToConversation(adapter, msg);
 
     assert.ok(adapter.sentMessages.length >= 1);
+    // resolve() returns null for inactive bindings, so the user gets a "No active session" prompt
     assert.ok(
+      adapter.sentMessages[0].text.includes('No active session') ||
       adapter.sentMessages[0].text.includes('inactive'),
-      `Expected inactive message, got: ${adapter.sentMessages[0].text}`,
+      `Expected no-active-session message, got: ${adapter.sentMessages[0].text}`,
     );
   });
 

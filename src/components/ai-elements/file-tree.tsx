@@ -25,9 +25,11 @@ import {
   FileIcon,
   FolderIcon,
   FolderOpenIcon,
+  FolderPlusIcon,
   MinusIcon,
   PlusIcon,
   Trash2Icon,
+  UploadIcon,
   XIcon,
 } from "lucide-react";
 import {
@@ -50,6 +52,8 @@ interface FileTreeContextType {
   onPreview?: (path: string) => void;
   onDownload?: (path: string) => void;
   onDelete?: (path: string) => void;
+  onUpload?: (dirPath: string) => void;
+  onCreateFolder?: (dirPath: string) => void;
   attachedPaths?: Set<string>;
   gitStatusMap?: Map<string, string>;
   // Multi-select
@@ -108,6 +112,8 @@ export type FileTreeProps = HTMLAttributes<HTMLDivElement> & {
   onPreview?: (path: string) => void;
   onDownload?: (path: string) => void;
   onDelete?: (path: string) => void;
+  onUpload?: (dirPath: string) => void;
+  onCreateFolder?: (dirPath: string) => void;
   onExpandedChange?: (expanded: Set<string>) => void;
   attachedPaths?: Set<string>;
   gitStatusMap?: Map<string, string>;
@@ -127,6 +133,8 @@ export const FileTree = ({
   onPreview,
   onDownload,
   onDelete,
+  onUpload,
+  onCreateFolder,
   onExpandedChange,
   attachedPaths,
   gitStatusMap,
@@ -155,8 +163,8 @@ export const FileTree = ({
   );
 
   const contextValue = useMemo(
-    () => ({ attachedPaths, expandedPaths, gitStatusMap, onAdd, onDelete, onDownload, onPreview, onRemove, onSelect, onToggleSelect, selectedPath, selectedPaths, selectionMode, togglePath }),
-    [attachedPaths, expandedPaths, gitStatusMap, onAdd, onDelete, onDownload, onPreview, onRemove, onSelect, onToggleSelect, selectedPath, selectedPaths, selectionMode, togglePath]
+    () => ({ attachedPaths, expandedPaths, gitStatusMap, onAdd, onCreateFolder, onDelete, onDownload, onPreview, onRemove, onSelect, onToggleSelect, onUpload, selectedPath, selectedPaths, selectionMode, togglePath }),
+    [attachedPaths, expandedPaths, gitStatusMap, onAdd, onCreateFolder, onDelete, onDownload, onPreview, onRemove, onSelect, onToggleSelect, onUpload, selectedPath, selectedPaths, selectionMode, togglePath]
   );
 
   return (
@@ -199,7 +207,7 @@ export const FileTreeFolder = ({
   children,
   ...props
 }: FileTreeFolderProps) => {
-  const { expandedPaths, togglePath, onAdd, onRemove, attachedPaths, gitStatusMap, selectionMode, selectedPaths, onToggleSelect } =
+  const { expandedPaths, togglePath, onAdd, onRemove, onUpload, onCreateFolder, onDelete, attachedPaths, gitStatusMap, selectionMode, selectedPaths, onToggleSelect } =
     useContext(FileTreeContext);
   const isExpanded = expandedPaths.has(path);
   const isAttached = attachedPaths?.has(path) ?? false;
@@ -226,6 +234,30 @@ export const FileTreeFolder = ({
       }
     },
     [onAdd, onRemove, path, isAttached]
+  );
+
+  const handleUpload = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onUpload?.(path);
+    },
+    [onUpload, path]
+  );
+
+  const handleCreateFolder = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onCreateFolder?.(path);
+    },
+    [onCreateFolder, path]
+  );
+
+  const handleDelete = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onDelete?.(path);
+    },
+    [onDelete, path]
   );
 
   const longPress = useLongPress();
@@ -291,23 +323,62 @@ export const FileTreeFolder = ({
               )}
             </FileTreeIcon>
             <FileTreeName>{name}</FileTreeName>
-            {onAdd && (
+            {(onUpload || onCreateFolder || onDelete || onAdd) && (
               <span className="ml-auto flex shrink-0 items-center">
-                <button
-                  type="button"
-                  className={cn(
-                    "flex size-8 items-center justify-center rounded transition-opacity hover:bg-muted md:size-5",
-                    isAttached ? "opacity-100" : "md:opacity-0 md:group-hover/folder:opacity-100"
-                  )}
-                  onClick={handleAdd}
-                  title={isAttached ? "Remove folder from chat" : "Add folder to chat"}
-                >
-                  {isAttached ? (
-                    <MinusIcon className="size-4 text-orange-500 md:size-3" />
-                  ) : (
-                    <PlusIcon className="size-4 text-muted-foreground md:size-3" />
-                  )}
-                </button>
+                {(onUpload || onCreateFolder || onDelete) && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        className="flex size-8 items-center justify-center rounded transition-opacity hover:bg-muted md:size-5 md:opacity-0 md:group-hover/folder:opacity-100"
+                        onClick={(e) => e.stopPropagation()}
+                        title="More actions"
+                      >
+                        <EllipsisIcon className="size-4 text-muted-foreground md:size-3" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="min-w-[140px]">
+                      {onUpload && (
+                        <DropdownMenuItem onClick={handleUpload}>
+                          <UploadIcon className="size-4" />
+                          Upload files
+                        </DropdownMenuItem>
+                      )}
+                      {onCreateFolder && (
+                        <DropdownMenuItem onClick={handleCreateFolder}>
+                          <FolderPlusIcon className="size-4" />
+                          New folder
+                        </DropdownMenuItem>
+                      )}
+                      {onDelete && (
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onClick={handleDelete}
+                        >
+                          <Trash2Icon className="size-4" />
+                          Delete
+                        </DropdownMenuItem>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+                {onAdd && (
+                  <button
+                    type="button"
+                    className={cn(
+                      "flex size-8 items-center justify-center rounded transition-opacity hover:bg-muted md:size-5",
+                      isAttached ? "opacity-100" : "md:opacity-0 md:group-hover/folder:opacity-100"
+                    )}
+                    onClick={handleAdd}
+                    title={isAttached ? "Remove folder from chat" : "Add folder to chat"}
+                  >
+                    {isAttached ? (
+                      <MinusIcon className="size-4 text-orange-500 md:size-3" />
+                    ) : (
+                      <PlusIcon className="size-4 text-muted-foreground md:size-3" />
+                    )}
+                  </button>
+                )}
               </span>
             )}
               </div>

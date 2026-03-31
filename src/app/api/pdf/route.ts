@@ -4,7 +4,8 @@ import { generatePdf } from '@/lib/pdf-generator';
 export async function POST(request: NextRequest) {
   // Guard: reject oversized requests
   const contentLength = parseInt(request.headers.get('content-length') || '0');
-  if (contentLength > 10 * 1024 * 1024) {
+  const { MAX_PDF_REQUEST_SIZE } = await import('@/lib/config');
+  if (contentLength > MAX_PDF_REQUEST_SIZE) {
     return NextResponse.json({ error: 'Request too large' }, { status: 413 });
   }
 

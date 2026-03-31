@@ -37,7 +37,7 @@ interface CodexSkillEntry {
 
 let cachedSkills: CodexSkillEntry[] | null = null;
 let cachedAt = 0;
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+import { SKILLS_CACHE_TTL as CACHE_TTL } from '@/lib/config';
 
 const TEMP_SESSION_ID = '__codex_skills__';
 

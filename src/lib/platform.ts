@@ -100,7 +100,7 @@ export function getExpandedPath(): string {
 // install is detected immediately on the next check.
 let _cachedBinaryPath: string | undefined | null = null; // null = not cached
 let _cachedBinaryTimestamp = 0;
-const BINARY_CACHE_TTL = 60_000; // 60 seconds
+import { BINARY_CACHE_TTL } from '@/lib/config';
 
 /**
  * Find and validate the Claude CLI binary.

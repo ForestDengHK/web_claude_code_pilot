@@ -8,12 +8,14 @@ import { getDb } from '../db';
 import crypto from 'crypto';
 import type { ChannelBinding, ChannelType, PermissionLink } from './types';
 
-const MIGRATION_KEY = '__bridge_db_migrated__';
+// Track which DB instances have already had bridge tables created.
+// Using a WeakSet keyed on the DB instance means the flag resets automatically
+// when closeDb() + getDb() creates a new instance (important for tests).
+const migratedDbs = new WeakSet<object>();
 
 function ensureBridgeTables(): void {
-  const g = globalThis as unknown as Record<string, boolean>;
-  if (g[MIGRATION_KEY]) return;
   const db = getDb();
+  if (migratedDbs.has(db)) return;
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS channel_bindings (
@@ -75,7 +77,7 @@ function ensureBridgeTables(): void {
     );
   `);
 
-  g[MIGRATION_KEY] = true;
+  migratedDbs.add(db);
 }
 
 // ==========================================
@@ -393,8 +395,9 @@ export function markPermissionLinkResolved(permissionRequestId: string): boolean
 // Reset (for testing)
 // ==========================================
 
-/** @internal — reset migration flag so tables are re-checked */
+/** @internal — no-op: WeakSet-based migration flag resets automatically when DB is closed/reopened */
 export function _resetMigrationFlag(): void {
-  const g = globalThis as unknown as Record<string, boolean>;
-  delete g[MIGRATION_KEY];
+  // No-op: migratedDbs is a WeakSet keyed on the DB instance.
+  // Once closeDb() is called and a new DB instance is created by getDb(),
+  // ensureBridgeTables() will run again automatically.
 }
