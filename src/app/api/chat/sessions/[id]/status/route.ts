@@ -5,6 +5,12 @@ import { getPendingInputRequestForSession } from '@/lib/input-request-registry';
 import { getStreamBuffer } from '@/lib/streaming-buffer-registry';
 import { getLastMessageInfo } from '@/lib/db';
 
+// Capture process start time once at module load.
+// Used to distinguish messages sent before vs. after a server restart:
+// if the last user message was sent before the server started, the DB hint
+// must not fire (processing was lost when the server restarted).
+const SERVER_START_TIME = Date.now();
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -22,15 +28,20 @@ export async function GET(
   const streamBuffer = getStreamBuffer(sessionId);
 
   // If in-memory registries don't show active, check DB as a hint.
-  // Only use the hint if the last user message was sent within 5 minutes
-  // (prevents permanently stuck isProcessing if backend crashed).
+  // Only use the hint if the last user message was sent AFTER this server
+  // process started AND within 5 minutes.
+  // Requiring msgTime > SERVER_START_TIME prevents a permanently stuck
+  // "Reconnecting" state after a dev-server restart: on restart the
+  // in-memory registries are empty and the DB still shows a bare 'user'
+  // message from the previous run, but that message pre-dates this process
+  // so we know the processing was lost.
   let dbHint = false;
   if (!abortActive && !streamBuffer) {
     const lastMsg = getLastMessageInfo(sessionId);
     if (lastMsg?.role === 'user') {
       const msgTime = new Date(lastMsg.created_at.replace(' ', 'T') + 'Z').getTime();
       const ageMs = Date.now() - msgTime;
-      dbHint = ageMs < 5 * 60 * 1000; // 5 minutes
+      dbHint = ageMs < 5 * 60 * 1000 && msgTime > SERVER_START_TIME;
     }
   }
 

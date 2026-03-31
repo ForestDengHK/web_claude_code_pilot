@@ -1,4 +1,3 @@
-import type { Message } from '@/types';
 import type { RateLimitInfo } from '@/hooks/useSSEStream';
 
 /**
@@ -11,43 +10,6 @@ export interface ClaudeAccountInfo {
   tokenSource?: string;
   apiKeySource?: string;
   apiProvider?: 'firstParty' | 'bedrock' | 'vertex' | 'foundry' | string;
-}
-
-/**
- * Aggregate session token data from messages.
- */
-interface SessionTokenSummary {
-  totalInput: number;
-  totalOutput: number;
-  totalCacheRead: number;
-  totalCacheCreation: number;
-  totalCost: number;
-  turnCount: number;
-}
-
-function aggregateSessionTokens(messages: Message[]): SessionTokenSummary {
-  let totalInput = 0;
-  let totalOutput = 0;
-  let totalCacheRead = 0;
-  let totalCacheCreation = 0;
-  let totalCost = 0;
-  let turnCount = 0;
-
-  for (const msg of messages) {
-    if (msg.token_usage) {
-      try {
-        const usage = typeof msg.token_usage === 'string' ? JSON.parse(msg.token_usage) : msg.token_usage;
-        totalInput += usage.input_tokens || 0;
-        totalOutput += usage.output_tokens || 0;
-        totalCacheRead += usage.cache_read_input_tokens || 0;
-        totalCacheCreation += usage.cache_creation_input_tokens || 0;
-        if (usage.cost_usd) totalCost += usage.cost_usd;
-        turnCount++;
-      } catch { /* skip */ }
-    }
-  }
-
-  return { totalInput, totalOutput, totalCacheRead, totalCacheCreation, totalCost, turnCount };
 }
 
 function formatProvider(provider: string | undefined): string {
@@ -107,6 +69,10 @@ function statusEmoji(status: string): string {
   }
 }
 
+function formatPercent(value: number): string {
+  return value % 1 === 0 ? value.toFixed(0) : value.toFixed(1);
+}
+
 function formatTimeUntilReset(resetsAt: number): string {
   const now = Date.now() / 1000;
   const diff = resetsAt - now;
@@ -127,18 +93,19 @@ function formatTimeUntilReset(resetsAt: number): string {
 function formatSingleRateLimit(rl: RateLimitInfo): string[] {
   const lines: string[] = [];
   const limitType = formatRateLimitType(rl.rateLimitType);
+  const emoji = statusEmoji(rl.status);
 
   if (typeof rl.utilization === 'number') {
-    const pct = (rl.utilization * 100);
-    const pctStr = pct % 1 === 0 ? pct.toFixed(0) : pct.toFixed(1);
+    const usedPct = Math.max(0, Math.min(100, rl.utilization * 100));
+    const remainingPct = Math.max(0, 100 - usedPct);
     // Progress bar: 20 chars wide
     const filled = Math.min(20, Math.round(rl.utilization * 20));
     const bar = '█'.repeat(filled) + '░'.repeat(20 - filled);
-    const emoji = statusEmoji(rl.status);
-    lines.push(`**${limitType}** ${emoji} ${pctStr}% used`);
+    lines.push(`**${limitType}** ${emoji}`);
+    lines.push(`Used ${formatPercent(usedPct)}% · Remaining ${formatPercent(remainingPct)}%`);
     lines.push(`\`${bar}\``);
   } else {
-    lines.push(`**${limitType}**: ${statusEmoji(rl.status)} ${formatRateLimitStatus(rl.status)}`);
+    lines.push(`**${limitType}**: ${emoji} ${formatRateLimitStatus(rl.status)}`);
   }
 
   if (rl.resetsAt) {
@@ -159,11 +126,10 @@ const RATE_LIMIT_ORDER: Record<string, number> = {
 };
 
 /**
- * Format Claude account info + session tokens + rate limits into a markdown message.
+ * Format Claude account info + rate limits into a markdown message.
  */
 export function formatClaudeUsageMarkdown(
   account: ClaudeAccountInfo | null,
-  messages: Message[],
   rateLimits?: RateLimitInfo[] | null,
 ): string {
   const lines: string[] = ['## Account Usage'];
@@ -211,7 +177,7 @@ export function formatClaudeUsageMarkdown(
     });
 
     lines.push('');
-    lines.push('### Rate Limits');
+    lines.push('### Remaining Quota');
 
     for (const rl of validLimits) {
       lines.push('');
@@ -229,38 +195,13 @@ export function formatClaudeUsageMarkdown(
     }
   }
 
-  // Session tokens section
-  const session = aggregateSessionTokens(messages);
-
-  if (session.turnCount > 0) {
-    const totalTokens = session.totalInput + session.totalOutput;
-    lines.push('');
-    lines.push('### Session Usage');
-    lines.push('');
-    lines.push('| Metric | Count |');
-    lines.push('|--------|-------|');
-    lines.push(`| Input tokens | ${session.totalInput.toLocaleString()} |`);
-    lines.push(`| Output tokens | ${session.totalOutput.toLocaleString()} |`);
-    if (session.totalCacheRead > 0) {
-      lines.push(`| Cache read | ${session.totalCacheRead.toLocaleString()} |`);
-    }
-    if (session.totalCacheCreation > 0) {
-      lines.push(`| Cache creation | ${session.totalCacheCreation.toLocaleString()} |`);
-    }
-    lines.push(`| **Total tokens** | **${totalTokens.toLocaleString()}** |`);
-    lines.push(`| Turns | ${session.turnCount} |`);
-    if (session.totalCost > 0) {
-      lines.push(`| **Estimated cost** | **$${session.totalCost.toFixed(4)}** |`);
-    }
-  } else {
-    lines.push('');
-    lines.push('*No token usage data in this session yet.*');
-  }
-
   // Note about rate limit availability
   if (validLimits.length === 0) {
     lines.push('');
-    lines.push('> Rate limit data will appear after sending at least one message.');
+    lines.push('> Rate limit data will appear after sending at least one Claude message.');
+  } else {
+    lines.push('');
+    lines.push('> Session token counts are shown under each assistant message and via `/cost`.');
   }
 
   return lines.join('\n');

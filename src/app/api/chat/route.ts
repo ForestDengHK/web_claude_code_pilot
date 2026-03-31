@@ -335,7 +335,7 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
                 const statusData = JSON.parse(event.data);
                 if (statusData.session_id) {
                   updateSdkSessionId(sessionId, statusData.session_id);
-                  setStreamStatusText(sessionId, `Connected (${statusData.model || 'claude'})`);
+                  setStreamStatusText(sessionId, `Connected (${statusData.model || statusData.session_id || 'model'})`);
                 } else if (statusData.notification) {
                   setStreamStatusText(sessionId, statusData.message || statusData.title || undefined);
                 }

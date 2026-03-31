@@ -108,7 +108,7 @@ function handleSSEEvent(
       try {
         const statusData = JSON.parse(event.data);
         if (statusData.session_id) {
-          callbacks.onStatus(`Connected (${statusData.model || 'claude'})`);
+          callbacks.onStatus(`Connected (${statusData.model || 'model'})`);
         } else if (statusData.notification) {
           callbacks.onStatus(statusData.message || statusData.title || undefined);
         } else {

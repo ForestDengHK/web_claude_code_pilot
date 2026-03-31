@@ -86,6 +86,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [currentBackend, setCurrentBackendRaw] = useState<'claude' | 'codex'>(backend || 'claude');
   const [currentModel, setCurrentModelRaw] = useState(modelName || '');
   const [currentEffort, setCurrentEffort] = useState<string | undefined>();
+
+  // Sync backend prop → state when parent loads session data after initial render
+  useEffect(() => {
+    if (backend) setCurrentBackendRaw(backend);
+  }, [backend]);
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
   const [pendingInputRequest, setPendingInputRequest] = useState<InputRequestEvent | null>(null);
@@ -186,10 +191,16 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       const data: MessagesResponse = await res.json();
       setMessages(data.messages);
       setHasMore(data.hasMore ?? false);
-      // Backend is done if the last message is a complete assistant message.
-      // Draft messages (status='streaming') mean Claude is still running.
       const lastMsg = data.messages[data.messages.length - 1];
-      return lastMsg?.role === 'assistant' && lastMsg.status !== 'streaming';
+      // Done if the last message is a complete assistant message.
+      if (lastMsg?.role === 'assistant' && lastMsg.status !== 'streaming') return true;
+      // Also treat "last message is user" as done — this means the task was lost
+      // (e.g. dev server restarted mid-response). Stop recovery immediately so the
+      // user isn't stuck on "Reconnecting..." for 30 seconds; they can just resend.
+      if (lastMsg?.role === 'user') return true;
+      // Last message is a streaming assistant message — backend may not have
+      // finished writing to DB yet. Keep retrying.
+      return false;
     } catch {
       return false;
     }
@@ -1065,7 +1076,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           }
           const allRateLimits = Array.from(merged.values());
 
-          content = formatClaudeUsageMarkdown(account, messages, allRateLimits);
+          content = formatClaudeUsageMarkdown(account, allRateLimits);
         }
 
         const usageMessage: Message = {

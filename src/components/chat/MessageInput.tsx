@@ -109,8 +109,8 @@ const COMMAND_PROMPTS: Record<string, string> = {
 const BUILT_IN_COMMANDS: PopoverItem[] = [
   { label: 'help', value: '/help', description: 'Show available commands and tips', builtIn: true, immediate: true, icon: HelpCircleIcon },
   { label: 'clear', value: '/clear', description: 'Clear conversation history', builtIn: true, immediate: true, icon: Delete02Icon },
-  { label: 'cost', value: '/cost', description: 'Show token usage statistics', builtIn: true, immediate: true, icon: Coins01Icon },
-  { label: 'usage', value: '/usage', description: 'Show account info and usage', builtIn: true, immediate: true, icon: GlobalIcon },
+  { label: 'cost', value: '/cost', description: 'Show session token usage guidance', builtIn: true, immediate: true, icon: Coins01Icon },
+  { label: 'usage', value: '/usage', description: 'Show account quota and rate limits', builtIn: true, immediate: true, icon: GlobalIcon },
   { label: 'compact', value: '/compact', description: 'Compress conversation context', builtIn: true, icon: FileZipIcon },
   { label: 'doctor', value: '/doctor', description: 'Diagnose project health', builtIn: true, icon: Stethoscope02Icon },
   { label: 'init', value: '/init', description: 'Initialize CLAUDE.md for project', builtIn: true, icon: FileEditIcon },
