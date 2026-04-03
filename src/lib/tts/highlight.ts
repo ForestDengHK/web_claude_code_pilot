@@ -1,6 +1,16 @@
 'use client';
 
 /**
+ * Result from findTextRange, includes both the DOM Range and the matched
+ * offset in accumulated DOM text (used for sequential position tracking).
+ */
+export interface FindTextResult {
+  range: Range;
+  /** End offset in accumulated DOM text — pass as searchAfter for the next sequential search */
+  textOffset: number;
+}
+
+/**
  * Find text in the DOM that corresponds to a TTS segment.
  *
  * The challenge: TTS segments come from stripped text (no code, no emoji),
@@ -11,16 +21,22 @@
  * 2. Exact string match in concatenated text nodes (fast path)
  * 3. Subsequence match (handles code/emoji in DOM)
  * 4. Alphanumeric-only fallback (handles punctuation mismatches)
+ *
+ * @param searchAfter - Offset in accumulated DOM text to start searching from.
+ *   When reading sequentially, pass the previous result's textOffset so that
+ *   repeated/similar text later in the document matches correctly instead of
+ *   always matching the first occurrence.
  */
-export function findTextRange(container: HTMLElement, searchText: string): Range | null {
+export function findTextRange(
+  container: HTMLElement,
+  searchText: string,
+  searchAfter: number = 0,
+): FindTextResult | null {
   const search = searchText.replace(/\s+/g, ' ').trim();
   if (!search) return null;
 
-  // 1. Table row matching — detect "Header: Value, Header: Value." pattern
-  const tableRange = findTableRowMatch(container, search);
-  if (tableRange) return tableRange;
-
-  // Collect all text nodes with their raw content
+  // Always collect text nodes first — needed for both table textOffset
+  // computation and the text-based matching strategies
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
   const textNodes: { node: Text; start: number }[] = [];
   let accumulated = '';
@@ -35,11 +51,24 @@ export function findTextRange(container: HTMLElement, searchText: string): Range
 
   if (!accumulated) return null;
 
-  // 2. Try exact match (fast path)
-  const exactIdx = accumulated.indexOf(search);
+  // Small backward buffer to handle slight SRT segment overlap
+  const startFrom = searchAfter > 0 ? Math.max(0, searchAfter - 10) : 0;
+
+  // 1. Table row matching — detect "Header: Value, Header: Value." pattern
+  const tableResult = findTableRowMatch(container, search, textNodes, startFrom);
+  if (tableResult) return tableResult;
+
+  // 2. Try exact match (fast path) — search from expected position first
+  let exactIdx = startFrom > 0 ? accumulated.indexOf(search, startFrom) : -1;
+  if (exactIdx === -1) exactIdx = accumulated.indexOf(search);
   if (exactIdx !== -1) {
-    return buildRange(textNodes, exactIdx, exactIdx + search.length);
+    const range = buildRange(textNodes, exactIdx, exactIdx + search.length);
+    if (range) return { range, textOffset: exactIdx + search.length };
   }
+
+  // Max allowed match span for fuzzy strategies — prevents absurdly large
+  // ranges when prefix matches early and suffix matches late
+  const maxSpan = search.length * 3 + 100;
 
   // 3. Subsequence match: find the first and last characters of the search text
   // in the accumulated DOM text, allowing extra content in between.
@@ -47,18 +76,26 @@ export function findTextRange(container: HTMLElement, searchText: string): Range
   //   search: "目标目录 () 写死了"  (code stripped, empty parens)
   //   DOM:    "目标目录 (/Users/party/working) 写死了"  (code still present)
 
-  const firstMatchStart = findSubsequenceStart(accumulated, search);
-  if (firstMatchStart !== -1) {
-    const lastMatchEnd = findSubsequenceEnd(accumulated, search, firstMatchStart);
-    if (lastMatchEnd !== -1) {
-      return buildRange(textNodes, firstMatchStart, lastMatchEnd);
+  let seqStart = findSubsequenceStart(accumulated, search, startFrom);
+  if (seqStart === -1 && startFrom > 0) {
+    seqStart = findSubsequenceStart(accumulated, search, 0);
+  }
+  if (seqStart !== -1) {
+    const seqEnd = findSubsequenceEnd(accumulated, search, seqStart);
+    if (seqEnd !== -1 && (seqEnd - seqStart) <= maxSpan) {
+      const range = buildRange(textNodes, seqStart, seqEnd);
+      if (range) return { range, textOffset: seqEnd };
     }
   }
 
   // 4. Alphanumeric-only fallback — strip punctuation from search then match
-  const alphaMatch = findAlphaMatch(accumulated, search);
-  if (alphaMatch) {
-    return buildRange(textNodes, alphaMatch.start, alphaMatch.end);
+  let alphaResult = findAlphaMatch(accumulated, search, startFrom);
+  if (!alphaResult && startFrom > 0) {
+    alphaResult = findAlphaMatch(accumulated, search, 0);
+  }
+  if (alphaResult && (alphaResult.end - alphaResult.start) <= maxSpan) {
+    const range = buildRange(textNodes, alphaResult.start, alphaResult.end);
+    if (range) return { range, textOffset: alphaResult.end };
   }
 
   return null;
@@ -70,52 +107,117 @@ export function findTextRange(container: HTMLElement, searchText: string): Range
  * The TTS reads tables as "Col1: Val1, Col2: Val2." per row, but the DOM has
  * the values in <td> cells. We find cells matching the values and highlight
  * their parent <tr>.
+ *
+ * @param textNodes - Pre-collected text nodes with accumulated offsets, used to
+ *   compute textOffset and for position-aware row filtering.
+ * @param startFrom - Offset in accumulated DOM text; rows before this position
+ *   are skipped (for sequential reading through multi-row tables).
  */
-function findTableRowMatch(container: HTMLElement, searchText: string): Range | null {
-  // Detect "Key: Value" pattern (at least 1 pair)
+function findTableRowMatch(
+  container: HTMLElement,
+  searchText: string,
+  textNodes: { node: Text; start: number }[],
+  startFrom: number,
+): FindTextResult | null {
+  // Detect "Key: Value" pattern — require at least 2 pairs to avoid false
+  // positives on regular sentences that happen to contain a colon
+  // (e.g. "注意: 这个功能还在开发中" would match 1 pair but isn't a table)
   const pairPattern = /([\w\u4e00-\u9fff\u3400-\u4dbf]+)\s*:\s*([^,.\n]+)/g;
   const pairs: { header: string; value: string }[] = [];
   let m: RegExpExecArray | null;
   while ((m = pairPattern.exec(searchText)) !== null) {
     pairs.push({ header: m[1].trim(), value: m[2].trim() });
   }
-  if (pairs.length < 1) return null;
+  if (pairs.length < 2) return null;
 
   // Only trigger if the container actually has a table
-  const cells = container.querySelectorAll('td');
-  if (cells.length === 0) return null;
+  const tdCells = container.querySelectorAll('td');
+  if (tdCells.length === 0) return null;
 
   const values = pairs.map(p => p.value.toLowerCase());
 
-  // Find the <tr> whose cells best match our values
-  const rows = container.querySelectorAll('tbody tr, tr');
-  let bestRow: Element | null = null;
-  let bestScore = 0;
+  // Helper: get the text offset where a row starts in accumulated DOM text
+  const getRowStartOffset = (row: Element): number => {
+    for (const { node, start } of textNodes) {
+      if (row.contains(node)) return start;
+    }
+    return -1;
+  };
 
-  for (const row of rows) {
+  // Helper: get the text offset where a row ends in accumulated DOM text
+  const getRowEndOffset = (row: Element): number => {
+    let endPos = -1;
+    for (const { node, start } of textNodes) {
+      if (row.contains(node)) {
+        endPos = start + (node.textContent?.length || 0);
+      }
+    }
+    return endPos;
+  };
+
+  // Score a row: count how many cells match a value
+  const scoreRow = (row: Element): number => {
     const rowCells = row.querySelectorAll('td');
-    if (rowCells.length === 0) continue; // skip header rows (th only)
+    if (rowCells.length === 0) return 0; // skip header rows (th only)
 
     let score = 0;
     for (const cell of rowCells) {
       const cellText = (cell.textContent || '').trim().toLowerCase();
-      if (values.some(v => cellText.includes(v) || v.includes(cellText))) {
+      if (!cellText) continue;
+      if (values.some(v =>
+        cellText.includes(v) ||
+        // Reverse match: only if cell text is substantial (>=2 chars)
+        // to prevent single-char cells from matching everything
+        (cellText.length >= 2 && v.includes(cellText))
+      )) {
         score++;
       }
     }
+    return score;
+  };
 
-    if (score > bestScore) {
-      bestScore = score;
-      bestRow = row;
+  // Find the best matching <tr>, preferring rows at or after startFrom
+  const rows = container.querySelectorAll('tbody tr, tr');
+
+  let bestRow: Element | null = null;
+  let bestScore = 0;
+
+  // First pass: only consider rows at or after startFrom
+  if (startFrom > 0) {
+    for (const row of rows) {
+      const rowStart = getRowStartOffset(row);
+      if (rowStart < startFrom) continue; // skip rows we've already passed
+
+      const score = scoreRow(row);
+      if (score > bestScore) {
+        bestScore = score;
+        bestRow = row;
+      }
+    }
+  }
+
+  // Fallback: if no row matched after startFrom, search all rows
+  if (!bestRow || bestScore === 0) {
+    bestScore = 0;
+    for (const row of rows) {
+      const score = scoreRow(row);
+      if (score > bestScore) {
+        bestScore = score;
+        bestRow = row;
+      }
     }
   }
 
   if (!bestRow || bestScore === 0) return null;
 
+  // Compute textOffset from the matched row's end position
+  let bestEndOffset = getRowEndOffset(bestRow);
+  if (bestEndOffset < 0) bestEndOffset = startFrom;
+
   try {
     const range = document.createRange();
     range.selectNodeContents(bestRow);
-    return range;
+    return { range, textOffset: bestEndOffset };
   } catch {
     return null;
   }
@@ -130,6 +232,7 @@ function findTableRowMatch(container: HTMLElement, searchText: string): Range | 
 function findAlphaMatch(
   domText: string,
   searchText: string,
+  startFrom: number = 0,
 ): { start: number; end: number } | null {
   // Extract significant words (2+ chars) from search text
   const words = searchText.match(/[\w\u4e00-\u9fff\u3400-\u4dbf]{2,}/gu);
@@ -137,7 +240,7 @@ function findAlphaMatch(
 
   // Find each word in the DOM, tracking positions
   const positions: { pos: number; end: number }[] = [];
-  let searchFrom = 0;
+  let searchFrom = startFrom;
   for (const word of words) {
     const pos = domText.indexOf(word, searchFrom);
     if (pos !== -1) {
@@ -158,19 +261,19 @@ function findAlphaMatch(
  * Find where the search text starts as a subsequence in the DOM text.
  * Match the first few characters of search contiguously to anchor the start.
  */
-function findSubsequenceStart(domText: string, search: string): number {
+function findSubsequenceStart(domText: string, search: string, startFrom: number = 0): number {
   // Use a reasonable prefix to anchor — first 6 chars or full search if shorter
   const prefixLen = Math.min(6, search.length);
   const prefix = search.slice(0, prefixLen);
 
   // Try exact prefix match
-  const idx = domText.indexOf(prefix);
+  const idx = domText.indexOf(prefix, startFrom);
   if (idx !== -1) return idx;
 
   // Try progressively shorter prefixes (min 2 chars)
   for (let len = prefixLen - 1; len >= 2; len--) {
     const shorter = search.slice(0, len);
-    const sIdx = domText.indexOf(shorter);
+    const sIdx = domText.indexOf(shorter, startFrom);
     if (sIdx !== -1) return sIdx;
   }
 

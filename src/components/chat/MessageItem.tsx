@@ -380,24 +380,40 @@ export function MessageItem({ message, searchQuery, isLatestMessage }: MessageIt
 
   const isThisMessageActive = tts.activeMessageId === `msg-${message.id}`;
 
+  // Sequential position tracking — prevents highlight from jumping to
+  // earlier occurrences of repeated/similar text in the message
+  const lastMatchEndRef = useRef(0);
+  const prevSegmentRef = useRef(-1);
+
   useEffect(() => {
     // Cleanup previous highlight
     cleanupRef.current?.();
     cleanupRef.current = null;
 
-    if (!isThisMessageActive || !responseRef.current) return;
+    if (!isThisMessageActive || !responseRef.current) {
+      lastMatchEndRef.current = 0;
+      prevSegmentRef.current = -1;
+      return;
+    }
     if (tts.activeSegmentIndex < 0 || tts.activeSegmentIndex >= tts.segments.length) return;
 
-    const activeSegment = tts.segments[tts.activeSegmentIndex];
-    const range = findTextRange(responseRef.current, activeSegment.text);
-    if (!range) return;
+    // Only use position tracking for sequential advance (index incremented by 1);
+    // for seeks or jumps, reset to search from the beginning
+    const isSequential = tts.activeSegmentIndex === prevSegmentRef.current + 1;
+    prevSegmentRef.current = tts.activeSegmentIndex;
+    const searchAfter = isSequential ? lastMatchEndRef.current : 0;
 
-    cleanupRef.current = highlightRange(range, responseRef.current);
+    const activeSegment = tts.segments[tts.activeSegmentIndex];
+    const result = findTextRange(responseRef.current, activeSegment.text, searchAfter);
+    if (!result) return;
+
+    lastMatchEndRef.current = result.textOffset;
+    cleanupRef.current = highlightRange(result.range, responseRef.current);
 
     // Auto-scroll
     const scrollContainer = responseRef.current.closest('[data-scroll-container]') ||
       responseRef.current.closest('[data-test-id="virtuoso-scroller"]');
-    scrollToRange(range, scrollContainer);
+    scrollToRange(result.range, scrollContainer);
 
     return () => {
       cleanupRef.current?.();
@@ -416,11 +432,14 @@ export function MessageItem({ message, searchQuery, isLatestMessage }: MessageIt
     if (target.closest('button, a')) return;
 
     // Find which segment contains the clicked position
+    // Seek handler searches all segments sequentially from document start
+    let seekSearchAfter = 0;
     for (let i = 0; i < tts.segments.length; i++) {
-      const range = findTextRange(responseRef.current, tts.segments[i].text);
-      if (!range) continue;
+      const result = findTextRange(responseRef.current, tts.segments[i].text, seekSearchAfter);
+      if (!result) continue;
+      seekSearchAfter = result.textOffset;
 
-      const rects = range.getClientRects();
+      const rects = result.range.getClientRects();
       for (let r = 0; r < rects.length; r++) {
         const rect = rects[r];
         if (e.clientX >= rect.left && e.clientX <= rect.right &&

@@ -138,23 +138,40 @@ export function DocPreview({
   const ttsCleanupRef = useRef<(() => void) | null>(null);
   const isThisFileActive = tts.activeMessageId === ttsMessageId;
 
+  // Sequential position tracking — prevents highlight from jumping to
+  // earlier occurrences of repeated/similar text in the document
+  const lastMatchEndRef = useRef(0);
+  const prevSegmentRef = useRef(-1);
+
   // TTS highlight effect
   useEffect(() => {
     ttsCleanupRef.current?.();
     ttsCleanupRef.current = null;
 
-    if (!isThisFileActive || !renderedContentRef.current) return;
+    if (!isThisFileActive || !renderedContentRef.current) {
+      // Reset position tracking when TTS is not active on this file
+      lastMatchEndRef.current = 0;
+      prevSegmentRef.current = -1;
+      return;
+    }
     if (tts.activeSegmentIndex < 0 || tts.activeSegmentIndex >= tts.segments.length) return;
 
-    const activeSegment = tts.segments[tts.activeSegmentIndex];
-    const range = findTextRange(renderedContentRef.current, activeSegment.text);
-    if (!range) return;
+    // Only use position tracking for sequential advance (index incremented by 1);
+    // for seeks or jumps, reset to search from the beginning
+    const isSequential = tts.activeSegmentIndex === prevSegmentRef.current + 1;
+    prevSegmentRef.current = tts.activeSegmentIndex;
+    const searchAfter = isSequential ? lastMatchEndRef.current : 0;
 
-    ttsCleanupRef.current = highlightRange(range, renderedContentRef.current);
+    const activeSegment = tts.segments[tts.activeSegmentIndex];
+    const result = findTextRange(renderedContentRef.current, activeSegment.text, searchAfter);
+    if (!result) return;
+
+    lastMatchEndRef.current = result.textOffset;
+    ttsCleanupRef.current = highlightRange(result.range, renderedContentRef.current);
 
     // Auto-scroll within the preview's scroll container
     const scrollContainer = renderedContentRef.current.closest('.flex-1.min-h-0.overflow-auto');
-    scrollToRange(range, scrollContainer);
+    scrollToRange(result.range, scrollContainer);
 
     return () => {
       ttsCleanupRef.current?.();
@@ -180,11 +197,14 @@ export function DocPreview({
     const target = e.target as HTMLElement;
     if (target.closest('button, a')) return;
 
+    // Seek handler searches all segments sequentially from document start
+    let seekSearchAfter = 0;
     for (let i = 0; i < tts.segments.length; i++) {
-      const range = findTextRange(renderedContentRef.current, tts.segments[i].text);
-      if (!range) continue;
+      const result = findTextRange(renderedContentRef.current, tts.segments[i].text, seekSearchAfter);
+      if (!result) continue;
+      seekSearchAfter = result.textOffset;
 
-      const rects = range.getClientRects();
+      const rects = result.range.getClientRects();
       for (let r = 0; r < rects.length; r++) {
         const rect = rects[r];
         if (e.clientX >= rect.left && e.clientX <= rect.right &&
