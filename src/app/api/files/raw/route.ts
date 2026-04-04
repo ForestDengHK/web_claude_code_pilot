@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
-import fs from 'fs/promises';
+import { createReadStream } from 'fs';
+import fsp from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { isPathSafe } from '@/lib/files';
@@ -71,9 +72,13 @@ const MIME_TYPES: Record<string, string> = {
   '.gz': 'application/gzip',
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.aac': 'audio/aac',
+  '.flac': 'audio/flac',
   '.mp4': 'video/mp4',
   '.mov': 'video/quicktime',
   '.webm': 'video/webm',
+  '.m4v': 'video/mp4',
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
   '.ttf': 'font/ttf',
@@ -81,8 +86,57 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 /**
- * Serve raw file content from the user's home directory.
- * Security: only allows reading files within the user's home directory.
+ * Convert a Node.js Readable stream into a Web ReadableStream<Uint8Array>.
+ * Handles cleanup: cancel() destroys the underlying file stream to release the fd.
+ */
+function nodeStreamToWeb(nodeReadable: import('stream').Readable): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      nodeReadable.pause();
+      nodeReadable.on('data', (chunk: Buffer) => {
+        controller.enqueue(new Uint8Array(chunk));
+        // Backpressure: pause the Node stream when the web stream's buffer is full.
+        // This prevents unbounded memory growth during rapid video seeking.
+        if (controller.desiredSize !== null && controller.desiredSize <= 0) {
+          nodeReadable.pause();
+        }
+      });
+      nodeReadable.on('end', () => controller.close());
+      nodeReadable.on('error', (err) => controller.error(err));
+    },
+    pull() {
+      nodeReadable.resume();
+    },
+    cancel() {
+      nodeReadable.destroy();
+    },
+  });
+}
+
+/**
+ * Parse a single-range "Range: bytes=START-END" header.
+ * Returns null if absent or malformed. Multi-range is intentionally unsupported
+ * (browsers never send multi-range for media).
+ */
+function parseRange(header: string | null): { start: number; end: number | undefined } | null {
+  if (!header) return null;
+  const match = /^bytes=(\d+)-(\d*)$/.exec(header.trim());
+  if (!match) return null;
+  const start = parseInt(match[1], 10);
+  const end = match[2] ? parseInt(match[2], 10) : undefined;
+  return { start, end };
+}
+
+/**
+ * Serve raw file content with HTTP Range support for streaming media.
+ *
+ * - All responses include `Accept-Ranges: bytes` to signal range capability
+ * - Range requests (e.g. video seek) return 206 Partial Content
+ * - Files are streamed via fs.createReadStream (no full-file memory buffering)
+ * - Exception: text file downloads still use full buffer for BOM prepending
+ *
+ * Security: only allows reading files within the user's home directory
+ * or an explicitly provided baseDir.
  */
 export async function GET(request: NextRequest) {
   const filePath = request.nextUrl.searchParams.get('path');
@@ -109,7 +163,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    await fs.access(resolved);
+    await fsp.access(resolved);
   } catch {
     return new Response(JSON.stringify({ error: 'File not found' }), {
       status: 404,
@@ -117,7 +171,7 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const stat = await fs.stat(resolved);
+  const stat = await fsp.stat(resolved);
   if (!stat.isFile()) {
     return new Response(JSON.stringify({ error: 'Not a file' }), {
       status: 400,
@@ -125,24 +179,81 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  let buffer = await fs.readFile(resolved);
+  const fileSize = stat.size;
   const ext = path.extname(resolved).toLowerCase();
   const baseMime = MIME_TYPES[ext] || 'application/octet-stream';
   const isText = baseMime.startsWith('text/');
   const contentType = isText ? `${baseMime}; charset=utf-8` : baseMime;
   const isDownload = request.nextUrl.searchParams.get('download') === '1';
   const disposition = isDownload ? 'attachment' : 'inline';
+  const dispositionHeader = `${disposition}; filename="${path.basename(resolved)}"`;
 
-  // Prepend UTF-8 BOM for text file downloads so mobile text editors
-  // can detect the encoding correctly (without BOM, Chinese/Japanese/etc. become garbled)
-  if (isText && isDownload && buffer.length > 0 && !(buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF)) {
-    buffer = Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), buffer]);
+  // ── Text file download: full buffer for BOM prepending (unchanged behavior) ──
+  if (isText && isDownload) {
+    let buffer = await fsp.readFile(resolved);
+    // Prepend UTF-8 BOM for text file downloads so mobile text editors
+    // can detect the encoding correctly (without BOM, Chinese/Japanese/etc. become garbled)
+    if (buffer.length > 0 && !(buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF)) {
+      buffer = Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), buffer]);
+    }
+    return new Response(buffer, {
+      headers: {
+        'Content-Type': contentType,
+        'Content-Disposition': dispositionHeader,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': String(buffer.length),
+      },
+    });
   }
 
-  return new Response(buffer, {
+  // ── Range request: 206 Partial Content (enables video/audio seeking) ──
+  const rangeHeader = request.headers.get('range');
+  const parsed = parseRange(rangeHeader);
+
+  if (parsed !== null) {
+    const rangeStart = parsed.start;
+    const rangeEnd = parsed.end !== undefined
+      ? Math.min(parsed.end, fileSize - 1)
+      : fileSize - 1;
+
+    // Unsatisfiable range
+    if (rangeStart >= fileSize || rangeStart > rangeEnd) {
+      return new Response(null, {
+        status: 416,
+        headers: {
+          'Content-Range': `bytes */${fileSize}`,
+          'Accept-Ranges': 'bytes',
+        },
+      });
+    }
+
+    const chunkSize = rangeEnd - rangeStart + 1;
+    const nodeStream = createReadStream(resolved, { start: rangeStart, end: rangeEnd });
+    const webStream = nodeStreamToWeb(nodeStream);
+
+    return new Response(webStream, {
+      status: 206,
+      headers: {
+        'Content-Type': contentType,
+        'Content-Disposition': dispositionHeader,
+        'Content-Range': `bytes ${rangeStart}-${rangeEnd}/${fileSize}`,
+        'Content-Length': String(chunkSize),
+        'Accept-Ranges': 'bytes',
+      },
+    });
+  }
+
+  // ── Normal request: stream full file (no memory buffering) ──
+  const nodeStream = createReadStream(resolved);
+  const webStream = nodeStreamToWeb(nodeStream);
+
+  return new Response(webStream, {
+    status: 200,
     headers: {
       'Content-Type': contentType,
-      'Content-Disposition': `${disposition}; filename="${path.basename(resolved)}"`,
+      'Content-Disposition': dispositionHeader,
+      'Content-Length': String(fileSize),
+      'Accept-Ranges': 'bytes',
     },
   });
 }

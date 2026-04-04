@@ -36,6 +36,10 @@ const PREVIEWABLE_EXTENSIONS = new Set([
   "md", "mdx", "html", "htm", "json", "yaml", "yml", "toml", "csv", "tsv", "svg", "xml",
   // Images
   "png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "ico",
+  // Video (browser-playable formats)
+  "mp4", "webm", "mov", "m4v",
+  // Audio
+  "mp3", "wav", "ogg", "aac", "flac",
   // Code
   "js", "jsx", "ts", "tsx", "mjs", "cjs",
   "py", "rb", "go", "rs", "java", "kt", "swift", "c", "cpp", "h", "hpp", "cs",

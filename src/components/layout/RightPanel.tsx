@@ -32,8 +32,8 @@ export function RightPanel({ width }: RightPanelProps) {
     // Only open preview for text-based files and images, skip videos/binaries
     const ext = path.split(".").pop()?.toLowerCase() || "";
     const NON_PREVIEWABLE = new Set([
-      "mp4", "mov", "avi", "mkv", "webm", "flv", "wmv",
-      "mp3", "wav", "ogg", "flac", "aac", "wma",
+      "avi", "mkv", "flv", "wmv",           // unsupported video (no browser playback)
+      "wma",                                  // unsupported audio
       "zip", "tar", "gz", "rar", "7z", "bz2",
       "doc", "docx", "xls", "xlsx", "ppt", "pptx",
       "exe", "dll", "so", "dylib", "bin", "dmg", "iso",

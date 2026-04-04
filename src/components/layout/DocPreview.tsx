@@ -63,6 +63,9 @@ const RENDERABLE_EXTENSIONS = new Set([
 
 import { IMAGE_EXTENSIONS_SET as IMAGE_EXTENSIONS } from '@/lib/config';
 
+const VIDEO_EXTENSIONS = new Set([".mp4", ".webm", ".mov", ".m4v"]);
+const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".ogg", ".aac", ".flac"]);
+
 function getExtension(filePath: string): string {
   const dot = filePath.lastIndexOf(".");
   return dot >= 0 ? filePath.slice(dot).toLowerCase() : "";
@@ -98,6 +101,14 @@ function isImage(filePath: string): boolean {
   return IMAGE_EXTENSIONS.has(getExtension(filePath));
 }
 
+function isVideo(filePath: string): boolean {
+  return VIDEO_EXTENSIONS.has(getExtension(filePath));
+}
+
+function isAudio(filePath: string): boolean {
+  return AUDIO_EXTENSIONS.has(getExtension(filePath));
+}
+
 function isMarkdown(filePath: string): boolean {
   const ext = getExtension(filePath);
   return ext === ".md" || ext === ".mdx";
@@ -128,7 +139,9 @@ export function DocPreview({
 
   const isPdfFile = isPdf(filePath);
   const isImageFile = isImage(filePath);
-  const isBinaryPreview = isPdfFile || isImageFile;
+  const isVideoFile = isVideo(filePath);
+  const isAudioFile = isAudio(filePath);
+  const isBinaryPreview = isPdfFile || isImageFile || isVideoFile || isAudioFile;
   const isMarkdownFile = isMarkdown(filePath);
 
   // TTS for markdown preview
@@ -444,10 +457,14 @@ export function DocPreview({
           <div className="px-4 py-8 text-center">
             <p className="text-sm text-destructive">{error}</p>
           </div>
+        ) : isVideoFile ? (
+          <VideoRenderedView filePath={filePath} baseDir={workingDirectory} />
+        ) : isAudioFile ? (
+          <AudioRenderedView filePath={filePath} baseDir={workingDirectory} />
         ) : isImageFile ? (
-          <ImageRenderedView filePath={filePath} />
+          <ImageRenderedView filePath={filePath} baseDir={workingDirectory} />
         ) : isPdfFile ? (
-          <PdfRenderedView filePath={filePath} />
+          <PdfRenderedView filePath={filePath} baseDir={workingDirectory} />
         ) : preview ? (
           viewMode === "rendered" && canRender ? (
             <RenderedView
@@ -836,8 +853,8 @@ function SvgRenderedView({ content }: { content: string }) {
 
 /* ── Image Rendered View (with pinch-to-zoom & pan on mobile) ── */
 
-function ImageRenderedView({ filePath }: { filePath: string }) {
-  const src = `/api/files/raw?path=${encodeURIComponent(filePath)}`;
+function ImageRenderedView({ filePath, baseDir }: { filePath: string; baseDir?: string }) {
+  const src = rawFileUrl(filePath, baseDir);
   const fileName = filePath.split("/").pop() || "image";
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -984,10 +1001,68 @@ function ImageRenderedView({ filePath }: { filePath: string }) {
   );
 }
 
+/** Build the /api/files/raw URL with optional baseDir for scoped access */
+function rawFileUrl(filePath: string, baseDir?: string): string {
+  let url = `/api/files/raw?path=${encodeURIComponent(filePath)}`;
+  if (baseDir) url += `&baseDir=${encodeURIComponent(baseDir)}`;
+  return url;
+}
+
+/* ── Video Rendered View (HTML5 video with streaming) ── */
+
+function VideoRenderedView({ filePath, baseDir }: { filePath: string; baseDir?: string }) {
+  const src = rawFileUrl(filePath, baseDir);
+  const fileName = filePath.split("/").pop() || "video";
+
+  return (
+    <div className="flex h-full items-center justify-center bg-black p-2">
+      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+      <video
+        key={filePath}
+        src={src}
+        controls
+        preload="metadata"
+        playsInline
+        className="max-h-full max-w-full rounded"
+        title={fileName}
+      />
+    </div>
+  );
+}
+
+/* ── Audio Rendered View (HTML5 audio player) ── */
+
+function AudioRenderedView({ filePath, baseDir }: { filePath: string; baseDir?: string }) {
+  const src = rawFileUrl(filePath, baseDir);
+  const fileName = filePath.split("/").pop() || "audio";
+
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-4 px-6">
+      <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-muted">
+        <svg className="h-10 w-10 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M9 18V5l12-2v13" />
+          <circle cx="6" cy="18" r="3" />
+          <circle cx="18" cy="16" r="3" />
+        </svg>
+      </div>
+      <p className="text-sm text-muted-foreground">{fileName}</p>
+      {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+      <audio
+        key={filePath}
+        src={src}
+        controls
+        preload="metadata"
+        className="w-full max-w-sm"
+        title={fileName}
+      />
+    </div>
+  );
+}
+
 /* ── PDF Rendered View (browser built-in viewer) ── */
 
-function PdfRenderedView({ filePath }: { filePath: string }) {
-  const src = `/api/files/raw?path=${encodeURIComponent(filePath)}`;
+function PdfRenderedView({ filePath, baseDir }: { filePath: string; baseDir?: string }) {
+  const src = rawFileUrl(filePath, baseDir);
   return (
     <iframe
       src={src}
