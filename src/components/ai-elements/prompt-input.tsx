@@ -1100,6 +1100,8 @@ export const PromptInputActionMenuItem = ({
 export type PromptInputSubmitProps = ComponentProps<typeof InputGroupButton> & {
   status?: ChatStatus;
   onStop?: () => void;
+  /** Whether a graceful stop has been requested (next click will force stop) */
+  stopRequested?: boolean;
 };
 
 export const PromptInputSubmit = ({
@@ -1108,6 +1110,7 @@ export const PromptInputSubmit = ({
   size = "icon-sm",
   status,
   onStop,
+  stopRequested,
   onClick,
   children,
   ...props
@@ -1136,17 +1139,23 @@ export const PromptInputSubmit = ({
     [isGenerating, onStop, onClick]
   );
 
+  // After a graceful stop request, show force-stop styling (red tint + X icon)
+  const forceStopPending = isGenerating && stopRequested;
+
   return (
     <InputGroupButton
-      aria-label={isGenerating ? "Stop" : "Submit"}
-      className={cn(className)}
+      aria-label={forceStopPending ? "Force stop" : isGenerating ? "Stop" : "Submit"}
+      className={cn(
+        className,
+        forceStopPending && "!bg-red-500/20 !text-red-500 !border-red-500/30 animate-pulse"
+      )}
       onClick={handleClick}
       size={size}
       type={isGenerating && onStop ? "button" : "submit"}
       variant={variant}
       {...props}
     >
-      {children ?? Icon}
+      {forceStopPending ? <XIcon className="size-4" /> : (children ?? Icon)}
     </InputGroupButton>
   );
 };

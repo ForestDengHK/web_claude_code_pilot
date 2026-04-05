@@ -79,6 +79,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [streamingContent, setStreamingContent] = useState('');
   const [streamingThinking, setStreamingThinking] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  // Whether a graceful stop has been requested — drives UI to show "click again to force stop"
+  const [stopRequested, setStopRequested] = useState(false);
   const [toolUses, setToolUses] = useState<ToolUseInfo[]>([]);
   const [toolResults, setToolResults] = useState<ToolResultInfo[]>([]);
   const [statusText, setStatusText] = useState<string | undefined>();
@@ -182,6 +184,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const recoveryAbortRef = useRef(false);
   // Timestamp of last SSE data received — used to detect hung reader on tab resume
   const lastSseDataRef = useRef<number>(0);
+  // Track whether a graceful stop has been requested — second click escalates to force stop
+  const stopRequestedRef = useRef(false);
 
   // Fetch messages from DB and check if the backend has finished
   const recoverMessages = useCallback(async (): Promise<boolean> => {
@@ -216,6 +220,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       heartbeatWatchdogRef.current = null;
     }
     recoveryActiveRef.current = false;
+    stopRequestedRef.current = false;
+    setStopRequested(false);
     // Perform the deferred cleanup that the finally block skipped
     setIsStreaming(false);
     setStreamingSessionId('');
@@ -565,8 +571,17 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       recoverMessages().finally(() => {
         stopRecovery();
       });
+      stopRequestedRef.current = false;
+      setStopRequested(false);
       return;
     }
+
+    // Escalation logic: if a graceful stop was already requested and we're
+    // called again (second click on Stop button), escalate to force stop.
+    if (!force && stopRequestedRef.current) {
+      force = true;
+    }
+
     if (force) {
       // Force stop: abort client reader immediately + hard kill server process
       abortControllerRef.current?.abort();
@@ -576,6 +591,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId, force: true }),
       }).catch(() => { /* best-effort */ });
+      stopRequestedRef.current = false;
+      setStopRequested(false);
     } else {
       // Graceful stop: interrupt server (let current tool finish), then abort client reader
       fetch('/api/chat/stop', {
@@ -584,6 +601,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         body: JSON.stringify({ session_id: sessionId }),
       }).catch(() => { /* best-effort */ });
       // Don't abort client reader immediately — let streaming end naturally after interrupt
+      stopRequestedRef.current = true;
+      setStopRequested(true);
     }
   }, [sessionId, recoverMessages, stopRecovery]);
 
@@ -883,6 +902,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             }
             // Clean up before auto-retry
             toolTimeoutRef.current = null;
+            stopRequestedRef.current = false;
+            setStopRequested(false);
             setIsStreaming(false);
             setStreamingSessionId('');
             setStreamingContent('');
@@ -937,6 +958,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           readerAbortControllerRef.current = null;
           recoveryAbortRef.current = false;
         } else {
+          stopRequestedRef.current = false;
+          setStopRequested(false);
           setIsStreaming(false);
           setStreamingSessionId('');
           setStreamingContent('');
@@ -1162,6 +1185,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         onSend={sendMessage}
         onCommand={handleCommand}
         onStop={() => stopStreaming(false)}
+        stopRequested={stopRequested}
         disabled={false}
         isStreaming={isStreaming}
         sessionId={sessionId}

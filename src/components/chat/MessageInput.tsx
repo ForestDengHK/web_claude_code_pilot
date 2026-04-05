@@ -57,6 +57,8 @@ interface MessageInputProps {
   onSend: (content: string, files?: FileAttachment[], skillInfo?: { name: string; content: string }, codexSkills?: CodexSkillRef[]) => void;
   onCommand?: (command: string) => void;
   onStop?: () => void;
+  /** Whether a graceful stop has been requested (next click will force stop) */
+  stopRequested?: boolean;
   disabled?: boolean;
   isStreaming?: boolean;
   sessionId?: string;
@@ -220,11 +222,13 @@ async function dataUrlToFileAttachment(
 function FileAwareSubmitButton({
   status,
   onStop,
+  stopRequested,
   disabled,
   inputValue,
 }: {
   status: ChatStatus;
   onStop?: () => void;
+  stopRequested?: boolean;
   disabled?: boolean;
   inputValue: string;
 }) {
@@ -236,6 +240,7 @@ function FileAwareSubmitButton({
     <PromptInputSubmit
       status={status}
       onStop={onStop}
+      stopRequested={stopRequested}
       disabled={disabled || (!isStreaming && !inputValue.trim() && !hasFiles)}
       className="rounded-full"
     >
@@ -464,6 +469,7 @@ export function MessageInput({
   onSend,
   onCommand,
   onStop,
+  stopRequested,
   disabled,
   isStreaming,
   sessionId,
@@ -1418,6 +1424,7 @@ export function MessageInput({
               <FileAwareSubmitButton
                 status={chatStatus}
                 onStop={onStop}
+                stopRequested={stopRequested}
                 disabled={disabled}
                 inputValue={inputValue}
               />

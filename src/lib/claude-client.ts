@@ -454,6 +454,11 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             ? 'bypassPermissions'
             : ((permissionMode as Options['permissionMode']) || 'acceptEdits'),
           env: sanitizeEnv(sdkEnv),
+          // Explicitly enable all setting sources so the SDK subprocess loads
+          // personal skills (~/.claude/skills/), project skills, and local settings.
+          // Without this, the SDK defaults to [] which passes --setting-sources ""
+          // to the CLI, disabling all sources except policySettings/flagSettings.
+          settingSources: ['user', 'project', 'local'],
         };
 
         if (skipPermissions) {
