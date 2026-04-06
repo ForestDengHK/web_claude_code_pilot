@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isSessionActive } from '@/lib/abort-registry';
 import { getPendingPermissionForSession } from '@/lib/permission-registry';
+import { getPendingCodexPermissionForSession } from '@/lib/codex-approval-registry';
 import { getPendingInputRequestForSession } from '@/lib/input-request-registry';
 import { getStreamBuffer } from '@/lib/streaming-buffer-registry';
 import { getLastMessageInfo } from '@/lib/db';
@@ -47,9 +48,15 @@ export async function GET(
 
   const isProcessing = abortActive || streamBuffer !== null || dbHint;
 
+  // Check both Claude and Codex permission registries.
+  // Claude uses permission-registry; Codex uses codex-approval-registry.
+  const pendingPermission =
+    getPendingPermissionForSession(sessionId) ??
+    getPendingCodexPermissionForSession(sessionId);
+
   return NextResponse.json({
     isProcessing,
-    pendingPermission: getPendingPermissionForSession(sessionId),
+    pendingPermission,
     pendingInputRequest: getPendingInputRequestForSession(sessionId),
     streamingContent: streamBuffer,
   });

@@ -1,3 +1,5 @@
+import type { PermissionRequestEvent } from '@/types';
+
 export type CodexApprovalType = 'command' | 'file_change';
 export type CodexApprovalDecision = 'accept' | 'acceptForSession' | 'decline' | 'cancel';
 
@@ -18,6 +20,10 @@ interface PendingApproval {
   abortSignal?: AbortSignal;
   sessionId: string;
   info: CodexApprovalInfo;
+  /** The original PermissionRequestEvent sent to the client via SSE.
+   *  Stored so the status route can restore the permission dialog after
+   *  an SSE reconnection (page refresh, mobile tab resume, etc.). */
+  permissionEvent?: PermissionRequestEvent;
 }
 
 import { REGISTRY_TIMEOUT_MS as TIMEOUT_MS } from '@/lib/config';
@@ -68,6 +74,7 @@ export function registerPendingCodexApproval(
   sessionId: string,
   info: CodexApprovalInfo,
   abortSignal?: AbortSignal,
+  permissionEvent?: PermissionRequestEvent,
 ): Promise<CodexApprovalDecision> {
   // Lazily clean up expired entries on each registration
   cleanupExpired();
@@ -82,6 +89,7 @@ export function registerPendingCodexApproval(
       abortSignal,
       sessionId,
       info,
+      permissionEvent,
     });
 
     // Track by session for status API lookup
@@ -134,4 +142,21 @@ export function getPendingCodexApprovalForSession(sessionId: string): CodexAppro
   if (!entry) return null;
 
   return entry.info;
+}
+
+/**
+ * Look up a pending Codex approval by session ID and return the original
+ * PermissionRequestEvent that was sent to the client via SSE.
+ * Used by the status route to restore the permission dialog after reconnection.
+ */
+export function getPendingCodexPermissionForSession(sessionId: string): PermissionRequestEvent | null {
+  const sessionMap = getSessionMap();
+  const approvalId = sessionMap.get(sessionId);
+  if (!approvalId) return null;
+
+  const map = getMap();
+  const entry = map.get(approvalId);
+  if (!entry) return null;
+
+  return entry.permissionEvent ?? null;
 }

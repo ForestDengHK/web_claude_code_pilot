@@ -35,6 +35,10 @@ interface CachedReviewEntry {
 
 const reviewCache = new Map<string, CachedReviewEntry>();
 
+export function hasCachedCodexReview(sessionId: string): boolean {
+  return reviewCache.has(sessionId);
+}
+
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
 /* ------------------------------------------------------------------ */

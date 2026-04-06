@@ -24,6 +24,9 @@ import { registerPendingCodexApproval } from '@/lib/codex-approval-registry';
 import { updateCodexThreadId, getSession } from '@/lib/db';
 import { sendPushNotification } from './push-notifications';
 import type { AskForApproval } from '@/types/codex/AskForApproval';
+import type { SandboxMode } from '@/types/codex/v2/SandboxMode';
+import type { SandboxPolicy } from '@/types/codex/v2/SandboxPolicy';
+import type { SandboxWorkspaceWrite } from '@/types/codex/v2/SandboxWorkspaceWrite';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -118,8 +121,18 @@ function sendJsonRpcRequest<T extends Record<string, unknown>>(
 async function readConfiguredApprovalPolicy(
   codexProcess: CodexProcess,
   cwd?: string,
-): Promise<AskForApproval | null> {
-  const result = await sendJsonRpcRequest<{ config?: { approval_policy?: AskForApproval | null } }>(
+): Promise<{
+  approvalPolicy: AskForApproval | null;
+  sandboxMode: SandboxMode | null;
+  sandboxWorkspaceWrite: SandboxWorkspaceWrite | null;
+}> {
+  const result = await sendJsonRpcRequest<{
+    config?: {
+      approval_policy?: AskForApproval | null;
+      sandbox_mode?: SandboxMode | null;
+      sandbox_workspace_write?: SandboxWorkspaceWrite | null;
+    };
+  }>(
     codexProcess,
     'config/read',
     {
@@ -128,10 +141,14 @@ async function readConfiguredApprovalPolicy(
     },
   );
 
-  return result.config?.approval_policy ?? null;
+  return {
+    approvalPolicy: result.config?.approval_policy ?? null,
+    sandboxMode: result.config?.sandbox_mode ?? null,
+    sandboxWorkspaceWrite: result.config?.sandbox_workspace_write ?? null,
+  };
 }
 
-function resolveDesiredApprovalPolicy(
+export function resolveDesiredApprovalPolicy(
   skipPermissions: boolean,
   configuredApprovalPolicy: AskForApproval | null,
   currentThreadApprovalPolicy?: AskForApproval | null,
@@ -140,21 +157,86 @@ function resolveDesiredApprovalPolicy(
     return 'never';
   }
 
-  if (configuredApprovalPolicy) {
+  if (configuredApprovalPolicy && configuredApprovalPolicy !== 'never') {
     return configuredApprovalPolicy;
   }
 
-  if (currentThreadApprovalPolicy === 'never') {
-    return 'on-request';
-  }
-
-  if (currentThreadApprovalPolicy) {
+  if (currentThreadApprovalPolicy && currentThreadApprovalPolicy !== 'never') {
     return currentThreadApprovalPolicy;
   }
 
-  // When no explicit policy is configured, let Codex derive its dynamic default
-  // from the workspace trust / sandbox state instead of forcing one here.
-  return undefined;
+  // Shield OFF means "stay interactive". `untrusted` is stricter than
+  // `on-request` and consistently asks before mutating shell commands.
+  return 'untrusted';
+}
+
+function sandboxPolicyToMode(sandboxPolicy?: SandboxPolicy | null): SandboxMode | null {
+  switch (sandboxPolicy?.type) {
+    case 'dangerFullAccess':
+      return 'danger-full-access';
+    case 'workspaceWrite':
+      return 'workspace-write';
+    case 'readOnly':
+      return 'read-only';
+    default:
+      return null;
+  }
+}
+
+export function resolveDesiredSandboxMode(
+  skipPermissions: boolean,
+  configuredSandboxMode: SandboxMode | null,
+  currentThreadSandboxMode?: SandboxMode | null,
+): SandboxMode | undefined {
+  if (skipPermissions) {
+    return configuredSandboxMode ?? currentThreadSandboxMode ?? undefined;
+  }
+
+  if (configuredSandboxMode && configuredSandboxMode !== 'danger-full-access') {
+    return configuredSandboxMode;
+  }
+
+  if (currentThreadSandboxMode && currentThreadSandboxMode !== 'danger-full-access') {
+    return currentThreadSandboxMode;
+  }
+
+  // Shield OFF should never silently inherit full-access execution.
+  return 'workspace-write';
+}
+
+export function buildSandboxPolicy(
+  sandboxMode: SandboxMode | undefined,
+  workingDirectory?: string,
+  sandboxWorkspaceWrite?: SandboxWorkspaceWrite | null,
+): SandboxPolicy | undefined {
+  if (!sandboxMode) return undefined;
+
+  if (sandboxMode === 'danger-full-access') {
+    return { type: 'dangerFullAccess' };
+  }
+
+  if (sandboxMode === 'read-only') {
+    return {
+      type: 'readOnly',
+      access: { type: 'fullAccess' },
+    };
+  }
+
+  if (!workingDirectory) return undefined;
+
+  const writableRoots = Array.from(new Set([
+    workingDirectory,
+    ...(sandboxWorkspaceWrite?.writable_roots ?? []),
+  ]));
+
+  return {
+    type: 'workspaceWrite',
+    writableRoots,
+    readOnlyAccess: { type: 'fullAccess' },
+    networkAccess: sandboxWorkspaceWrite?.network_access ?? false,
+    excludeTmpdirEnvVar: sandboxWorkspaceWrite?.exclude_tmpdir_env_var ?? false,
+    excludeSlashTmp: sandboxWorkspaceWrite?.exclude_slash_tmp ?? false,
+  };
 }
 
 /**
@@ -412,14 +494,19 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
         codexProcess = await CodexProcessManager.getOrCreate(sessionId);
 
         let configuredApprovalPolicy: AskForApproval | null = null;
+        let configuredSandboxMode: SandboxMode | null = null;
+        let configuredSandboxWorkspaceWrite: SandboxWorkspaceWrite | null = null;
         try {
-          configuredApprovalPolicy = await readConfiguredApprovalPolicy(
+          const configuredExecution = await readConfiguredApprovalPolicy(
             codexProcess,
             workingDirectory,
           );
+          configuredApprovalPolicy = configuredExecution.approvalPolicy;
+          configuredSandboxMode = configuredExecution.sandboxMode;
+          configuredSandboxWorkspaceWrite = configuredExecution.sandboxWorkspaceWrite;
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown config/read error';
-          console.warn(`[codex-client] config/read failed, falling back to implicit approval policy: ${message}`);
+          console.warn(`[codex-client] config/read failed, falling back to safe execution defaults: ${message}`);
         }
 
         // Determine the thread ID to use
@@ -427,6 +514,7 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
         const isNewThread = !threadId;
         const isResumedThread = !!threadId && !codexProcess.threadId;
         let currentApprovalPolicy: AskForApproval | null = null;
+        let currentSandboxMode: SandboxMode | null = null;
 
         // 2. Thread lifecycle: start or resume
         if (isNewThread) {
@@ -435,6 +523,10 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
             skipPermissions,
             configuredApprovalPolicy,
           );
+          const desiredSandboxMode = resolveDesiredSandboxMode(
+            skipPermissions,
+            configuredSandboxMode,
+          );
           const startedThread = await startThread(
             codexProcess,
             sessionId,
@@ -442,14 +534,32 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
             workingDirectory,
             effort,
             desiredApprovalPolicy,
+            desiredSandboxMode,
           );
           threadId = startedThread.threadId;
           currentApprovalPolicy = startedThread.approvalPolicy;
+          currentSandboxMode = startedThread.sandboxMode;
         } else if (isResumedThread && threadId) {
           // Resume an existing thread on a new process
-          const resumedThread = await resumeThread(codexProcess, threadId);
+          const desiredApprovalPolicy = resolveDesiredApprovalPolicy(
+            skipPermissions,
+            configuredApprovalPolicy,
+          );
+          const desiredSandboxMode = resolveDesiredSandboxMode(
+            skipPermissions,
+            configuredSandboxMode,
+          );
+          const resumedThread = await resumeThread(
+            codexProcess,
+            threadId,
+            desiredApprovalPolicy,
+            desiredSandboxMode,
+            workingDirectory,
+            model,
+          );
           codexProcess.threadId = threadId;
           currentApprovalPolicy = resumedThread.approvalPolicy;
+          currentSandboxMode = resumedThread.sandboxMode;
         }
 
         if (!threadId) {
@@ -460,6 +570,18 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
           skipPermissions,
           configuredApprovalPolicy,
           currentApprovalPolicy,
+        );
+        const desiredSandboxMode = resolveDesiredSandboxMode(
+          skipPermissions,
+          configuredSandboxMode,
+          currentSandboxMode,
+        );
+        const desiredSandboxPolicy = buildSandboxPolicy(
+          desiredSandboxMode,
+          workingDirectory,
+          desiredSandboxMode === 'workspace-write' && configuredSandboxMode === 'workspace-write'
+            ? configuredSandboxWorkspaceWrite
+            : null,
         );
 
         // 3. Build user inputs
@@ -491,6 +613,7 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
           };
           if (workingDirectory) turnStartParams.cwd = workingDirectory;
           turnStartParams.approvalPolicy = desiredApprovalPolicy;
+          if (desiredSandboxPolicy) turnStartParams.sandboxPolicy = desiredSandboxPolicy;
           if (model) turnStartParams.model = model;
           // Always send reasoning effort to override ~/.codex/config.toml global default.
           // Schema field name is "effort" (NOT "modelReasoningEffort" — that was wrong).
@@ -501,7 +624,6 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
             turnStartParams.summary = isMini ? 'detailed' : (summary || 'concise');
           }
 
-          console.log('[codex-client] turn/start params:', JSON.stringify({ model: turnStartParams.model, effort: turnStartParams.effort, summary: turnStartParams.summary }));
           codexProcess.send(
             formatJsonRpcRequest('turn/start', turnStartParams),
           );
@@ -575,17 +697,19 @@ function startThread(
   cwd?: string,
   effort?: string,
   approvalPolicy?: AskForApproval,
+  sandboxMode?: SandboxMode,
   options?: {
     persistThreadId?: boolean;
   },
-): Promise<{ threadId: string; approvalPolicy: AskForApproval | null }> {
+): Promise<{ threadId: string; approvalPolicy: AskForApproval | null; sandboxMode: SandboxMode | null }> {
   const persistThreadId = options?.persistThreadId ?? true;
 
-  return new Promise<{ threadId: string; approvalPolicy: AskForApproval | null }>((resolve, reject) => {
+  return new Promise<{ threadId: string; approvalPolicy: AskForApproval | null; sandboxMode: SandboxMode | null }>((resolve, reject) => {
     const request = formatJsonRpcRequest('thread/start', {
       ...(model ? { model } : {}),
       ...(cwd ? { cwd } : {}),
       ...(approvalPolicy ? { approvalPolicy } : {}),
+      ...(sandboxMode ? { sandbox: sandboxMode } : {}),
       ...(effort ? { config: { model_reasoning_effort: effort } } : {}),
       experimentalRawEvents: false,
       persistExtendedHistory: false,
@@ -595,6 +719,7 @@ function startThread(
     let responseResult: {
       thread?: { id?: string };
       approvalPolicy?: AskForApproval | null;
+      sandbox?: SandboxPolicy | null;
     } | null = null;
     let threadIdFromNotification: string | null = null;
 
@@ -619,6 +744,7 @@ function startThread(
       resolve({
         threadId,
         approvalPolicy: responseResult.approvalPolicy ?? null,
+        sandboxMode: sandboxPolicyToMode(responseResult.sandbox),
       });
     };
 
@@ -646,6 +772,7 @@ function startThread(
       responseResult = (msg.result ?? {}) as {
         thread?: { id?: string };
         approvalPolicy?: AskForApproval | null;
+        sandbox?: SandboxPolicy | null;
       };
 
       if (!responseResult.thread?.id && !threadIdFromNotification) {
@@ -670,14 +797,24 @@ function startThread(
 function resumeThread(
   codexProcess: CodexProcess,
   threadId: string,
-): Promise<{ approvalPolicy: AskForApproval | null }> {
+  approvalPolicy?: AskForApproval,
+  sandboxMode?: SandboxMode,
+  cwd?: string,
+  model?: string,
+): Promise<{ approvalPolicy: AskForApproval | null; sandboxMode: SandboxMode | null }> {
   return sendJsonRpcRequest<{
     approvalPolicy?: AskForApproval | null;
+    sandbox?: SandboxPolicy | null;
   }>(codexProcess, 'thread/resume', {
     threadId,
+    ...(approvalPolicy ? { approvalPolicy } : {}),
+    ...(sandboxMode ? { sandbox: sandboxMode } : {}),
+    ...(cwd ? { cwd } : {}),
+    ...(model ? { model } : {}),
     persistExtendedHistory: false,
   }).then((result) => ({
     approvalPolicy: result.approvalPolicy ?? null,
+    sandboxMode: sandboxPolicyToMode(result.sandbox),
   }));
 }
 
@@ -701,6 +838,7 @@ export async function runCodexReview({
         reviewProcessSessionId,
         model,
         workingDirectory,
+        undefined,
         undefined,
         undefined,
         { persistThreadId: false },
@@ -1295,7 +1433,7 @@ function handleApprovalRequest(
     requestId: approvalId,
   }).catch(() => {});
 
-  registerPendingCodexApproval(approvalId, sessionId, approvalInfo, abortSignal)
+  registerPendingCodexApproval(approvalId, sessionId, approvalInfo, abortSignal, permEvent)
     .then((decision) => {
       // Send JSON-RPC response back to the app-server with the user's decision
       codexProcess.send(

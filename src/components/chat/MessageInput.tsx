@@ -40,11 +40,21 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import type { ChatStatus } from 'ai';
 import type { FileAttachment } from '@/types';
 import { nanoid } from 'nanoid';
 import { useVoiceInput } from '@/hooks/useVoiceInput';
-import { CodexReviewDialog } from '@/components/chat/CodexReviewDialog';
+import { CodexReviewDialog, hasCachedCodexReview } from '@/components/chat/CodexReviewDialog';
 
 import { MAX_UPLOAD_FILE_SIZE as MAX_FILE_SIZE } from '@/lib/config';
 
@@ -506,6 +516,7 @@ export function MessageInput({
   const codexSkillsCacheRef = useRef<Map<string, string>>(new Map());
   const [skipPermissions, setSkipPermissions] = useState(false);
   const [codexReviewOpen, setCodexReviewOpen] = useState(false);
+  const [codexReviewConfirmOpen, setCodexReviewConfirmOpen] = useState(false);
   const [codexReviewRunning, setCodexReviewRunning] = useState(false);
 
   // Fetch per-session skip_permissions on mount / sessionId change
@@ -620,6 +631,22 @@ export function MessageInput({
       setSkipPermissions(!newValue);
     }
   }, [sessionId, skipPermissions]);
+
+  const requestCodexReview = useCallback(() => {
+    if (isStreaming || !sessionId) return;
+
+    if (codexReviewRunning || hasCachedCodexReview(sessionId)) {
+      setCodexReviewOpen(true);
+      return;
+    }
+
+    setCodexReviewConfirmOpen(true);
+  }, [isStreaming, codexReviewRunning, sessionId]);
+
+  const confirmCodexReview = useCallback(() => {
+    setCodexReviewConfirmOpen(false);
+    setCodexReviewOpen(true);
+  }, []);
 
   // Fetch files for @ mention
   const fetchFiles = useCallback(async (filter: string) => {
@@ -1237,7 +1264,7 @@ export function MessageInput({
                 <PromptInputButton
                   size="sm"
                   className="text-xs text-muted-foreground"
-                  onClick={() => setCodexReviewOpen(true)}
+                  onClick={requestCodexReview}
                   disabled={isStreaming}
                 >
                   <HugeiconsIcon
@@ -1419,7 +1446,7 @@ export function MessageInput({
                     <TooltipTrigger asChild>
                       <PromptInputButton
                         className="hidden sm:inline-flex"
-                        onClick={() => setCodexReviewOpen(true)}
+                        onClick={requestCodexReview}
                         disabled={isStreaming}
                       >
                         <HugeiconsIcon
@@ -1485,6 +1512,24 @@ export function MessageInput({
           onRunningChange={setCodexReviewRunning}
         />
       )}
+
+      <AlertDialog open={codexReviewConfirmOpen} onOpenChange={setCodexReviewConfirmOpen}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Run Codex Review?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will immediately start a full Codex review of the current workspace and session context.
+              Use it when you want findings, not just a quick look.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmCodexReview}>
+              Run review
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
     </div>
   );
