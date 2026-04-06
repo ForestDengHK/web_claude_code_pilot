@@ -23,6 +23,8 @@ export interface PanelContextValue {
   setPendingApprovalSessionId: (id: string) => void;
   previewFile: string | null;
   setPreviewFile: (path: string | null) => void;
+  previewLine: number | null;
+  setPreviewLine: (line: number | null) => void;
   previewViewMode: PreviewViewMode;
   setPreviewViewMode: (mode: PreviewViewMode) => void;
 }

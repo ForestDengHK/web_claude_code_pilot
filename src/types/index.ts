@@ -185,6 +185,34 @@ export interface SendMessageRequest {
   mode?: string;
 }
 
+export interface CodexReviewLineRange {
+  start: number;
+  end: number;
+}
+
+export interface CodexReviewCodeLocation {
+  absolute_file_path: string;
+  line_range: CodexReviewLineRange;
+}
+
+export interface CodexReviewFinding {
+  title: string;
+  body: string;
+  confidence_score: number;
+  priority: number;
+  code_location: CodexReviewCodeLocation;
+}
+
+export interface CodexReviewResponse {
+  review: string;
+  reviewThreadId: string;
+  delivery: 'inline' | 'detached';
+  findings: CodexReviewFinding[];
+  overallCorrectness?: string;
+  overallExplanation?: string;
+  overallConfidenceScore?: number;
+}
+
 export interface UpdateMCPConfigRequest {
   mcpServers: Record<string, MCPServerConfig>;
 }

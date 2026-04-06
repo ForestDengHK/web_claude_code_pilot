@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, type ComponentPropsWithoutRef } from "react";
 import { useTheme } from "next-themes";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Cancel01Icon, Copy01Icon, Tick01Icon, Loading02Icon, ArrowExpandIcon, ArrowShrinkIcon, PencilEdit02Icon } from "@hugeicons/core-free-icons";
@@ -41,7 +41,7 @@ const streamdownPlugins = { cjk, code, math, mermaid };
  * Using <div> instead of <p> avoids the invalid nesting entirely.
  */
 const docPreviewComponents = {
-  p: ({ node, ...rest }: Record<string, unknown>) => <div {...rest} />,
+  p: (props: ComponentPropsWithoutRef<"p">) => <div {...props} />,
 };
 
 type ViewMode = "source" | "rendered";
@@ -122,7 +122,7 @@ export function DocPreview({
   width,
 }: DocPreviewProps) {
   const { resolvedTheme } = useTheme();
-  const { workingDirectory } = usePanel();
+  const { workingDirectory, previewLine } = usePanel();
   const isDark = resolvedTheme === "dark";
   const [preview, setPreview] = useState<FilePreviewType | null>(null);
   const [loading, setLoading] = useState(true);
@@ -474,7 +474,7 @@ export function DocPreview({
               onSeekClick={isThisFileActive ? handleSeekClick : undefined}
             />
           ) : (
-            <SourceView preview={preview} isDark={isDark} />
+            <SourceView preview={preview} isDark={isDark} targetLine={previewLine} />
           )
         ) : null}
       </div>
@@ -537,13 +537,41 @@ function ViewModeToggle({
 }
 
 /** Source code view using react-syntax-highlighter */
-function SourceView({ preview, isDark }: { preview: FilePreviewType; isDark: boolean }) {
+function SourceView({
+  preview,
+  isDark,
+  targetLine,
+}: {
+  preview: FilePreviewType;
+  isDark: boolean;
+  targetLine: number | null;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!targetLine) return;
+
+    const target = containerRef.current?.querySelector(`[data-line-number="${targetLine}"]`);
+    if (target instanceof HTMLElement) {
+      target.scrollIntoView({ block: "center" });
+    }
+  }, [preview.content, targetLine]);
+
   return (
-    <div className="text-xs">
+    <div ref={containerRef} className="text-xs">
       <SyntaxHighlighter
         language={preview.language}
         style={isDark ? oneDark : oneLight}
         showLineNumbers
+        wrapLines
+        lineProps={(lineNumber) => ({
+          "data-line-number": String(lineNumber),
+          style: targetLine === lineNumber
+            ? {
+              backgroundColor: isDark ? "rgba(250, 204, 21, 0.12)" : "rgba(250, 204, 21, 0.18)",
+            }
+            : undefined,
+        })}
         customStyle={{
           margin: 0,
           padding: "8px",

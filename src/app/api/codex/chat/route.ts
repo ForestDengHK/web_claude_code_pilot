@@ -153,6 +153,7 @@ export async function POST(request: NextRequest) {
       contextBridgePrompt,
       effort: effort || undefined,
       skills: codexSkills,
+      skipPermissions: session.skip_permissions === 1,
     });
 
     // Tee the stream: one for client, one for collecting the response

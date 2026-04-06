@@ -11,6 +11,7 @@ import type {
   SSEEvent,
   FileAttachment,
   PermissionRequestEvent,
+  CodexReviewFinding,
 } from '@/types';
 import {
   formatJsonRpcRequest,
@@ -22,6 +23,7 @@ import { CodexProcessManager, type CodexProcess } from '@/lib/codex-process-mana
 import { registerPendingCodexApproval } from '@/lib/codex-approval-registry';
 import { updateCodexThreadId, getSession } from '@/lib/db';
 import { sendPushNotification } from './push-notifications';
+import type { AskForApproval } from '@/types/codex/AskForApproval';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -48,6 +50,18 @@ export interface CodexStreamOptions {
   summary?: string;
   /** Codex skills resolved from `$skill-name` references in the prompt. */
   skills?: CodexSkillRef[];
+  /** Mirrors the existing shield toggle UI; true maps to approvalPolicy "never". */
+  skipPermissions?: boolean;
+}
+
+export interface CodexReviewResult {
+  review: string;
+  reviewThreadId: string;
+  delivery: 'inline' | 'detached';
+  findings: CodexReviewFinding[];
+  overallCorrectness?: string;
+  overallExplanation?: string;
+  overallConfidenceScore?: number;
 }
 
 // Codex app-server UserInput union (v2 protocol)
@@ -65,6 +79,82 @@ function formatSSE(event: SSEEvent): string {
 
 function generateApprovalId(): string {
   return `codex-approval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function sendJsonRpcRequest<T extends Record<string, unknown>>(
+  codexProcess: CodexProcess,
+  method: string,
+  params: Record<string, unknown>,
+  timeoutMs = 30_000,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const request = formatJsonRpcRequest(method, params);
+    const requestId = getLastRequestId();
+
+    const timeout = setTimeout(() => {
+      codexProcess.offMessage(handler);
+      reject(new Error(`${method} timed out after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+
+    const handler = (msg: JsonRpcMessage) => {
+      if (msg.type !== 'response' || msg.id !== requestId) return;
+
+      clearTimeout(timeout);
+      codexProcess.offMessage(handler);
+
+      if (msg.error) {
+        reject(new Error(`${method} failed: ${msg.error.message}`));
+        return;
+      }
+
+      resolve((msg.result ?? {}) as T);
+    };
+
+    codexProcess.onMessage(handler);
+    codexProcess.send(request);
+  });
+}
+
+async function readConfiguredApprovalPolicy(
+  codexProcess: CodexProcess,
+  cwd?: string,
+): Promise<AskForApproval | null> {
+  const result = await sendJsonRpcRequest<{ config?: { approval_policy?: AskForApproval | null } }>(
+    codexProcess,
+    'config/read',
+    {
+      includeLayers: false,
+      ...(cwd ? { cwd } : {}),
+    },
+  );
+
+  return result.config?.approval_policy ?? null;
+}
+
+function resolveDesiredApprovalPolicy(
+  skipPermissions: boolean,
+  configuredApprovalPolicy: AskForApproval | null,
+  currentThreadApprovalPolicy?: AskForApproval | null,
+): AskForApproval | undefined {
+  if (skipPermissions) {
+    return 'never';
+  }
+
+  if (configuredApprovalPolicy) {
+    return configuredApprovalPolicy;
+  }
+
+  if (currentThreadApprovalPolicy === 'never') {
+    return 'on-request';
+  }
+
+  if (currentThreadApprovalPolicy) {
+    return currentThreadApprovalPolicy;
+  }
+
+  // When no explicit policy is configured, let Codex derive its dynamic default
+  // from the workspace trust / sandbox state instead of forcing one here.
+  return undefined;
 }
 
 /**
@@ -128,6 +218,156 @@ function buildUserInputs(
   return inputs;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function normalizeReviewFinding(value: unknown): CodexReviewFinding | null {
+  if (!isRecord(value)) return null;
+
+  const title = typeof value.title === 'string' ? value.title : null;
+  const body = typeof value.body === 'string' ? value.body : null;
+  const confidenceScore = typeof value.confidence_score === 'number' ? value.confidence_score : null;
+  const priority = typeof value.priority === 'number' ? value.priority : null;
+  const location = isRecord(value.code_location) ? value.code_location : null;
+  const absoluteFilePath = location && typeof location.absolute_file_path === 'string'
+    ? location.absolute_file_path
+    : null;
+  const lineRange = location && isRecord(location.line_range) ? location.line_range : null;
+  const start = lineRange && typeof lineRange.start === 'number' ? lineRange.start : null;
+  const end = lineRange && typeof lineRange.end === 'number' ? lineRange.end : null;
+
+  if (
+    title === null ||
+    body === null ||
+    confidenceScore === null ||
+    priority === null ||
+    absoluteFilePath === null ||
+    start === null ||
+    end === null
+  ) {
+    return null;
+  }
+
+  return {
+    title,
+    body,
+    confidence_score: confidenceScore,
+    priority,
+    code_location: {
+      absolute_file_path: absoluteFilePath,
+      line_range: { start, end },
+    },
+  };
+}
+
+function extractStructuredReviewOutput(reviewOutput: Record<string, unknown>): Omit<CodexReviewResult, 'reviewThreadId' | 'delivery' | 'review'> {
+  const findings = Array.isArray(reviewOutput.findings)
+    ? reviewOutput.findings.map(normalizeReviewFinding).filter((finding): finding is CodexReviewFinding => finding !== null)
+    : [];
+
+  const overallCorrectness = typeof reviewOutput.overall_correctness === 'string'
+    ? reviewOutput.overall_correctness
+    : undefined;
+  const overallExplanation = typeof reviewOutput.overall_explanation === 'string'
+    ? reviewOutput.overall_explanation
+    : undefined;
+  const overallConfidenceScore = typeof reviewOutput.overall_confidence_score === 'number'
+    ? reviewOutput.overall_confidence_score
+    : undefined;
+
+  return {
+    findings,
+    ...(overallCorrectness ? { overallCorrectness } : {}),
+    ...(overallExplanation ? { overallExplanation } : {}),
+    ...(overallConfidenceScore !== undefined ? { overallConfidenceScore } : {}),
+  };
+}
+
+function formatReviewOutput(reviewOutput: Record<string, unknown>): string {
+  const sections: string[] = [];
+  const structuredOutput = extractStructuredReviewOutput(reviewOutput);
+  const findings = structuredOutput.findings;
+
+  if (findings.length === 0) {
+    sections.push('No findings.');
+  } else {
+    sections.push('## Findings');
+    for (const finding of findings) {
+      const title = finding.title || 'Finding';
+      const body = finding.body || '';
+      const priority = `P${finding.priority}`;
+      const confidence = typeof finding.confidence_score === 'number'
+        ? `Confidence: ${finding.confidence_score.toFixed(2)}`
+        : null;
+      const absolutePath = finding.code_location.absolute_file_path;
+      const startLine = finding.code_location.line_range.start;
+      const endLine = finding.code_location.line_range.end;
+      const lineSuffix = startLine === null
+        ? ''
+        : endLine && endLine !== startLine
+          ? `:${startLine}-${endLine}`
+          : `:${startLine}`;
+
+      sections.push(`### ${title}`);
+      if (body) sections.push(body);
+      if (absolutePath) sections.push(`Location: \`${absolutePath}${lineSuffix}\``);
+
+      const meta = [priority, confidence].filter(Boolean).join(' | ');
+      if (meta) sections.push(meta);
+    }
+  }
+
+  const overallCorrectness = structuredOutput.overallCorrectness ?? null;
+  const overallExplanation = structuredOutput.overallExplanation ?? null;
+  const overallConfidence = typeof structuredOutput.overallConfidenceScore === 'number'
+    ? structuredOutput.overallConfidenceScore.toFixed(2)
+    : null;
+
+  if (overallCorrectness || overallExplanation || overallConfidence) {
+    sections.push('## Overall');
+    if (overallCorrectness) sections.push(`Correctness: ${overallCorrectness}`);
+    if (overallExplanation) sections.push(overallExplanation);
+    if (overallConfidence) sections.push(`Confidence: ${overallConfidence}`);
+  }
+
+  return sections.join('\n\n').trim();
+}
+
+function extractReviewTextFromItem(item: Record<string, unknown>): string | null {
+  const itemType = item.type;
+  if (itemType !== 'exitedReviewMode' && itemType !== 'ExitedReviewMode') {
+    return null;
+  }
+
+  if (typeof item.review === 'string' && item.review.trim()) {
+    return item.review;
+  }
+
+  if (isRecord(item.review_output)) {
+    return formatReviewOutput(item.review_output);
+  }
+
+  return null;
+}
+
+function normalizeReviewResult(review: string): { review: string } | { error: string } {
+  const normalizedReview = review.trim();
+  if (!normalizedReview) {
+    return { error: 'Reviewer failed to output a response.' };
+  }
+
+  if (/review was interrupted/i.test(normalizedReview)) {
+    return { error: 'Codex review was interrupted' };
+  }
+
+  if (/failed to output a response/i.test(normalizedReview)) {
+    return { error: 'Reviewer failed to output a response.' };
+  }
+
+  return { review: normalizedReview };
+}
+
 // ---------------------------------------------------------------------------
 // Main streaming function
 // ---------------------------------------------------------------------------
@@ -145,6 +385,7 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
     effort,
     summary,
     skills,
+    skipPermissions = false,
   } = options;
   const requestedEffort = effort || 'high';
   const isMiniModel = model ? /mini/i.test(model) : false;
@@ -170,24 +411,56 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
         // 1. Get or spawn the app-server process
         codexProcess = await CodexProcessManager.getOrCreate(sessionId);
 
+        let configuredApprovalPolicy: AskForApproval | null = null;
+        try {
+          configuredApprovalPolicy = await readConfiguredApprovalPolicy(
+            codexProcess,
+            workingDirectory,
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unknown config/read error';
+          console.warn(`[codex-client] config/read failed, falling back to implicit approval policy: ${message}`);
+        }
+
         // Determine the thread ID to use
         let threadId = codexProcess.threadId || codexThreadId || null;
         const isNewThread = !threadId;
         const isResumedThread = !!threadId && !codexProcess.threadId;
+        let currentApprovalPolicy: AskForApproval | null = null;
 
         // 2. Thread lifecycle: start or resume
         if (isNewThread) {
           // Start a new thread
-          threadId = await startThread(codexProcess, sessionId, model, workingDirectory, effort);
+          const desiredApprovalPolicy = resolveDesiredApprovalPolicy(
+            skipPermissions,
+            configuredApprovalPolicy,
+          );
+          const startedThread = await startThread(
+            codexProcess,
+            sessionId,
+            model,
+            workingDirectory,
+            effort,
+            desiredApprovalPolicy,
+          );
+          threadId = startedThread.threadId;
+          currentApprovalPolicy = startedThread.approvalPolicy;
         } else if (isResumedThread && threadId) {
           // Resume an existing thread on a new process
-          await resumeThread(codexProcess, threadId);
+          const resumedThread = await resumeThread(codexProcess, threadId);
           codexProcess.threadId = threadId;
+          currentApprovalPolicy = resumedThread.approvalPolicy;
         }
 
         if (!threadId) {
           throw new Error('Failed to obtain Codex thread ID');
         }
+
+        const desiredApprovalPolicy = resolveDesiredApprovalPolicy(
+          skipPermissions,
+          configuredApprovalPolicy,
+          currentApprovalPolicy,
+        );
 
         // 3. Build user inputs
         const userInputs = buildUserInputs(prompt, contextBridgePrompt, files, skills);
@@ -217,6 +490,7 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
             input: userInputs,
           };
           if (workingDirectory) turnStartParams.cwd = workingDirectory;
+          turnStartParams.approvalPolicy = desiredApprovalPolicy;
           if (model) turnStartParams.model = model;
           // Always send reasoning effort to override ~/.codex/config.toml global default.
           // Schema field name is "effort" (NOT "modelReasoningEffort" — that was wrong).
@@ -291,8 +565,8 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
 // ---------------------------------------------------------------------------
 
 /**
- * Start a new Codex thread. Sends `thread/start` and waits for the
- * `thread/started` notification. Returns the new thread ID.
+ * Start a new Codex thread. Accepts either a direct `thread/start` response
+ * containing `thread.id` or the older `thread/started` notification fallback.
  */
 function startThread(
   codexProcess: CodexProcess,
@@ -300,45 +574,92 @@ function startThread(
   model?: string,
   cwd?: string,
   effort?: string,
-): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
+  approvalPolicy?: AskForApproval,
+  options?: {
+    persistThreadId?: boolean;
+  },
+): Promise<{ threadId: string; approvalPolicy: AskForApproval | null }> {
+  const persistThreadId = options?.persistThreadId ?? true;
+
+  return new Promise<{ threadId: string; approvalPolicy: AskForApproval | null }>((resolve, reject) => {
+    const request = formatJsonRpcRequest('thread/start', {
+      ...(model ? { model } : {}),
+      ...(cwd ? { cwd } : {}),
+      ...(approvalPolicy ? { approvalPolicy } : {}),
+      ...(effort ? { config: { model_reasoning_effort: effort } } : {}),
+      experimentalRawEvents: false,
+      persistExtendedHistory: false,
+    });
+    const requestId = getLastRequestId();
+
+    let responseResult: {
+      thread?: { id?: string };
+      approvalPolicy?: AskForApproval | null;
+    } | null = null;
+    let threadIdFromNotification: string | null = null;
+
     const timeout = setTimeout(() => {
       codexProcess.offMessage(handler);
       reject(new Error('thread/start timed out after 30s'));
     }, 30_000);
 
+    const finalize = () => {
+      const threadId = responseResult?.thread?.id ?? threadIdFromNotification;
+      if (!responseResult || !threadId) {
+        return;
+      }
+
+      clearTimeout(timeout);
+      codexProcess.offMessage(handler);
+      codexProcess.threadId = threadId;
+      if (persistThreadId) {
+        updateCodexThreadId(sessionId, threadId);
+      }
+
+      resolve({
+        threadId,
+        approvalPolicy: responseResult.approvalPolicy ?? null,
+      });
+    };
+
     const handler = (msg: JsonRpcMessage) => {
-      if (
-        msg.type === 'notification' &&
-        msg.method === 'thread/started'
-      ) {
+      if (msg.type === 'notification' && msg.method === 'thread/started' && isRecord(msg.params)) {
+        const thread = isRecord(msg.params.thread) ? msg.params.thread : null;
+        if (typeof thread?.id === 'string') {
+          threadIdFromNotification = thread.id;
+          finalize();
+        }
+        return;
+      }
+
+      if (msg.type !== 'response' || msg.id !== requestId) {
+        return;
+      }
+
+      if (msg.error) {
         clearTimeout(timeout);
         codexProcess.offMessage(handler);
-
-        const thread = msg.params.thread as { id: string } | undefined;
-        if (!thread?.id) {
-          reject(new Error('thread/started notification missing thread.id'));
-          return;
-        }
-
-        const threadId = thread.id;
-        codexProcess.threadId = threadId;
-        updateCodexThreadId(sessionId, threadId);
-        resolve(threadId);
+        reject(new Error(`thread/start failed: ${msg.error.message}`));
+        return;
       }
+
+      responseResult = (msg.result ?? {}) as {
+        thread?: { id?: string };
+        approvalPolicy?: AskForApproval | null;
+      };
+
+      if (!responseResult.thread?.id && !threadIdFromNotification) {
+        clearTimeout(timeout);
+        codexProcess.offMessage(handler);
+        reject(new Error('thread/start response missing thread.id'));
+        return;
+      }
+
+      finalize();
     };
 
     codexProcess.onMessage(handler);
-
-    const params: Record<string, unknown> = {};
-    if (model) params.model = model;
-    if (cwd) params.cwd = cwd;
-    // Pass effort via config to override config.toml default at thread creation
-    if (effort) {
-      params.config = { model_reasoning_effort: effort };
-    }
-
-    codexProcess.send(formatJsonRpcRequest('thread/start', params));
+    codexProcess.send(request);
   });
 }
 
@@ -349,39 +670,202 @@ function startThread(
 function resumeThread(
   codexProcess: CodexProcess,
   threadId: string,
-): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    // IMPORTANT: These two calls must stay adjacent — getLastRequestId()
-    // returns the id from the most recent formatJsonRpcRequest call.
-    // Any intervening formatJsonRpcRequest call would corrupt the id.
-    const resumeReq = formatJsonRpcRequest('thread/resume', {
-      threadId,
-      persistExtendedHistory: false,
-    });
-    const resumeId = getLastRequestId();
+): Promise<{ approvalPolicy: AskForApproval | null }> {
+  return sendJsonRpcRequest<{
+    approvalPolicy?: AskForApproval | null;
+  }>(codexProcess, 'thread/resume', {
+    threadId,
+    persistExtendedHistory: false,
+  }).then((result) => ({
+    approvalPolicy: result.approvalPolicy ?? null,
+  }));
+}
 
-    const timeout = setTimeout(() => {
-      codexProcess.offMessage(handler);
-      reject(new Error('thread/resume timed out after 30s'));
-    }, 30_000);
+export async function runCodexReview({
+  sessionId,
+  workingDirectory,
+  model,
+}: {
+  sessionId: string;
+  workingDirectory?: string;
+  model?: string;
+}): Promise<CodexReviewResult> {
+  const reviewProcessSessionId = `${sessionId}:codex-review`;
+  const codexProcess = await CodexProcessManager.getOrCreate(reviewProcessSessionId);
 
-    const handler = (msg: JsonRpcMessage) => {
-      if (msg.type === 'response' && msg.id === resumeId) {
-        clearTimeout(timeout);
+  try {
+    let threadId = codexProcess.threadId;
+    if (!threadId) {
+      const startedThread = await startThread(
+        codexProcess,
+        reviewProcessSessionId,
+        model,
+        workingDirectory,
+        undefined,
+        undefined,
+        { persistThreadId: false },
+      );
+      threadId = startedThread.threadId;
+    }
+
+    if (!threadId) {
+      throw new Error('Failed to obtain Codex review thread ID');
+    }
+
+    return await new Promise<CodexReviewResult>((resolve, reject) => {
+      const delivery = 'inline' as const;
+      let reviewThreadId = threadId!;
+      let sawReviewResult = false;
+      let terminalReviewError: string | null = null;
+      let structuredReviewResult: Omit<CodexReviewResult, 'reviewThreadId' | 'delivery' | 'review'> = {
+        findings: [],
+      };
+
+      const timeout = setTimeout(() => {
         codexProcess.offMessage(handler);
+        reject(new Error('review/start timed out after 10m'));
+      }, 600_000);
 
-        if (msg.error) {
-          reject(new Error(`thread/resume failed: ${msg.error.message}`));
+      const finalize = (review: string) => {
+        const result = normalizeReviewResult(review);
+        if ('error' in result) {
+          fail(result.error);
           return;
         }
 
-        resolve();
-      }
-    };
+        sawReviewResult = true;
+        clearTimeout(timeout);
+        codexProcess.offMessage(handler);
+        resolve({
+          review: result.review,
+          reviewThreadId,
+          delivery,
+          findings: structuredReviewResult.findings,
+          overallCorrectness: structuredReviewResult.overallCorrectness,
+          overallExplanation: structuredReviewResult.overallExplanation,
+          overallConfidenceScore: structuredReviewResult.overallConfidenceScore,
+        });
+      };
 
-    codexProcess.onMessage(handler);
-    codexProcess.send(resumeReq);
-  });
+      const fail = (message: string) => {
+        clearTimeout(timeout);
+        codexProcess.offMessage(handler);
+        reject(new Error(message));
+      };
+
+      const handler = (msg: JsonRpcMessage) => {
+        if (msg.type === 'response' && msg.id === requestId) {
+          if (msg.error) {
+            fail(msg.error.message);
+            return;
+          }
+
+          const result = msg.result as { reviewThreadId?: string } | undefined;
+          if (result?.reviewThreadId) {
+            reviewThreadId = result.reviewThreadId;
+          }
+          return;
+        }
+
+        if (msg.type !== 'notification') return;
+
+        if (msg.method === 'event_msg' && isRecord(msg.params)) {
+          if (msg.params.type === 'token_count' && isRecord(msg.params.rate_limits)) {
+            const rateLimits = msg.params.rate_limits;
+            const primary = isRecord(rateLimits.primary) ? rateLimits.primary : null;
+            const credits = isRecord(rateLimits.credits) ? rateLimits.credits : null;
+            const primaryUsedPercent = typeof primary?.used_percent === 'number'
+              ? primary.used_percent
+              : null;
+            const hasCredits = typeof credits?.has_credits === 'boolean'
+              ? credits.has_credits
+              : null;
+
+            if ((primaryUsedPercent !== null && primaryUsedPercent >= 100) || hasCredits === false) {
+              terminalReviewError = 'Codex review is currently unavailable because the active Codex account has exhausted its rate limit or credits.';
+            }
+          }
+
+          if (msg.params.type === 'turn_aborted') {
+            const reason = typeof msg.params.reason === 'string' ? msg.params.reason : null;
+            fail(
+              reason === 'replaced'
+                ? 'Codex review was replaced by another request'
+                : 'Codex review was interrupted',
+            );
+            return;
+          }
+
+          if (msg.params.type === 'exited_review_mode') {
+            if (isRecord(msg.params.review_output)) {
+              structuredReviewResult = extractStructuredReviewOutput(msg.params.review_output);
+              finalize(formatReviewOutput(msg.params.review_output));
+              return;
+            }
+
+            if (typeof msg.params.review === 'string' && msg.params.review.trim()) {
+              finalize(msg.params.review);
+              return;
+            }
+
+            return;
+          }
+
+          if (msg.params.type === 'task_complete' && !sawReviewResult) {
+            fail(terminalReviewError || 'Codex review completed without returning any findings.');
+            return;
+          }
+        }
+
+        if (msg.method === 'item/completed') {
+          const item = isRecord(msg.params.item) ? msg.params.item : null;
+          if (!item) return;
+
+          if (isRecord(item.review_output)) {
+            structuredReviewResult = extractStructuredReviewOutput(item.review_output);
+          }
+
+          const reviewText = extractReviewTextFromItem(item);
+          if (reviewText) {
+            finalize(reviewText);
+          }
+          return;
+        }
+
+        if (msg.method === 'turn/completed' && isRecord(msg.params.turn)) {
+          const turn = msg.params.turn;
+          const status = turn.status;
+          if (status === 'failed') {
+            const turnError = isRecord(turn.error) ? turn.error : null;
+            const message = typeof turnError?.message === 'string'
+              ? turnError.message
+              : 'Codex review failed';
+            const details = typeof turnError?.additionalDetails === 'string'
+              ? turnError.additionalDetails
+              : null;
+            fail(details ? `${message}: ${details}` : message);
+            return;
+          }
+
+          if (status === 'interrupted') {
+            fail('Codex review was interrupted');
+          }
+        }
+      };
+
+      const request = formatJsonRpcRequest('review/start', {
+        threadId,
+        target: { type: 'uncommittedChanges' },
+        delivery,
+      });
+      const requestId = getLastRequestId();
+
+      codexProcess.onMessage(handler);
+      codexProcess.send(request);
+    });
+  } finally {
+    await CodexProcessManager.kill(reviewProcessSessionId);
+  }
 }
 
 // ---------------------------------------------------------------------------

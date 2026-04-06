@@ -44,6 +44,7 @@ import type { ChatStatus } from 'ai';
 import type { FileAttachment } from '@/types';
 import { nanoid } from 'nanoid';
 import { useVoiceInput } from '@/hooks/useVoiceInput';
+import { CodexReviewDialog } from '@/components/chat/CodexReviewDialog';
 
 import { MAX_UPLOAD_FILE_SIZE as MAX_FILE_SIZE } from '@/lib/config';
 
@@ -504,6 +505,8 @@ export function MessageInput({
   /** Cache of Codex skill metadata (name → path), populated from /api/codex/skills */
   const codexSkillsCacheRef = useRef<Map<string, string>>(new Map());
   const [skipPermissions, setSkipPermissions] = useState(false);
+  const [codexReviewOpen, setCodexReviewOpen] = useState(false);
+  const [codexReviewRunning, setCodexReviewRunning] = useState(false);
 
   // Fetch per-session skip_permissions on mount / sessionId change
   useEffect(() => {
@@ -1229,6 +1232,22 @@ export function MessageInput({
               disabled={disabled}
               className="min-h-10"
             />
+            {backend === 'codex' && sessionId && (
+              <div className="flex justify-end px-1 pb-1 sm:hidden">
+                <PromptInputButton
+                  size="sm"
+                  className="text-xs text-muted-foreground"
+                  onClick={() => setCodexReviewOpen(true)}
+                  disabled={isStreaming}
+                >
+                  <HugeiconsIcon
+                    icon={codexReviewRunning ? Loading02Icon : SearchList01Icon}
+                    className={cn("h-3.5 w-3.5", codexReviewRunning && "animate-spin")}
+                  />
+                  <span>{codexReviewRunning ? 'Review running' : 'Review changes'}</span>
+                </PromptInputButton>
+              </div>
+            )}
             <PromptInputFooter>
               <PromptInputTools className="gap-0 sm:gap-1">
                 {/* Attach file button */}
@@ -1395,6 +1414,31 @@ export function MessageInput({
                 </div>
 
                 {/* Per-session skip permissions toggle */}
+                {backend === 'codex' && sessionId && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <PromptInputButton
+                        className="hidden sm:inline-flex"
+                        onClick={() => setCodexReviewOpen(true)}
+                        disabled={isStreaming}
+                      >
+                        <HugeiconsIcon
+                          icon={codexReviewRunning ? Loading02Icon : SearchList01Icon}
+                          className={cn("h-3.5 w-3.5", codexReviewRunning && "animate-spin")}
+                        />
+                      </PromptInputButton>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      {isStreaming
+                        ? 'Stop the current Codex turn before running review'
+                        : codexReviewRunning
+                          ? 'Codex review is running in the background'
+                          : 'Review current changes with Codex'}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+
+                {/* Per-session skip permissions toggle */}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <PromptInputButton
@@ -1432,6 +1476,15 @@ export function MessageInput({
           </PromptInput>
         </div>
       </div>
+
+      {backend === 'codex' && sessionId && (
+        <CodexReviewDialog
+          open={codexReviewOpen}
+          onOpenChange={setCodexReviewOpen}
+          sessionId={sessionId}
+          onRunningChange={setCodexReviewRunning}
+        />
+      )}
 
     </div>
   );

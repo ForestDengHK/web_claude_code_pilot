@@ -165,6 +165,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   // --- Doc Preview state ---
   const [previewFile, setPreviewFileRaw] = useState<string | null>(null);
+  const [previewLine, setPreviewLine] = useState<number | null>(null);
   const [previewViewMode, setPreviewViewMode] = useState<PreviewViewMode>("source");
   const [docPreviewWidth, setDocPreviewWidth] = useState(() => {
     if (typeof window === "undefined") return 480;
@@ -173,6 +174,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const setPreviewFile = useCallback((path: string | null) => {
     setPreviewFileRaw(path);
+    if (!path) {
+      setPreviewLine(null);
+    }
     if (path) {
       setPreviewViewMode(defaultViewMode(path));
     }
@@ -194,6 +198,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const isDesktop = window.matchMedia(`(min-width: ${MD_BREAKPOINT}px)`).matches;
     setPanelOpenRaw(isChatDetailRoute && isDesktop);
     setPreviewFileRaw(null);
+    setPreviewLine(null);
   }, [isChatDetailRoute, pathname]);
 
   const setPanelOpen = useCallback((open: boolean) => {
@@ -259,10 +264,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       setPendingApprovalSessionId,
       previewFile,
       setPreviewFile,
+      previewLine,
+      setPreviewLine,
       previewViewMode,
       setPreviewViewMode,
     }),
-    [panelOpen, setPanelOpen, panelContent, workingDirectory, sessionId, sessionTitle, streamingSessionId, pendingApprovalSessionId, previewFile, setPreviewFile, previewViewMode]
+    [panelOpen, setPanelOpen, panelContent, workingDirectory, sessionId, sessionTitle, streamingSessionId, pendingApprovalSessionId, previewFile, setPreviewFile, previewLine, previewViewMode]
   );
 
   return (

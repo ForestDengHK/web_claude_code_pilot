@@ -18,7 +18,7 @@ interface RightPanelProps {
 }
 
 export function RightPanel({ width }: RightPanelProps) {
-  const { panelOpen, setPanelOpen, workingDirectory, previewFile, setPreviewFile, setPreviewViewMode } = usePanel();
+  const { panelOpen, setPanelOpen, workingDirectory, previewFile, setPreviewFile, setPreviewLine, setPreviewViewMode } = usePanel();
 
   const handleFileAdd = useCallback((path: string, isDirectory?: boolean) => {
     window.dispatchEvent(new CustomEvent('attach-file-to-chat', { detail: { path, isDirectory: isDirectory ?? false } }));
@@ -45,14 +45,16 @@ export function RightPanel({ width }: RightPanelProps) {
     if (previewFile === path) {
       setPreviewFile(null);
     } else {
+      setPreviewLine(null);
       setPreviewFile(path);
     }
-  }, [previewFile, setPreviewFile]);
+  }, [previewFile, setPreviewFile, setPreviewLine]);
 
   const handleFilePreview = useCallback((path: string) => {
+    setPreviewLine(null);
     setPreviewFile(path);
     setPreviewViewMode("rendered");
-  }, [setPreviewFile, setPreviewViewMode]);
+  }, [setPreviewFile, setPreviewLine, setPreviewViewMode]);
 
   if (!panelOpen) {
     return (
