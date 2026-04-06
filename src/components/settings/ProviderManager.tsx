@@ -29,7 +29,7 @@ import type { ApiProvider } from "@/types";
 
 const QUICK_PRESETS = [
   { name: "Anthropic", provider_type: "anthropic", base_url: "https://api.anthropic.com" },
-  { name: "OpenRouter", provider_type: "openrouter", base_url: "https://openrouter.ai/api" },
+  { name: "OpenRouter", provider_type: "openrouter", base_url: "https://openrouter.ai/api", extra_env: '{"ANTHROPIC_API_KEY":"","CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS":"1","DISABLE_INTERLEAVED_THINKING":"1"}' },
   { name: "DeepSeek", provider_type: "custom", base_url: "https://api.deepseek.com/anthropic", extra_env: '{"API_TIMEOUT_MS":"600000","CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC":"1","ANTHROPIC_API_KEY":""}' },
   { name: "GLM (CN)", provider_type: "custom", base_url: "https://open.bigmodel.cn/api/anthropic", extra_env: '{"API_TIMEOUT_MS":"3000000","ANTHROPIC_API_KEY":""}' },
   { name: "GLM (Global)", provider_type: "custom", base_url: "https://api.z.ai/api/anthropic", extra_env: '{"API_TIMEOUT_MS":"3000000","ANTHROPIC_API_KEY":""}' },
@@ -169,6 +169,8 @@ export function ProviderManager() {
             is_active: p.id === provider.id ? 1 : 0,
           }))
         );
+        // Notify other components to refresh model list
+        window.dispatchEvent(new CustomEvent('provider-changed'));
       }
     } catch {
       // ignore
@@ -189,6 +191,8 @@ export function ProviderManager() {
         setProviders((prev) =>
           prev.map((p) => ({ ...p, is_active: 0 }))
         );
+        // Notify other components to refresh model list
+        window.dispatchEvent(new CustomEvent('provider-changed'));
       }
     } catch {
       // ignore

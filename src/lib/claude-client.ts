@@ -21,7 +21,8 @@ import type { ClaudeStreamOptions, SSEEvent, TokenUsage, MCPServerConfig, Permis
 import { registerPendingPermission } from './permission-registry';
 import { registerPendingInputRequest } from './input-request-registry';
 import { cacheRateLimit } from './rate-limit-cache';
-import { getSetting, getActiveProvider, getSession } from './db';
+import { getSetting, getActiveProvider, getSession, updateSdkSessionId, getAllMessages } from './db';
+import { formatMessagesForContext } from './context-bridge';
 import { sendPushNotification } from './push-notifications';
 import { findClaudeBinary, findGitBash, getExpandedPath } from './platform';
 import os from 'os';
@@ -446,6 +447,17 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           throw new Error('workingDirectory is required — refusing to fall back to homedir');
         }
 
+        // For non-standard model names (e.g. OpenRouter slugs like "qwen/qwen3.6-plus:free"),
+        // set ANTHROPIC_CUSTOM_MODEL_OPTION so the SDK skips model validation.
+        // Must be done BEFORE creating queryOptions, since env is snapshot there.
+        if (model) {
+          const standardAliases = ['default', 'sonnet', 'opus', 'haiku', 'opusplan', 'best'];
+          const isStandard = standardAliases.includes(model) || model.startsWith('claude-');
+          if (!isStandard) {
+            sdkEnv.ANTHROPIC_CUSTOM_MODEL_OPTION = model;
+          }
+        }
+
         const queryOptions: Options = {
           cwd: workingDirectory,
           abortController,
@@ -733,186 +745,243 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           }
         }
 
-        const conversation = query({
-          prompt: finalPrompt,
-          options: queryOptions,
-        });
+        // Retry loop: if the first attempt fails due to stale thinking block
+        // signatures (common after switching providers like Qwen ↔ Claude),
+        // clear the SDK session and retry with a fresh session transparently.
+        let attemptedResume = !!sdkSessionId;
+        let needsRetry = true;
 
-        // Expose the Query object so the stop route can call interrupt()
-        if (onQueryCreated) {
-          onQueryCreated(conversation);
-        }
+        /** Prepare for retry: clear stale session, inject conversation context. */
+        const prepareRetry = () => {
+          updateSdkSessionId(sessionId, '');
+          delete queryOptions.resume;
+          attemptedResume = false;
+          gotResult = false;
 
-        let lastAssistantText = '';
-        let tokenUsage: TokenUsage | null = null;
-        let streamedTextLength = 0; // track text sent via stream_event deltas
+          // Build conversation context from DB so the fresh session
+          // retains knowledge of the previous discussion.
+          const allMsgs = getAllMessages(sessionId);
+          // Exclude the current user message (last one) and any API error responses
+          const contextMsgs = allMsgs
+            .filter(m => !m.content.startsWith('API Error:'))
+            .slice(0, -1) // drop current user message — it's already in finalPrompt
+            .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
 
-        for await (const message of conversation) {
-          if (abortController?.signal.aborted) {
-            break;
+          if (contextMsgs.length > 0) {
+            // Use last 10 turns (20 messages) verbatim, summarize older ones
+            const recentCount = 20;
+            const recentMsgs = contextMsgs.slice(-recentCount);
+            const formatted = formatMessagesForContext(recentMsgs);
+            if (formatted) {
+              finalPrompt = `[Session was reset due to stale context. Here is the conversation history so far:]\n---\n${formatted}\n---\n\nPlease continue with this context. The user's new message:\n\n${finalPrompt}`;
+            }
           }
 
-          switch (message.type) {
-            case 'assistant': {
-              const assistantMsg = message as SDKAssistantMessage;
-              // Text deltas are normally handled by stream_event for real-time streaming.
-              // However, when the prompt is an AsyncIterable (e.g. multimodal image messages),
-              // the SDK may not emit stream_event deltas. In that case, send the full
-              // assistant text here as a fallback.
-              const text = extractTextFromMessage(assistantMsg);
-              if (text) {
-                if (streamedTextLength === 0) {
-                  // No deltas were streamed — send the full text now
-                  controller.enqueue(formatSSE({ type: 'text', data: text }));
-                }
-                lastAssistantText = text;
-              }
+          controller.enqueue(formatSSE({ type: 'session_reset', data: 'Session context expired after provider switch. Retrying with fresh session...' }));
+          needsRetry = true;
+        };
 
-              // Check for tool use blocks
-              for (const block of assistantMsg.message.content) {
-                if (block.type === 'tool_use') {
-                  controller.enqueue(formatSSE({
-                    type: 'tool_use',
-                    data: JSON.stringify({
-                      id: block.id,
-                      name: block.name,
-                      input: block.input,
-                    }),
-                  }));
-                }
-              }
-              break;
+        while (needsRetry) {
+          needsRetry = false;
+
+          try {
+            const conversation = query({
+              prompt: finalPrompt,
+              options: queryOptions,
+            });
+
+            // Expose the Query object so the stop route can call interrupt()
+            if (onQueryCreated) {
+              onQueryCreated(conversation);
             }
 
-            case 'user': {
-              // Tool execution results come back as user messages with tool_result blocks
-              const userMsg = message as SDKUserMessage;
-              const content = userMsg.message.content;
-              if (Array.isArray(content)) {
-                for (const block of content) {
-                  if (block.type === 'tool_result') {
-                    const resultContent = typeof block.content === 'string'
-                      ? block.content
-                      : Array.isArray(block.content)
-                        ? block.content
-                            .filter((c: { type: string }) => c.type === 'text')
-                            .map((c: { text: string }) => c.text)
-                            .join('\n')
-                        : String(block.content ?? '');
+            let lastAssistantText = '';
+            let accumulatedStreamedText = ''; // full text from stream_event deltas (for error detection)
+            let tokenUsage: TokenUsage | null = null;
+            let streamedTextLength = 0; // track text sent via stream_event deltas
+
+            for await (const message of conversation) {
+              if (abortController?.signal.aborted) {
+                break;
+              }
+
+              switch (message.type) {
+                case 'assistant': {
+                  const assistantMsg = message as SDKAssistantMessage;
+                  const text = extractTextFromMessage(assistantMsg);
+                  if (text) {
+                    if (streamedTextLength === 0) {
+                      controller.enqueue(formatSSE({ type: 'text', data: text }));
+                    }
+                    lastAssistantText = text;
+                  }
+
+                  for (const block of assistantMsg.message.content) {
+                    if (block.type === 'tool_use') {
+                      controller.enqueue(formatSSE({
+                        type: 'tool_use',
+                        data: JSON.stringify({
+                          id: block.id,
+                          name: block.name,
+                          input: block.input,
+                        }),
+                      }));
+                    }
+                  }
+                  break;
+                }
+
+                case 'user': {
+                  const userMsg = message as SDKUserMessage;
+                  const content = userMsg.message.content;
+                  if (Array.isArray(content)) {
+                    for (const block of content) {
+                      if (block.type === 'tool_result') {
+                        const resultContent = typeof block.content === 'string'
+                          ? block.content
+                          : Array.isArray(block.content)
+                            ? block.content
+                                .filter((c: { type: string }) => c.type === 'text')
+                                .map((c: { text: string }) => c.text)
+                                .join('\n')
+                            : String(block.content ?? '');
+                        controller.enqueue(formatSSE({
+                          type: 'tool_result',
+                          data: JSON.stringify({
+                            tool_use_id: block.tool_use_id,
+                            content: resultContent,
+                            is_error: block.is_error || false,
+                          }),
+                        }));
+                      }
+                    }
+                  }
+                  break;
+                }
+
+                case 'stream_event': {
+                  const streamEvent = message as SDKPartialAssistantMessage;
+                  const evt = streamEvent.event;
+                  if (evt.type === 'content_block_delta' && 'delta' in evt) {
+                    const delta = evt.delta;
+                    if ('text' in delta && delta.text) {
+                      streamedTextLength += delta.text.length;
+                      accumulatedStreamedText += delta.text;
+                      controller.enqueue(formatSSE({ type: 'text', data: delta.text }));
+                    }
+                  }
+                  break;
+                }
+
+                case 'system': {
+                  const sysMsg = message as SDKSystemMessage;
+                  if ('subtype' in sysMsg) {
+                    if (sysMsg.subtype === 'init') {
+                      controller.enqueue(formatSSE({
+                        type: 'status',
+                        data: JSON.stringify({
+                          session_id: sysMsg.session_id,
+                          model: sysMsg.model,
+                          tools: sysMsg.tools,
+                        }),
+                      }));
+                    }
+                  }
+                  break;
+                }
+
+                case 'tool_progress': {
+                  const progressMsg = message as SDKToolProgressMessage;
+                  controller.enqueue(formatSSE({
+                    type: 'tool_output',
+                    data: JSON.stringify({
+                      _progress: true,
+                      tool_use_id: progressMsg.tool_use_id,
+                      tool_name: progressMsg.tool_name,
+                      elapsed_time_seconds: progressMsg.elapsed_time_seconds,
+                    }),
+                  }));
+                  if (toolTimeoutSeconds > 0 && progressMsg.elapsed_time_seconds >= toolTimeoutSeconds) {
                     controller.enqueue(formatSSE({
-                      type: 'tool_result',
+                      type: 'tool_timeout',
                       data: JSON.stringify({
-                        tool_use_id: block.tool_use_id,
-                        content: resultContent,
-                        is_error: block.is_error || false,
+                        tool_name: progressMsg.tool_name,
+                        elapsed_seconds: Math.round(progressMsg.elapsed_time_seconds),
                       }),
                     }));
+                    abortController?.abort();
                   }
+                  break;
                 }
-              }
-              break;
-            }
 
-            case 'stream_event': {
-              const streamEvent = message as SDKPartialAssistantMessage;
-              const evt = streamEvent.event;
-              if (evt.type === 'content_block_delta' && 'delta' in evt) {
-                const delta = evt.delta;
-                if ('text' in delta && delta.text) {
-                  streamedTextLength += delta.text.length;
-                  controller.enqueue(formatSSE({ type: 'text', data: delta.text }));
-                }
-              }
-              break;
-            }
-
-            case 'system': {
-              const sysMsg = message as SDKSystemMessage;
-              if ('subtype' in sysMsg) {
-                if (sysMsg.subtype === 'init') {
+                case 'rate_limit_event': {
+                  const rlEvent = message as SDKRateLimitEvent;
+                  const rlInfo = rlEvent.rate_limit_info;
+                  cacheRateLimit(rlInfo as unknown as Record<string, unknown>);
                   controller.enqueue(formatSSE({
-                    type: 'status',
-                    data: JSON.stringify({
-                      session_id: sysMsg.session_id,
-                      model: sysMsg.model,
-                      tools: sysMsg.tools,
-                    }),
+                    type: 'rate_limit',
+                    data: JSON.stringify(rlInfo),
                   }));
+                  break;
+                }
+
+                case 'result': {
+                  gotResult = true;
+                  const resultMsg = message as SDKResultMessage;
+                  tokenUsage = extractTokenUsage(resultMsg);
+                  if (tokenUsage && effort) tokenUsage.effort = effort;
+                  const resultPayload: Record<string, unknown> = {
+                    subtype: resultMsg.subtype,
+                    is_error: resultMsg.is_error,
+                    num_turns: resultMsg.num_turns,
+                    duration_ms: resultMsg.duration_ms,
+                    usage: tokenUsage,
+                    session_id: resultMsg.session_id,
+                  };
+                  if (resultMsg.is_error && 'errors' in resultMsg && Array.isArray((resultMsg as Record<string, unknown>).errors)) {
+                    resultPayload.errors = (resultMsg as Record<string, unknown>).errors;
+                  }
+                  controller.enqueue(formatSSE({
+                    type: 'result',
+                    data: JSON.stringify(resultPayload),
+                  }));
+                  break;
+                }
+
+                default: {
+                  const msgType = (message as { type: string }).type;
+                  if (!['auth_status', 'session_state_changed', 'files_persisted', 'tool_use_summary', 'hook_started', 'hook_progress', 'hook_response', 'task_notification', 'task_started', 'task_progress', 'status', 'api_retry', 'compact_boundary'].includes(msgType)) {
+                    console.log(`[claude-client] Unhandled message type: ${msgType}`, JSON.stringify(message).slice(0, 200));
+                  }
+                  break;
                 }
               }
-              break;
             }
 
-            case 'tool_progress': {
-              const progressMsg = message as SDKToolProgressMessage;
-              controller.enqueue(formatSSE({
-                type: 'tool_output',
-                data: JSON.stringify({
-                  _progress: true,
-                  tool_use_id: progressMsg.tool_use_id,
-                  tool_name: progressMsg.tool_name,
-                  elapsed_time_seconds: progressMsg.elapsed_time_seconds,
-                }),
-              }));
-              // Auto-timeout: abort if tool runs longer than configured threshold
-              if (toolTimeoutSeconds > 0 && progressMsg.elapsed_time_seconds >= toolTimeoutSeconds) {
-                controller.enqueue(formatSSE({
-                  type: 'tool_timeout',
-                  data: JSON.stringify({
-                    tool_name: progressMsg.tool_name,
-                    elapsed_seconds: Math.round(progressMsg.elapsed_time_seconds),
-                  }),
-                }));
-                abortController?.abort();
-              }
-              break;
+            // Detect stale thinking block signature errors (common after provider
+            // switches like Qwen → Claude). Check both the assistant message text
+            // and the streamed delta text since the error may arrive via either path.
+            const responseText = lastAssistantText || accumulatedStreamedText;
+            const isThinkingSignatureError = attemptedResume &&
+              /Invalid.*signature.*thinking.*block/i.test(responseText);
+
+            if (isThinkingSignatureError) {
+              console.log('[claude-client] Stale thinking block signature detected (stream text), clearing SDK session and retrying...');
+              prepareRetry();
+            }
+          } catch (innerError) {
+            const innerMsg = innerError instanceof Error ? innerError.message : 'Unknown error';
+
+            // If the SDK threw an exception containing the thinking signature error,
+            // clear the stale session and retry (same as stream-text detection above).
+            if (attemptedResume && /Invalid.*signature.*thinking/i.test(innerMsg)) {
+              console.log('[claude-client] Stale thinking block signature detected (exception), clearing SDK session and retrying...');
+              prepareRetry();
+              continue;
             }
 
-            case 'rate_limit_event': {
-              const rlEvent = message as SDKRateLimitEvent;
-              const rlInfo = rlEvent.rate_limit_info;
-              // Cache server-side so /api/claude-usage can return it
-              cacheRateLimit(rlInfo as unknown as Record<string, unknown>);
-              controller.enqueue(formatSSE({
-                type: 'rate_limit',
-                data: JSON.stringify(rlInfo),
-              }));
-              break;
-            }
-
-            case 'result': {
-              gotResult = true;
-              const resultMsg = message as SDKResultMessage;
-              tokenUsage = extractTokenUsage(resultMsg);
-              // Attach the effort level used for this response so the UI can display it
-              if (tokenUsage && effort) tokenUsage.effort = effort;
-              const resultPayload: Record<string, unknown> = {
-                subtype: resultMsg.subtype,
-                is_error: resultMsg.is_error,
-                num_turns: resultMsg.num_turns,
-                duration_ms: resultMsg.duration_ms,
-                usage: tokenUsage,
-                session_id: resultMsg.session_id,
-              };
-              // Forward SDK error details so the frontend can show what went wrong
-              if (resultMsg.is_error && 'errors' in resultMsg && Array.isArray((resultMsg as Record<string, unknown>).errors)) {
-                resultPayload.errors = (resultMsg as Record<string, unknown>).errors;
-              }
-              controller.enqueue(formatSSE({
-                type: 'result',
-                data: JSON.stringify(resultPayload),
-              }));
-              break;
-            }
-
-            default: {
-              // Log unhandled message types for debugging
-              const msgType = (message as { type: string }).type;
-              if (!['auth_status', 'session_state_changed', 'files_persisted', 'tool_use_summary', 'hook_started', 'hook_progress', 'hook_response', 'task_notification', 'task_started', 'task_progress', 'status', 'api_retry', 'compact_boundary'].includes(msgType)) {
-                console.log(`[claude-client] Unhandled message type: ${msgType}`, JSON.stringify(message).slice(0, 200));
-              }
-              break;
-            }
+            // Not a retryable error — re-throw to the outer catch
+            throw innerError;
           }
         }
 

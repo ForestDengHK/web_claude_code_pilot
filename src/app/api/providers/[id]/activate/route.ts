@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { activateProvider, deactivateAllProviders, getProvider } from '@/lib/db';
+import { clearModelsCache } from '@/lib/models-cache';
 import type { ErrorResponse } from '@/types';
 
 interface RouteContext {
@@ -23,6 +24,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     if (!active) {
       deactivateAllProviders();
+      clearModelsCache();
       return NextResponse.json({ success: true, active: false });
     }
 
@@ -42,6 +44,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       );
     }
 
+    clearModelsCache();
     return NextResponse.json({ success: true, active: true });
   } catch (error) {
     return NextResponse.json<ErrorResponse>(

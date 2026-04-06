@@ -268,6 +268,24 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
             const event: SSEEvent = JSON.parse(line.slice(6));
             if (event.type === 'permission_request' || event.type === 'input_request') {
               // Skip permission_request and input_request events - not saved as message content
+            } else if (event.type === 'session_reset') {
+              // Server is retrying with a fresh session (e.g. stale thinking
+              // block signatures after provider switch). Discard any error text
+              // accumulated from the failed attempt so only the retry response
+              // is saved to the database.
+              currentText = '';
+              contentBlocks.length = 0;
+              // Delete the draft if one was already created for the error text
+              if (draftMessageId) {
+                try {
+                  const db = getDb();
+                  db.prepare('DELETE FROM messages WHERE id = ?').run(draftMessageId);
+                } catch { /* best effort */ }
+                draftMessageId = null;
+              }
+              // Re-init streaming buffer so recovery polling starts fresh
+              clearStreamBuffer(sessionId);
+              initStreamBuffer(sessionId);
             } else if (event.type === 'tool_output') {
               // Not saved as message content, but capture progress for the
               // streaming buffer so recovery can show "Running bash… (5s)".

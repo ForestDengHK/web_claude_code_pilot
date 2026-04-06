@@ -2,25 +2,13 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { getActiveProvider, getSetting } from '@/lib/db';
 import { findClaudeBinary, findGitBash, getExpandedPath } from '@/lib/platform';
+import { getCachedModels, setCachedModels, clearModelsCache } from '@/lib/models-cache';
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-interface CachedModel {
-  value: string;
-  displayName: string;
-  description: string;
-  supportsEffort?: boolean;
-  supportedEffortLevels?: string[];
-}
-
-// Cache models to avoid spawning a CLI process on every request
-let cachedModels: CachedModel[] | null = null;
-let cachedAt = 0;
-import { MODELS_CACHE_TTL as CACHE_TTL } from '@/lib/config';
 
 /**
  * Sanitize env values for child_process.spawn
@@ -61,10 +49,23 @@ function resolveScriptFromCmd(cmdPath: string): string | undefined {
   return undefined;
 }
 
-export async function GET() {
-  // Return cached models if fresh
-  if (cachedModels && Date.now() - cachedAt < CACHE_TTL) {
-    return Response.json({ models: cachedModels });
+export async function GET(request: Request) {
+  // Support ?refresh=true to force a fresh fetch (used after provider switch)
+  const url = new URL(request.url);
+  const forceRefresh = url.searchParams.get('refresh') === 'true';
+
+  // Look up which provider is currently active (needed for cache key)
+  const activeProvider = getActiveProvider();
+  const activeProviderId = activeProvider?.id ?? null;
+
+  if (forceRefresh) {
+    clearModelsCache();
+  }
+
+  // Return cached models if fresh AND from the same provider
+  const cached = getCachedModels(activeProviderId);
+  if (cached) {
+    return Response.json({ models: cached });
   }
 
   try {
@@ -81,8 +82,6 @@ export async function GET() {
       const gitBashPath = findGitBash();
       if (gitBashPath) sdkEnv.CLAUDE_CODE_GIT_BASH_PATH = gitBashPath;
     }
-
-    const activeProvider = getActiveProvider();
     if (activeProvider && activeProvider.api_key) {
       for (const key of Object.keys(sdkEnv)) {
         if (key.startsWith('ANTHROPIC_')) delete sdkEnv[key];
@@ -135,15 +134,15 @@ export async function GET() {
     try {
       // supportedModels() waits for init and returns the model list
       const models = await q.supportedModels();
-      cachedModels = models.map((m) => ({
+      const mapped = models.map((m) => ({
         value: m.value,
         displayName: m.displayName,
         description: m.description,
         supportsEffort: m.supportsEffort,
         supportedEffortLevels: m.supportedEffortLevels,
       }));
-      cachedAt = Date.now();
-      return Response.json({ models: cachedModels });
+      setCachedModels(mapped, activeProviderId);
+      return Response.json({ models: mapped });
     } finally {
       q.close();
     }

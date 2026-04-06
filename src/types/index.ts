@@ -375,6 +375,7 @@ export type SSEEventType =
   | 'input_request'      // AskUserQuestion mid-stream prompt
   | 'rate_limit'         // rate limit info from Claude
   | 'heartbeat'          // keepalive signal for connection health
+  | 'session_reset'      // stale SDK session cleared, retry in progress
   | 'done';              // stream complete
 
 export interface SSEEvent {

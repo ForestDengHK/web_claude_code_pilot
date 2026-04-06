@@ -170,6 +170,13 @@ function getShortModelName(label: string): string {
   // "Default (recommended)" → "Default" so user knows it's not a specific model
   if (lower.startsWith('default')) return 'Default';
 
+  // OpenRouter-style names: "qwen/qwen3.6-plus:free" → "qwen3.6-plus"
+  if (label.includes('/')) {
+    let slug = label.split('/').pop() || label;
+    slug = slug.replace(/:free$/, '');
+    return slug.length > 14 ? slug.slice(0, 13) + '…' : slug;
+  }
+
   const numericSegments = label.match(/\d+/g) ?? [];
 
   if (lower.includes('opus')) {
@@ -532,10 +539,12 @@ export function MessageInput({
       .catch(() => {});
   }, [sessionId]);
 
-  // Fetch supported models from BOTH backends and merge into grouped list
-  useEffect(() => {
+  // Fetch supported models from BOTH backends and merge into grouped list.
+  // When refresh=true, the server-side cache is bypassed (used after provider switch).
+  const fetchModels = useCallback((refresh = false) => {
+    const modelsUrl = refresh ? '/api/models?refresh=true' : '/api/models';
     Promise.all([
-      fetch('/api/models').then(r => r.ok ? r.json() : { models: [] }).catch(() => ({ models: [] })),
+      fetch(modelsUrl).then(r => r.ok ? r.json() : { models: [] }).catch(() => ({ models: [] })),
       fetch('/api/codex/models').then(r => r.ok ? r.json() : { models: [] }).catch(() => ({ models: [] })),
     ]).then(([claudeData, codexData]) => {
       const claudeModels = (claudeData.models || []).map((m: { value: string; displayName: string }) => ({
@@ -599,8 +608,20 @@ export function MessageInput({
         }
       }
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Fetch models on mount
+  useEffect(() => {
+    fetchModels();
+  }, [fetchModels]);
+
+  // Re-fetch models (with server cache bypass) when provider is changed in settings
+  useEffect(() => {
+    const handler = () => { fetchModels(true); };
+    window.addEventListener('provider-changed', handler);
+    return () => window.removeEventListener('provider-changed', handler);
+  }, [fetchModels]);
 
   const MODEL_OPTIONS = dynamicModels || FALLBACK_MODEL_OPTIONS;
 
@@ -1060,7 +1081,8 @@ export function MessageInput({
   );
 
   const currentModelValue = modelName || MODEL_OPTIONS[0]?.value || 'sonnet';
-  const currentModelOption = MODEL_OPTIONS.find((m) => m.value === currentModelValue) || MODEL_OPTIONS[0];
+  const currentModelOption = MODEL_OPTIONS.find((m) => m.value === currentModelValue)
+    || { value: currentModelValue, label: currentModelValue };
   const currentMode = MODE_OPTIONS.find((m) => m.value === mode) || MODE_OPTIONS[0];
 
   // Reasoning effort — unified for both Claude and Codex models
@@ -1336,7 +1358,7 @@ export function MessageInput({
                   <PromptInputButton
                     onClick={() => setModelMenuOpen((prev) => !prev)}
                   >
-                    <span className="text-xs font-mono max-w-[5ch] truncate sm:max-w-none">
+                    <span className="text-xs font-mono max-w-[10ch] truncate sm:max-w-none">
                       {getShortModelName(currentModelOption.label)}
                       {currentModelEfforts && currentEffort ? `\u00B7${effortShortLabel(currentEffort)}` : ''}
                     </span>

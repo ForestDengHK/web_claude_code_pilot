@@ -181,6 +181,15 @@ function handleSSEEvent(
       return accumulated;
     }
 
+    case 'session_reset': {
+      // Server detected a stale session (e.g. thinking block signature error
+      // after switching providers). Discard the error text accumulated so far
+      // and let the retry response replace it.
+      callbacks.onText('');
+      callbacks.onStatus(event.data || 'Retrying with fresh session...');
+      return '';
+    }
+
     case 'error': {
       const next = accumulated + '\n\n**Error:** ' + event.data;
       callbacks.onError(next);
