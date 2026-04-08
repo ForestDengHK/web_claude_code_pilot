@@ -142,6 +142,15 @@ function initDb(db: Database.Database): void {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS terminal_sessions (
+      id          TEXT PRIMARY KEY,
+      host_id     TEXT NOT NULL DEFAULT 'local',
+      tmux_name   TEXT NOT NULL,
+      title       TEXT NOT NULL,
+      created_at  INTEGER NOT NULL,
+      last_seen   INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
     CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
     CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON chat_sessions(updated_at);
@@ -310,6 +319,18 @@ function migrateDb(db: Database.Database): void {
       keys_auth TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       user_agent TEXT
+    )
+  `);
+
+  // Add terminal_sessions table for databases created before this feature
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS terminal_sessions (
+      id          TEXT PRIMARY KEY,
+      host_id     TEXT NOT NULL DEFAULT 'local',
+      tmux_name   TEXT NOT NULL,
+      title       TEXT NOT NULL,
+      created_at  INTEGER NOT NULL,
+      last_seen   INTEGER NOT NULL
     )
   `);
 }
