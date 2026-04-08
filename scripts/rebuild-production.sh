@@ -24,7 +24,7 @@ rsync -a --exclude='.next' --exclude='.git' \
 
 echo "Building production..."
 cd "$BUILD_DIR"
-npx next build
+npm run build
 
 echo "Deploying standalone output..."
 rm -rf "$STANDALONE_DIR"

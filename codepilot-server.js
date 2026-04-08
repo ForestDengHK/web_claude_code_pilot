@@ -71,5 +71,21 @@ console.log(
 );
 console.log(`[codepilot] Data directory: ${process.env.CLAUDE_GUI_DATA_DIR}`);
 
+// --- Start Terminal WebSocket server ---
+const wsServerPath = path.join(__dirname, 'terminal-ws-server.js');
+if (require('fs').existsSync(wsServerPath)) {
+  const wsPort = parseInt(process.env.TERMINAL_WS_PORT || '4002', 10);
+  try {
+    const { startTerminalWS } = require('./terminal-ws-server.js');
+    startTerminalWS(wsPort);
+    console.log(`[codepilot] Terminal WS server started on port ${wsPort}`);
+  } catch (err) {
+    // Non-fatal: app works without terminal feature
+    console.warn('[codepilot] Failed to start terminal WS server:', err.message);
+  }
+} else {
+  console.log('[codepilot] No terminal-ws-server.js found; terminal feature disabled');
+}
+
 // --- Start the Next.js standalone server ---
 require('./server.js');
