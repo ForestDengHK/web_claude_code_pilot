@@ -86,10 +86,17 @@ export const providerRegistry = new ProviderRegistry();
 ```typescript
 // src/lib/terminal/providers/local.ts
 
+// The canonical ID for the local provider. Must match the DB default for host_id.
+export const LOCAL_PROVIDER_ID = 'local';
+
 // Implements TerminalProvider for the local machine.
+// id === LOCAL_PROVIDER_ID ('local') — enforced by this constant; matches
+// the DB schema DEFAULT 'local' for terminal_sessions.host_id.
 // Each session maps to a tmux session named "codepilot-<sessionId>".
 // Uses: tmux new-session -A -s codepilot-<id>
 //   -A: attach if exists, create if not — gives us persistence for free.
+// Session IDs are nanoid-generated (URL-safe alphabet, no dots or special chars
+// that would be invalid in tmux session names).
 // node-pty spawns the tmux command and pipes I/O to the WS server.
 ```
 
@@ -103,7 +110,14 @@ export const providerRegistry = new ProviderRegistry();
 ## Section 2: WebSocket Server
 
 **File:** `scripts/terminal-ws-server.js`  
-**Port:** `TERMINAL_WS_PORT` env var (default: `PORT + 1`, e.g., 4002 prod / 4001 dev)
+**Port:** `TERMINAL_WS_PORT` env var. Explicit defaults per environment to avoid port collisions:
+
+| Environment | Next.js port | WS port default |
+|-------------|-------------|-----------------|
+| Production  | 4001        | 4002            |
+| Development | 4000        | 4003            |
+
+Do **not** derive the default from `PORT + 1` — dev Next.js is on 4000, production Next.js is on 4001, so `PORT + 1` in dev would collide with the production Next.js server if both are running on the same machine (the normal setup). Instead, set explicit defaults: `TERMINAL_WS_PORT=4002` in the production plist and `TERMINAL_WS_PORT=4003` in the dev startup script.
 
 ### Message Protocol
 
@@ -120,11 +134,13 @@ WebSocket frames carry two types of data:
 type ClientMessage =
   | { type: 'input'; data: string }        // keystroke(s)
   | { type: 'resize'; cols: number; rows: number }
+  | { type: 'kill' }                       // user closes pane — destroy tmux session
   | { type: 'ping' }
 
 // Server → Browser (JSON text frames)
 type ServerMessage =
   | { type: 'ready'; sessionId: string }
+  | { type: 'killed' }                     // ack after tmux session destroyed
   | { type: 'error'; message: string }
   | { type: 'pong' }
 ```
@@ -133,26 +149,42 @@ Raw PTY output is sent as **binary frames** (not JSON) for performance. On the b
 
 ### Connection lifecycle
 
+Initial `cols` and `rows` are passed as URL query parameters so `LocalProvider.connect()` can spawn the PTY at the correct size before any messages are received:
+
 ```
-WS connect (URL: /terminal/<sessionId>?hostId=local)
+WS connect (URL: /terminal/<sessionId>?hostId=local&cols=220&rows=50)
+  → parse cols/rows from query string (defaults: cols=80, rows=24)
   → look up session in SessionStore
   → if not found: create new session record
   → LocalProvider.connect(sessionId, { cols, rows })
-      → spawn: tmux new-session -A -s codepilot-<sessionId>
+      → spawn node-pty: tmux new-session -A -s codepilot-<sessionId>
+      → if spawn fails (tmux not found, permission error, etc.):
+          → send { type: 'error', message: '<reason>' }
+          → close WS; do NOT create DB record
   → send { type: 'ready', sessionId }
   → pipe: PTY stdout → ws.send(binary)
           ws.message (input) → pty.write()
           ws.message (resize) → pty.resize()
 
-WS disconnect
-  → ptyHandle.disconnect()   // closes node-pty, tmux session stays alive
+WS disconnect (browser tab closed / network drop)
+  → ptyHandle.disconnect():
+      1. write 'q' is NOT sent — tmux keeps the session alive naturally
+         when node-pty closes, tmux detects the client disconnected but
+         the session remains (tmux default: sessions are not destroyed on
+         client disconnect). No explicit detach command needed; just close
+         the node-pty process cleanly.
   → update session last_seen in DB
 
 Pane closed by user
-  → WS message { type: 'kill' }
-  → ptyHandle.kill()         // tmux kill-session
+  → browser sends { type: 'kill' }
+  → ptyHandle.kill():
+      1. run: tmux kill-session -t codepilot-<sessionId>
+      2. close node-pty process
+  → send { type: 'killed' } to browser
   → delete session from DB
 ```
+
+**Note on disconnect safety**: When node-pty's process exits, tmux receives a HUP on the controlling terminal. By default, tmux sessions survive this (the session moves to background). This is the default tmux behavior and does not require any special `remain-on-exit` or `detach-on-destroy` configuration. If a user has non-default tmux config that destroys sessions on HUP, sessions will not persist — document this as a known limitation.
 
 ### Connection map
 
@@ -234,7 +266,9 @@ Connection URL constructed from `/api/terminal/config` response:
 ```
 GET /api/terminal/config → { wsUrl: "ws://hostname:4002" }
 ```
-Then: `ws://hostname:4002/terminal/<sessionId>?hostId=local`
+Then: `ws://hostname:4002/terminal/<sessionId>?hostId=local&cols=<cols>&rows=<rows>`
+
+`cols` and `rows` are measured by calling `fitAddon.fit()` immediately after mounting the xterm.js container (before opening the WebSocket), so the initial PTY size matches the actual rendered container.
 
 Resize handling: `ResizeObserver` on the pane container → `fitAddon.fit()` → send `{ type: 'resize', cols, rows }` to WS server.
 
@@ -266,12 +300,15 @@ Icon: `Terminal02Icon` or similar from `@hugeicons/core-free-icons`.
 ```javascript
 // In codepilot-server.js, after env setup, before require('./server.js'):
 const { startTerminalWS } = require('./terminal-ws-server.js');
-startTerminalWS(parseInt(process.env.TERMINAL_WS_PORT || String(parseInt(process.env.PORT || '3000') + 1)));
+const wsPort = parseInt(process.env.TERMINAL_WS_PORT || '4002');
+startTerminalWS(wsPort);
 
 require('./server.js');  // Next.js standalone server
 ```
 
 Both servers run in the same process, managed by launchd `com.codepilot.production`.
+
+**Build step**: `scripts/prepare-server.mjs` must be updated to also copy `scripts/terminal-ws-server.js` (and any compiled provider/session-store modules it depends on) into `.next/standalone/`. The WS server imports from `src/lib/terminal/` — these TypeScript files must be pre-compiled to JS and bundled into a single file (using `esbuild` or `ncc`) that is copied alongside `terminal-ws-server.js`. This bundling step is added to the `npm run build` script.
 
 ### Development
 
@@ -279,12 +316,12 @@ New npm scripts:
 
 ```json
 {
-  "terminal-ws": "node --watch scripts/terminal-ws-server.js",
+  "terminal-ws": "TERMINAL_WS_PORT=4003 node --watch scripts/terminal-ws-server.js",
   "dev:all": "concurrently \"npm run dev\" \"npm run terminal-ws\""
 }
 ```
 
-`--watch` (Node 18+ built-in) restarts the WS server when its source changes. Next.js HMR is unaffected.
+`--watch` (Node 18+ built-in) restarts the WS server when its source changes. Next.js HMR is unaffected. Dev WS server uses port **4003** to avoid colliding with production Next.js (4001) or production WS server (4002).
 
 Normal dev workflow: `npm run dev` (no terminal feature). Terminal dev: `npm run dev:all`.
 
@@ -292,7 +329,7 @@ Normal dev workflow: `npm run dev` (no terminal feature). Terminal dev: `npm run
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TERMINAL_WS_PORT` | `PORT + 1` | Port for Terminal WebSocket server |
+| `TERMINAL_WS_PORT` | `4002` (prod) / `4003` (dev) | Port for Terminal WebSocket server |
 
 ---
 
@@ -320,6 +357,8 @@ Normal dev workflow: `npm run dev` (no terminal feature). Terminal dev: `npm run
 | `src/components/layout/NavRail.tsx` | Add Terminal nav item |
 | `src/components/layout/BottomNav.tsx` | Add Terminal nav item |
 | `codepilot-server.js` | Start WS server before Next.js |
+| `next.config.ts` | Add `node-pty` and `ws` to `serverExternalPackages` (native addons cannot be bundled by webpack) |
+| `scripts/prepare-server.mjs` | Copy `terminal-ws-server.js` bundle into `.next/standalone/` |
 | `package.json` | Add deps + new scripts |
 
 ## New Dependencies
