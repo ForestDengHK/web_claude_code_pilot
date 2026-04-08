@@ -97,7 +97,7 @@ export function useGitSync(): UseGitSyncReturn {
         toast.success(`${displayName}: already up to date`);
         break;
       case 'dirty':
-        toast.warning(`${displayName}: uncommitted changes, skipped`);
+        toast.warning(`${displayName}: ${state.message ?? 'local changes conflict with remote'}`);
         break;
       case 'error':
         toast.error(`${displayName}: ${state.message ?? 'pull failed'}`);
@@ -137,7 +137,7 @@ export function useGitSync(): UseGitSyncReturn {
       if (pulled.length > 0) parts.push(`✓ ${pulled.length} updated`);
       if (dirty.length > 0) {
         const names = dirty.map(r => r.displayName).join(', ');
-        parts.push(`⚠ skipped (dirty): ${names}`);
+        parts.push(`⚠ conflict: ${names}`);
       }
       if (errored.length > 0) {
         const names = errored.map(r => r.displayName).join(', ');

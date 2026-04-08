@@ -27,19 +27,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ status: 'not-git' });
     }
 
-    // 2. Check for dirty state (uncommitted changes)
-    let statusOut: string;
-    try {
-      ({ stdout: statusOut } = await runGit(path, ['status', '--porcelain']));
-    } catch (err: unknown) {
-      const msg = (err as { stderr?: string }).stderr?.trim() || (err instanceof Error ? err.message : String(err));
-      return NextResponse.json({ status: 'error', message: classifyGitPullError(msg) });
-    }
-    if (statusOut.trim()) {
-      return NextResponse.json({ status: 'dirty', message: 'Uncommitted changes detected' });
-    }
-
-    // 3. Pull (fast-forward only — never auto-creates merge commits)
+    // 2. Pull (fast-forward only — never auto-creates merge commits)
+    // Let git decide: if local changes don't overlap with incoming changes, pull succeeds.
+    // Only report a conflict when git itself says local files would be overwritten.
     try {
       const { stdout } = await runGit(path, ['pull', '--ff-only']);
       const result = parseGitPullOutput(stdout);
@@ -47,6 +37,10 @@ export async function POST(request: NextRequest) {
     } catch (err: unknown) {
       const stderr = (err as { stderr?: string }).stderr?.trim()
         || (err instanceof Error ? err.message : String(err));
+      // Local changes clash with incoming remote changes
+      if (stderr.includes('would be overwritten')) {
+        return NextResponse.json({ status: 'dirty', message: 'Local changes conflict with remote changes' });
+      }
       return NextResponse.json({
         status: 'error',
         message: classifyGitPullError(stderr),
