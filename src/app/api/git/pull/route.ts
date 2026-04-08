@@ -45,9 +45,8 @@ export async function POST(request: NextRequest) {
       const result = parseGitPullOutput(stdout);
       return NextResponse.json({ status: result, output: stdout.trim() });
     } catch (err: unknown) {
-      const stderr = (err instanceof Error && 'stderr' in err && typeof (err as any).stderr === 'string')
-        ? (err as any).stderr
-        : (err instanceof Error ? err.message : String(err));
+      const stderr = (err as { stderr?: string }).stderr?.trim()
+        || (err instanceof Error ? err.message : String(err));
       return NextResponse.json({
         status: 'error',
         message: classifyGitPullError(stderr),
