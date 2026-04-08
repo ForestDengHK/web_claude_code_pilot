@@ -14,7 +14,12 @@ import {
   ArrowRight01Icon,
   PlusSignIcon,
   FolderOpenIcon,
+  Tick01Icon,
+  Cancel01Icon,
+  RefreshIcon,
 } from "@hugeicons/core-free-icons";
+import { AlertTriangle } from 'lucide-react';
+import { useGitSync } from '@/hooks/useGitSync';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -113,6 +118,7 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { streamingSessionId, pendingApprovalSessionId } = usePanel();
+  const { syncStates, pullProject, pullAll, isAnyLoading } = useGitSync();
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [deletingSession, setDeletingSession] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -418,6 +424,33 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
           </TooltipTrigger>
           <TooltipContent side="bottom">Open project folder</TooltipContent>
         </Tooltip>
+        {/* Pull All — only shown when at least one real project exists */}
+        {projectGroups.some(g => g.workingDirectory !== '') && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon-sm"
+                className="h-8 w-8 shrink-0"
+                disabled={isAnyLoading}
+                onClick={() =>
+                  pullAll(
+                    projectGroups
+                      .filter(g => g.workingDirectory !== '')
+                      .map(g => ({ dir: g.workingDirectory, displayName: g.displayName }))
+                  )
+                }
+              >
+                <HugeiconsIcon
+                  icon={RefreshIcon}
+                  className={cn('h-3.5 w-3.5', isAnyLoading && 'animate-spin')}
+                />
+                <span className="sr-only">Pull all projects</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Pull all projects</TooltipContent>
+          </Tooltip>
+        )}
       </div>
 
       {/* Search */}
@@ -572,6 +605,61 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                       <span className="flex-1 truncate text-[12px] font-medium text-sidebar-foreground">
                         {group.displayName}
                       </span>
+                      {/* Status indicator — briefly shows pull result, then disappears */}
+                      {group.workingDirectory !== '' && (() => {
+                        const state = syncStates.get(group.workingDirectory);
+                        if (!state || state.status === 'idle' || state.status === 'loading' || state.status === 'not-git') return null;
+                        if (state.status === 'success' || state.status === 'up-to-date') {
+                          return (
+                            <HugeiconsIcon
+                              icon={Tick01Icon}
+                              className="h-3 w-3 shrink-0 text-green-500"
+                            />
+                          );
+                        }
+                        if (state.status === 'dirty') {
+                          return <AlertTriangle className="h-3 w-3 shrink-0 text-yellow-500" />;
+                        }
+                        // error
+                        return (
+                          <HugeiconsIcon
+                            icon={Cancel01Icon}
+                            className="h-3 w-3 shrink-0 text-red-500"
+                          />
+                        );
+                      })()}
+
+                      {/* Per-project sync button */}
+                      {group.workingDirectory !== '' && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              className={cn(
+                                "h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground transition-opacity",
+                                "opacity-100 md:opacity-0 md:group-hover/folder:opacity-100"
+                              )}
+                              disabled={syncStates.get(group.workingDirectory)?.status === 'loading'}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                pullProject(group.workingDirectory, group.displayName);
+                              }}
+                            >
+                              <HugeiconsIcon
+                                icon={RefreshIcon}
+                                className={cn(
+                                  'h-3 w-3',
+                                  syncStates.get(group.workingDirectory)?.status === 'loading' && 'animate-spin'
+                                )}
+                              />
+                              <span className="sr-only">Pull {group.displayName}</span>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="right">Pull {group.displayName}</TooltipContent>
+                        </Tooltip>
+                      )}
+
                       {/* New chat in project button */}
                       {group.workingDirectory !== "" && (
                         <Tooltip>
