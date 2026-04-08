@@ -6,7 +6,7 @@ const pkg = require("./package.json");
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
-  serverExternalPackages: ['better-sqlite3', 'playwright'],
+  serverExternalPackages: ['better-sqlite3', 'playwright', 'node-pty', 'ws'],
   devIndicators: false,
   generateBuildId: async () => null,
   typescript: {
