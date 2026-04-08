@@ -630,35 +630,38 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                       })()}
 
                       {/* Per-project sync button */}
-                      {group.workingDirectory !== '' && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
-                              className={cn(
-                                "h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground transition-opacity",
-                                "opacity-100 md:opacity-0 md:group-hover/folder:opacity-100"
-                              )}
-                              disabled={syncStates.get(group.workingDirectory)?.status === 'loading'}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                pullProject(group.workingDirectory, group.displayName);
-                              }}
-                            >
-                              <HugeiconsIcon
-                                icon={RefreshIcon}
+                      {group.workingDirectory !== '' && (() => {
+                        const syncState = syncStates.get(group.workingDirectory);
+                        return (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
                                 className={cn(
-                                  'h-3 w-3',
-                                  syncStates.get(group.workingDirectory)?.status === 'loading' && 'animate-spin'
+                                  "h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground transition-opacity",
+                                  "opacity-100 md:opacity-0 md:group-hover/folder:opacity-100"
                                 )}
-                              />
-                              <span className="sr-only">Pull {group.displayName}</span>
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent side="right">Pull {group.displayName}</TooltipContent>
-                        </Tooltip>
-                      )}
+                                disabled={syncState?.status === 'loading'}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  pullProject(group.workingDirectory, group.displayName);
+                                }}
+                              >
+                                <HugeiconsIcon
+                                  icon={RefreshIcon}
+                                  className={cn(
+                                    'h-3 w-3',
+                                    syncState?.status === 'loading' && 'animate-spin'
+                                  )}
+                                />
+                                <span className="sr-only">Pull {group.displayName}</span>
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="right">Pull {group.displayName}</TooltipContent>
+                          </Tooltip>
+                        );
+                      })()}
 
                       {/* New chat in project button */}
                       {group.workingDirectory !== "" && (
