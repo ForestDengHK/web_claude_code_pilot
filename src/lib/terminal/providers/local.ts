@@ -18,7 +18,9 @@ export class LocalProvider implements TerminalProvider {
       throw new Error('tmux not found on PATH. Install tmux to use the terminal feature.');
     }
 
-    const tmuxSession = `codepilot-${sessionId}`;
+    // sessionId is the full tmux session name (e.g. "codepilot-abc123")
+    // passed from the WS server via session.tmuxName from the DB.
+    const tmuxSession = sessionId;
 
     // -A: attach if session exists, create if not. This handles both first-connect and reconnect.
     const ptyProcess = pty.spawn('tmux', [

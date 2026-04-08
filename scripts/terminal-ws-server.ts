@@ -70,18 +70,24 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
     return;
   }
 
-  // Resolve sessionId: reuse existing or mint a new one
+  // Resolve sessionId: reuse existing or mint a new one.
+  // sessionId == the DB `id` field so getSession(sessionId) works on reconnect.
+  // The tmux session name is `codepilot-<tmux-suffix>` (separate nanoid).
   let sessionId: string;
   if (sessionIdParam !== 'new' && getSession(sessionIdParam)) {
     sessionId = sessionIdParam;
   } else {
-    sessionId = nanoid(10);
-    createSession(hostId, `codepilot-${sessionId}`, 'Terminal');
+    const session = createSession(hostId, `codepilot-${nanoid(10)}`, 'Terminal');
+    sessionId = session.id;
   }
+
+  // Pass the tmux session name (from DB) to the provider, not the DB id.
+  // LocalProvider uses this as the tmux -s name directly.
+  const sessionRecord = getSession(sessionId)!;
 
   let ptyHandle: PtyHandle;
   try {
-    ptyHandle = await provider.connect(sessionId, { cols, rows });
+    ptyHandle = await provider.connect(sessionRecord.tmuxName, { cols, rows });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     sendJson(ws, { type: 'error', message });
