@@ -13,6 +13,7 @@
     "server": "node .next/standalone/codepilot-server.js",
     "start": "npm run server",
     "lint": "eslint",
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper 2>/dev/null || true",
     "terminal-ws": "TERMINAL_WS_PORT=4003 tsx --watch scripts/terminal-ws-server.ts",
     "dev:all": "concurrently \"npm run dev\" \"npm run terminal-ws\""
   },
