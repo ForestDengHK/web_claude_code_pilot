@@ -316,12 +316,14 @@ New npm scripts:
 
 ```json
 {
-  "terminal-ws": "TERMINAL_WS_PORT=4003 node --watch scripts/terminal-ws-server.js",
+  "terminal-ws": "TERMINAL_WS_PORT=4003 tsx --watch scripts/terminal-ws-server.ts",
   "dev:all": "concurrently \"npm run dev\" \"npm run terminal-ws\""
 }
 ```
 
-`--watch` (Node 18+ built-in) restarts the WS server when its source changes. Next.js HMR is unaffected. Dev WS server uses port **4003** to avoid colliding with production Next.js (4001) or production WS server (4002).
+`tsx --watch` (already a devDependency) restarts the WS server when its TypeScript source changes and handles imports from `src/lib/terminal/*.ts` directly — no pre-compilation step needed in dev. Next.js HMR is unaffected. Dev WS server uses port **4003** to avoid colliding with production Next.js (4001) or production WS server (4002).
+
+**Note**: for dev the entry point is `scripts/terminal-ws-server.ts` (TypeScript); for production the same source is bundled to `scripts/terminal-ws-server.bundle.js` by esbuild and copied into `.next/standalone/`.
 
 Normal dev workflow: `npm run dev` (no terminal feature). Terminal dev: `npm run dev:all`.
 
@@ -348,7 +350,7 @@ Normal dev workflow: `npm run dev` (no terminal feature). Terminal dev: `npm run
 | `src/lib/terminal/providers/local.ts` | LocalProvider (node-pty + tmux) |
 | `src/lib/terminal/session-store.ts` | SQLite CRUD for terminal_sessions |
 | `src/app/api/terminal/config/route.ts` | Serve WS URL to frontend |
-| `scripts/terminal-ws-server.js` | WebSocket server entry point |
+| `scripts/terminal-ws-server.ts` | WebSocket server entry point (TypeScript; bundled to JS for production) |
 
 ## Files to Modify
 
@@ -370,7 +372,8 @@ Normal dev workflow: `npm run dev` (no terminal feature). Terminal dev: `npm run
 | `@xterm/addon-web-links` | Clickable URLs in terminal |
 | `node-pty` | Native PTY on macOS/Linux |
 | `ws` | WebSocket server |
-| `concurrently` | Run dev + WS server in parallel (devDependency) |
+| `concurrently` | (devDependency) Run dev + WS server in parallel |
+| `esbuild` | (devDependency) Bundle terminal-ws-server.ts for production standalone |
 
 ---
 
