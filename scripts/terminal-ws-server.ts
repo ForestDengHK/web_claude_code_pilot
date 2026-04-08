@@ -119,7 +119,12 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
 
     switch (msg.type) {
       case 'input':   ptyHandle.write(msg.data); break;
-      case 'resize':  ptyHandle.resize(msg.cols, msg.rows); break;
+      case 'resize': {
+        const cols = Math.min(500, Math.max(1, Math.floor(msg.cols)));
+        const rows = Math.min(500, Math.max(1, Math.floor(msg.rows)));
+        ptyHandle.resize(cols, rows);
+        break;
+      }
       case 'ping':    sendJson(ws, { type: 'pong' }); break;
       case 'kill':
         unsubData();

@@ -84,7 +84,9 @@ if (existsSync(wsServerSrc)) {
 
 // 5. Symlink WS server's runtime deps into standalone/node_modules/
 // (Next.js standalone only traces modules imported by Next.js code, not the WS server)
-const wsRuntimeDeps = ['node-pty', 'ws', 'nanoid'];
+// Include better-sqlite3: it's in serverExternalPackages so Next.js traces it,
+// but we symlink it explicitly to ensure it's present for the WS server bundle too.
+const wsRuntimeDeps = ['node-pty', 'ws', 'nanoid', 'better-sqlite3'];
 for (const dep of wsRuntimeDeps) {
   const depSrc = join(projectRoot, 'node_modules', dep);
   const depDest = join(standaloneDir, 'node_modules', dep);
