@@ -28,7 +28,13 @@ export async function POST(request: NextRequest) {
     }
 
     // 2. Check for dirty state (uncommitted changes)
-    const { stdout: statusOut } = await runGit(path, ['status', '--porcelain']);
+    let statusOut: string;
+    try {
+      ({ stdout: statusOut } = await runGit(path, ['status', '--porcelain']));
+    } catch (err: unknown) {
+      const msg = (err as { stderr?: string }).stderr?.trim() || (err instanceof Error ? err.message : String(err));
+      return NextResponse.json({ status: 'error', message: classifyGitPullError(msg) });
+    }
     if (statusOut.trim()) {
       return NextResponse.json({ status: 'dirty', message: 'Uncommitted changes detected' });
     }
@@ -39,7 +45,9 @@ export async function POST(request: NextRequest) {
       const result = parseGitPullOutput(stdout);
       return NextResponse.json({ status: result, output: stdout.trim() });
     } catch (err: unknown) {
-      const stderr = (err as { stderr?: string }).stderr ?? String(err);
+      const stderr = (err instanceof Error && 'stderr' in err && typeof (err as any).stderr === 'string')
+        ? (err as any).stderr
+        : (err instanceof Error ? err.message : String(err));
       return NextResponse.json({
         status: 'error',
         message: classifyGitPullError(stderr),
