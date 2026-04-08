@@ -42,6 +42,9 @@ export const REGISTRY_TIMEOUT_MS = 5 * 60 * 1000; // 5 min
 /** Git clone operation timeout */
 export const CLONE_TIMEOUT_MS = 120_000; // 2 min
 
+/** Git pull operation timeout (shorter than clone — pull only fetches delta) */
+export const GIT_PULL_TIMEOUT_MS = 60_000; // 1 min
+
 /** Minimum voice recording duration before accepting */
 export const MIN_RECORDING_MS = 500;
 
