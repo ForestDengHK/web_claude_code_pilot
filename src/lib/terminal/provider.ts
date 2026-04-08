@@ -2,8 +2,11 @@
 // Adding a new host type (SSH, WSL, etc.) = new class implementing TerminalProvider.
 // No changes to this file or its consumers required.
 
+/** Terminal dimensions in character cells, required for PTY spawn. */
 export interface ConnectOptions {
+  /** Number of columns. */
   cols: number;
+  /** Number of rows. */
   rows: number;
 }
 
@@ -12,10 +15,10 @@ export interface PtyHandle {
   write(data: string): void;
   /** Inform the PTY of a terminal resize. */
   resize(cols: number, rows: number): void;
-  /** Register a callback for PTY stdout data. */
-  onData(cb: (data: string) => void): void;
-  /** Register a callback for PTY process exit. */
-  onExit(cb: (code: number) => void): void;
+  /** Register a callback for PTY stdout data. Returns an unsubscribe function. */
+  onData(cb: (data: string) => void): () => void;
+  /** Register a callback for PTY process exit. Returns an unsubscribe function. */
+  onExit(cb: (exitCode: number, signal?: number) => void): () => void;
   /**
    * Disconnect from the PTY without destroying the tmux session.
    * The underlying tmux session stays alive in the background.
@@ -53,6 +56,7 @@ export type ClientMessage =
   | { type: 'kill' }
   | { type: 'ping' };
 
+// PTY stdout is sent as binary WebSocket frames (not JSON) — see terminal-ws-server.ts
 export type ServerMessage =
   | { type: 'ready'; sessionId: string }
   | { type: 'killed' }
