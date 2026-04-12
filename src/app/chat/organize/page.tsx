@@ -597,6 +597,14 @@ function OrganizePage() {
           {/* --- Results phase --- */}
           {phase === 'results' && (
             <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
+                  {suggestions.length} sessions analyzed
+                </p>
+                <Button variant="outline" size="sm" onClick={resetToConfig}>
+                  Re-scan
+                </Button>
+              </div>
               <Tabs defaultValue="delete">
                 <TabsList className="w-full">
                   <TabsTrigger value="delete" className="flex-1">
