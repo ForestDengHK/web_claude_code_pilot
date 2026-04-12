@@ -559,9 +559,9 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
       </div>
 
       {/* Session list grouped by project */}
-      <ScrollArea className="flex-1 min-h-0 px-3">
+      <ScrollArea className="flex-1 min-h-0 px-3 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]>div]:!w-full [&_[data-slot=scroll-area-viewport]>div]:max-w-full">
         {isSearching && searchTab === 'content' ? (
-          <div className="flex flex-col gap-1 pb-3">
+          <div className="flex w-full min-w-0 flex-col gap-1 pb-3">
             {isSearchingContent ? (
               <p className="px-2.5 py-3 text-[11px] text-muted-foreground/60">
                 Searching...
@@ -576,7 +576,7 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                   key={`${result.session_id}-${result.message_id}`}
                   href={`/chat/${result.session_id}?highlight=${result.message_id}`}
                   onClick={() => onClose?.()}
-                  className="flex flex-col gap-0.5 rounded-md px-2.5 py-2 transition-colors hover:bg-accent/50"
+                  className="flex w-full min-w-0 flex-col gap-0.5 rounded-md px-2.5 py-2 transition-colors hover:bg-accent/50"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-[11px] font-medium text-sidebar-foreground">
@@ -598,7 +598,7 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
             )}
           </div>
         ) : (
-          <div className="flex flex-col pb-3">
+          <div className="flex w-full min-w-0 flex-col pb-3">
             {filteredSessions.length === 0 ? (
               <p className="px-2.5 py-3 text-[11px] text-muted-foreground/60">
                 {searchQuery ? "No matching threads" : "No conversations yet"}
@@ -608,11 +608,11 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                 const isCollapsed =
                   !isSearching && collapsedProjects.has(group.workingDirectory);
                 return (
-                  <div key={group.workingDirectory || "__no_project"} className="mt-1 first:mt-0">
+                  <div key={group.workingDirectory || "__no_project"} className="mt-1 w-full min-w-0 first:mt-0">
                     {/* Folder header */}
                     <div
                       className={cn(
-                        "group/folder flex items-center gap-1 rounded-md px-2 py-1 cursor-pointer select-none transition-colors",
+                        "group/folder flex w-full min-w-0 items-center gap-1 rounded-md px-2 py-1 cursor-pointer select-none transition-colors",
                         "hover:bg-accent/50"
                       )}
                       onClick={() => toggleProject(group.workingDirectory)}
@@ -625,7 +625,7 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                         icon={Folder01Icon}
                         className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
                       />
-                      <span className="flex-1 truncate text-[12px] font-medium text-sidebar-foreground">
+                      <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-sidebar-foreground">
                         {group.displayName}
                       </span>
                       {/* Status indicator — briefly shows pull result, then disappears */}
@@ -748,7 +748,7 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                       const hiddenCount = group.sessions.length - MAX_VISIBLE_SESSIONS;
 
                       return (
-                        <div className="mt-0.5 flex flex-col gap-0.5">
+                        <div className="mt-0.5 flex w-full min-w-0 flex-col gap-0.5">
                           {visibleSessions.map((session) => {
                             const isActive = pathname === `/chat/${session.id}`;
                             const isDeleting = deletingSession === session.id;
@@ -761,13 +761,13 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                               <div
                                 key={session.id}
                                 data-session-id={session.id}
-                                className="group relative"
+                                className="group relative w-full min-w-0"
                               >
                                 <Link
                                   href={`/chat/${session.id}`}
                                   onClick={() => onClose?.()}
                                   className={cn(
-                                    "flex items-center gap-1.5 rounded-md pl-7 pr-8 md:pr-2 py-1.5 transition-all duration-150 min-w-0",
+                                    "flex w-full min-w-0 items-center gap-1.5 rounded-md pl-7 pr-8 md:pr-2 py-1.5 transition-all duration-150",
                                     isActive
                                       ? "bg-sidebar-accent text-sidebar-accent-foreground"
                                       : "text-sidebar-foreground hover:bg-accent/50"
