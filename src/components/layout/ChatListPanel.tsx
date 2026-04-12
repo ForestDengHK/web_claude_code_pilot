@@ -17,6 +17,7 @@ import {
   Tick01Icon,
   Cancel01Icon,
   RefreshIcon,
+  CleanIcon,
 } from "@hugeicons/core-free-icons";
 import { AlertTriangle } from 'lucide-react';
 import { useGitSync } from '@/hooks/useGitSync';
@@ -451,6 +452,20 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
             <TooltipContent side="bottom">Pull all projects</TooltipContent>
           </Tooltip>
         )}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="outline"
+              size="icon-sm"
+              className="h-8 w-8 shrink-0"
+              onClick={() => router.push('/chat/organize')}
+            >
+              <HugeiconsIcon icon={CleanIcon} className="h-3.5 w-3.5" />
+              <span className="sr-only">Organize sessions</span>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">整理 Sessions</TooltipContent>
+        </Tooltip>
       </div>
 
       {/* Search */}
@@ -693,6 +708,24 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                           <TooltipContent side="right">
                             New chat in {group.displayName}
                           </TooltipContent>
+                        </Tooltip>
+                      )}
+                      {group.workingDirectory !== '' && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              className="h-5 w-5 shrink-0 opacity-100 md:opacity-0 md:group-hover/folder:opacity-100"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                router.push(`/chat/organize?project=${encodeURIComponent(group.workingDirectory)}`);
+                              }}
+                            >
+                              <HugeiconsIcon icon={CleanIcon} className="h-3 w-3" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="right">整理 {group.displayName}</TooltipContent>
                         </Tooltip>
                       )}
                     </div>
