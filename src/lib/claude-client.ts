@@ -339,6 +339,8 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
     onQueryCreated,
     effort,
     advisorModel,
+    disableTools,
+    maxTurns,
   } = options;
 
   let heartbeatInterval: ReturnType<typeof setInterval>;
@@ -511,6 +513,13 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             ...(typeof queryOptions.settings === 'object' ? queryOptions.settings : {}),
             advisorModel,
           };
+        }
+
+        if (disableTools) {
+          queryOptions.tools = [];
+        }
+        if (maxTurns) {
+          queryOptions.maxTurns = maxTurns;
         }
 
         if (systemPrompt) {

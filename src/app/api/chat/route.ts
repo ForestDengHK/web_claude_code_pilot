@@ -22,8 +22,8 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
-    const body: SendMessageRequest & { files?: FileAttachment[]; toolTimeout?: number; effort?: string } = await request.json();
-    const { session_id, content, prompt, model, mode, files, toolTimeout, effort } = body;
+    const body: SendMessageRequest & { files?: FileAttachment[]; toolTimeout?: number; effort?: string; disable_tools?: boolean; max_turns?: number } = await request.json();
+    const { session_id, content, prompt, model, mode, files, toolTimeout, effort, disable_tools, max_turns } = body;
 
     if (!session_id || !content) {
       return new Response(JSON.stringify({ error: 'session_id and content are required' }), {
@@ -171,6 +171,13 @@ export async function POST(request: NextRequest) {
     // Use `prompt` (skill-injected content) if provided, otherwise plain `content`.
     // If a context bridge is needed, prepend it to the prompt.
     let effectivePrompt = prompt || content;
+
+    // Inject branch summary as context prefix on the first message of a branched session.
+    // Only inject when there is no sdk_session_id yet (first turn — subsequent turns use resume).
+    if (session.branch_summary && !session.sdk_session_id) {
+      effectivePrompt = `[Context from previous conversation]\n---\n${session.branch_summary}\n---\n\n${effectivePrompt}`;
+    }
+
     if (contextBridgePrompt) {
       effectivePrompt = `${contextBridgePrompt}\n\n---\n\n${effectivePrompt}`;
     }
@@ -189,6 +196,8 @@ export async function POST(request: NextRequest) {
       onQueryCreated: (q) => registerQuery(session_id, q as Query),
       effort,
       advisorModel: session.advisor_model || undefined,
+      disableTools: disable_tools,
+      maxTurns: max_turns,
     });
 
     // Tee the stream: one for client, one for collecting the response

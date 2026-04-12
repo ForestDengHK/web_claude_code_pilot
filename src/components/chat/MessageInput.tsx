@@ -19,6 +19,7 @@ import {
   FileEditIcon,
   SearchList01Icon,
   BrainIcon,
+  GitBranchIcon,
   GlobalIcon,
   Shield01Icon,
   Mic01Icon,
@@ -110,6 +111,7 @@ type PopoverMode = 'file' | 'skill' | 'codexSkill' | null;
 // Expansion prompts for CLI-only commands (not natively supported by SDK).
 // SDK-native commands (/compact, /init, /review) are sent as-is — the SDK handles them directly.
 const COMMAND_PROMPTS: Record<string, string> = {
+  '/branch': '/branch',
   '/doctor': 'Run diagnostic checks on this project. Check system health, dependencies, configuration files, and report any issues.',
   '/terminal-setup': 'Help me configure my terminal for optimal use with Claude Code. Check current setup and suggest improvements.',
   '/memory': 'Show the current CLAUDE.md project memory file and help me review or edit it.',
@@ -121,6 +123,7 @@ const BUILT_IN_COMMANDS: PopoverItem[] = [
   { label: 'cost', value: '/cost', description: 'Show session token usage guidance', builtIn: true, immediate: true, icon: Coins01Icon },
   { label: 'usage', value: '/usage', description: 'Show account quota and rate limits', builtIn: true, immediate: true, icon: GlobalIcon },
   { label: 'compact', value: '/compact', description: 'Compress conversation context', builtIn: true, icon: FileZipIcon },
+  { label: 'branch', value: '/branch', description: 'Start new chat with summary', builtIn: true, icon: GitBranchIcon },
   { label: 'doctor', value: '/doctor', description: 'Diagnose project health', builtIn: true, icon: Stethoscope02Icon },
   { label: 'init', value: '/init', description: 'Initialize CLAUDE.md for project', builtIn: true, icon: FileEditIcon },
   { label: 'review', value: '/review', description: 'Review code quality', builtIn: true, icon: SearchList01Icon },

@@ -21,8 +21,10 @@ import type {
 } from '@/types/organize';
 import {
   getAllSessions,
-  getSessionMessageCount,
+  getSessionContentFingerprint,
   getSessionHeadTailMessages,
+  getOrganizeSessionCache,
+  upsertOrganizeSessionCache,
   createOrganizeTask,
   updateOrganizeTaskResults,
   updateOrganizeTaskStatus,
@@ -308,8 +310,28 @@ export async function runOrganizeAnalysis(
   try {
     // Get all sessions, filtered by scope if project-specific
     const sessions = filterSessionsByScope(getAllSessions(), config.scope);
+    const cachedBySessionId = getOrganizeSessionCache(sessions.map((session) => session.id));
+    const candidates: Array<{
+      session: ChatSession;
+      messageCount: number;
+      contentFingerprint: string;
+    }> = [];
 
-    const totalSessions = sessions.length;
+    for (const session of sessions) {
+      const stats = getSessionContentFingerprint(session.id);
+      const cached = cachedBySessionId.get(session.id);
+      if (cached && cached.content_fingerprint === stats.fingerprint) {
+        continue;
+      }
+
+      candidates.push({
+        session,
+        messageCount: stats.messageCount,
+        contentFingerprint: stats.fingerprint,
+      });
+    }
+
+    const totalSessions = candidates.length;
 
     // Initialize in-memory buffer
     initOrganizeBuffer(taskId, totalSessions);
@@ -317,21 +339,27 @@ export async function runOrganizeAnalysis(
     // -----------------------------------------------------------------------
     // Stage 1: Rule engine
     // -----------------------------------------------------------------------
-    const needsAI: Array<{ session: ChatSession; messageCount: number }> = [];
+    const needsAI: Array<{ session: ChatSession; messageCount: number; contentFingerprint: string }> = [];
 
-    for (let i = 0; i < sessions.length; i++) {
+    for (let i = 0; i < candidates.length; i++) {
       if (abortSignal?.aborted) break;
 
-      const session = sessions[i];
-      const messageCount = getSessionMessageCount(session.id);
+      const { session, messageCount, contentFingerprint } = candidates[i];
       const ruleSuggestion = classifyByRules(session, messageCount, config);
 
       if (ruleSuggestion) {
         allSuggestions.push(ruleSuggestion);
         pushOrganizeSuggestion(taskId, ruleSuggestion);
         callbacks.onEvent({ type: 'suggestion', data: ruleSuggestion });
+        upsertOrganizeSessionCache(
+          session.id,
+          contentFingerprint,
+          ruleSuggestion.action,
+          ruleSuggestion.reason,
+          ruleSuggestion.suggestedTitle,
+        );
       } else {
-        needsAI.push({ session, messageCount });
+        needsAI.push({ session, messageCount, contentFingerprint });
       }
 
       incrementOrganizeProgress(taskId);
@@ -362,7 +390,7 @@ export async function runOrganizeAnalysis(
           const currentIndex = nextIndex++;
           if (currentIndex >= needsAI.length) return;
 
-          const { session, messageCount } = needsAI[currentIndex];
+          const { session, messageCount, contentFingerprint } = needsAI[currentIndex];
           const suggestion = await analyzeSessionWithAI(
             session,
             messageCount,
@@ -372,6 +400,13 @@ export async function runOrganizeAnalysis(
 
           allSuggestions.push(suggestion);
           pushOrganizeSuggestion(taskId, suggestion);
+          upsertOrganizeSessionCache(
+            session.id,
+            contentFingerprint,
+            suggestion.action,
+            suggestion.reason,
+            suggestion.suggestedTitle,
+          );
           incrementOrganizeProgress(taskId);
           completed += 1;
 

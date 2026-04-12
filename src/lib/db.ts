@@ -160,10 +160,21 @@ function initDb(db: Database.Database): void {
       results TEXT NOT NULL DEFAULT '[]'
     );
 
+    CREATE TABLE IF NOT EXISTS organize_session_cache (
+      session_id TEXT PRIMARY KEY,
+      content_fingerprint TEXT NOT NULL,
+      action TEXT NOT NULL,
+      reason TEXT NOT NULL DEFAULT '',
+      suggested_title TEXT,
+      analyzed_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
     CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
     CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON chat_sessions(updated_at);
     CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id);
+    CREATE INDEX IF NOT EXISTS idx_organize_session_cache_fingerprint ON organize_session_cache(content_fingerprint);
   `);
 
   // FTS5 full-text search index for messages (standalone storage)
@@ -228,6 +239,14 @@ function migrateDb(db: Database.Database): void {
   }
   if (!colNames.includes('advisor_model')) {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN advisor_model TEXT");
+  }
+
+  // Session branching: summary from source session + lineage tracking
+  if (!colNames.includes('branch_summary')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN branch_summary TEXT");
+  }
+  if (!colNames.includes('branch_source_session_id')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN branch_source_session_id TEXT");
   }
 
   const msgColumns = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[];
@@ -384,6 +403,8 @@ export function createSession(
   workingDirectory?: string,
   mode?: string,
   backend?: 'claude' | 'codex',
+  branchSummary?: string | null,
+  branchSourceSessionId?: string | null,
 ): ChatSession {
   if (!workingDirectory?.trim()) {
     throw new Error('Cannot create session without a working directory');
@@ -395,8 +416,8 @@ export function createSession(
   const projectName = path.basename(wd);
 
   db.prepare(
-    'INSERT INTO chat_sessions (id, title, created_at, updated_at, model, system_prompt, working_directory, sdk_session_id, project_name, status, mode, backend) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, title || 'New Chat', now, now, model || '', systemPrompt || '', wd, '', projectName, 'active', mode || 'code', backend || 'claude');
+    'INSERT INTO chat_sessions (id, title, created_at, updated_at, model, system_prompt, working_directory, sdk_session_id, project_name, status, mode, backend, branch_summary, branch_source_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, title || 'New Chat', now, now, model || '', systemPrompt || '', wd, '', projectName, 'active', mode || 'code', backend || 'claude', branchSummary || null, branchSourceSessionId || null);
 
   return getSession(id)!;
 }
@@ -1013,6 +1034,75 @@ export function getSessionMessageCount(sessionId: string): number {
   const db = getDb();
   const result = db.prepare('SELECT COUNT(*) as count FROM messages WHERE session_id = ?').get(sessionId) as { count: number };
   return result.count;
+}
+
+export function getSessionContentFingerprint(
+  sessionId: string,
+): { messageCount: number; lastMessageCreatedAt: string | null; fingerprint: string } {
+  const db = getDb();
+  const result = db.prepare(
+    'SELECT COUNT(*) as messageCount, MAX(created_at) as lastMessageCreatedAt FROM messages WHERE session_id = ?'
+  ).get(sessionId) as { messageCount: number; lastMessageCreatedAt: string | null };
+
+  return {
+    messageCount: result.messageCount,
+    lastMessageCreatedAt: result.lastMessageCreatedAt,
+    fingerprint: `${result.messageCount}:${result.lastMessageCreatedAt ?? ''}`,
+  };
+}
+
+export function getOrganizeSessionCache(
+  sessionIds: string[],
+): Map<string, { session_id: string; content_fingerprint: string; action: string; reason: string; suggested_title: string | null; analyzed_at: string }> {
+  const db = getDb();
+  const cache = new Map<string, { session_id: string; content_fingerprint: string; action: string; reason: string; suggested_title: string | null; analyzed_at: string }>();
+  if (sessionIds.length === 0) return cache;
+
+  const placeholders = sessionIds.map(() => '?').join(', ');
+  const rows = db.prepare(
+    `SELECT session_id, content_fingerprint, action, reason, suggested_title, analyzed_at
+     FROM organize_session_cache
+     WHERE session_id IN (${placeholders})`
+  ).all(...sessionIds) as Array<{
+    session_id: string;
+    content_fingerprint: string;
+    action: string;
+    reason: string;
+    suggested_title: string | null;
+    analyzed_at: string;
+  }>;
+
+  for (const row of rows) {
+    cache.set(row.session_id, row);
+  }
+  return cache;
+}
+
+export function upsertOrganizeSessionCache(
+  sessionId: string,
+  contentFingerprint: string,
+  action: string,
+  reason: string,
+  suggestedTitle?: string,
+): void {
+  const db = getDb();
+  const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+  db.prepare(`
+    INSERT INTO organize_session_cache (
+      session_id,
+      content_fingerprint,
+      action,
+      reason,
+      suggested_title,
+      analyzed_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(session_id) DO UPDATE SET
+      content_fingerprint = excluded.content_fingerprint,
+      action = excluded.action,
+      reason = excluded.reason,
+      suggested_title = excluded.suggested_title,
+      analyzed_at = excluded.analyzed_at
+  `).run(sessionId, contentFingerprint, action, reason, suggestedTitle ?? null, now);
 }
 
 export function getSessionHeadTailMessages(

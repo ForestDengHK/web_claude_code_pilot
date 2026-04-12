@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { Message, MessagesResponse, PermissionRequestEvent, InputRequestEvent, FileAttachment } from '@/types';
 import { MessageList } from './MessageList';
+import { BranchSummaryCard } from './BranchSummaryCard';
 import { MessageInput } from './MessageInput';
 import { SearchBar } from './SearchBar';
 import { SearchIcon } from 'lucide-react';
@@ -61,6 +62,22 @@ function buildMessageContent(
   return JSON.stringify(blocks);
 }
 
+const BRANCH_SUMMARY_PROMPT = `Summarize this conversation for context transfer to a new session. Structure your summary as:
+
+## Task Overview
+What is being worked on and why.
+
+## Current State
+What has been completed, what files were changed, key decisions made.
+
+## Important Details
+Technical specifics, file paths, code patterns, and constraints discovered.
+
+## Open Items
+What remains to be done, any blockers or concerns.
+
+Keep the summary under 2000 words. Preserve technical terms, file paths, and code references exactly.`;
+
 interface ChatViewProps {
   sessionId: string;
   initialMessages?: Message[];
@@ -69,9 +86,11 @@ interface ChatViewProps {
   initialMode?: string;
   backend?: 'claude' | 'codex';
   advisorModel?: string | null;
+  branchSummary?: string | null;
+  branchSourceSessionId?: string | null;
 }
 
-export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, initialMode, backend = 'claude', advisorModel }: ChatViewProps) {
+export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, initialMode, backend = 'claude', advisorModel, branchSummary, branchSourceSessionId }: ChatViewProps) {
   const { setStreamingSessionId, workingDirectory, setWorkingDirectory, setPanelOpen, setPendingApprovalSessionId, sessionTitle } = usePanel();
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [hasMore, setHasMore] = useState(initialHasMore);
@@ -208,6 +227,10 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const lastSseDataRef = useRef<number>(0);
   // Track whether a graceful stop has been requested — second click escalates to force stop
   const stopRequestedRef = useRef(false);
+  // Branch flow: when /branch is triggered, this ref is set to true.
+  // After streaming completes, the accumulated text is used as the summary
+  // for a new branched session.
+  const pendingBranchRef = useRef(false);
 
   // Fetch messages from DB and check if the backend has finished
   const recoverMessages = useCallback(async (): Promise<boolean> => {
@@ -742,6 +765,28 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         apiContent = `<command-name>${skillInfo.name}</command-name>\n\n${skillInfo.content}\n\nUser request: ${content}`;
       }
 
+      // Detect /branch command and transform into summary request
+      let branchMode = false;
+      let branchModelOverride: string | null = null;
+      if (content.startsWith('/branch')) {
+        branchMode = true;
+        pendingBranchRef.current = true;
+        // Parse optional model parameter from "User context: haiku" appended by MessageInput
+        const userContext = content.match(/User context:\s*([\s\S]+)/)?.[1]?.trim().toLowerCase();
+        if (userContext === 'haiku') {
+          branchModelOverride = 'claude-haiku-4-5';
+        } else if (userContext === 'sonnet' || !userContext) {
+          branchModelOverride = 'claude-sonnet-4-5';
+        } else {
+          // User typed a full model name or something else — use as-is
+          branchModelOverride = userContext;
+        }
+        // API gets the actual summary prompt; display stays clean
+        apiContent = BRANCH_SUMMARY_PROMPT;
+        // Clean up display content for the user message
+        content = branchModelOverride === 'claude-haiku-4-5' ? '/branch haiku' : '/branch';
+      }
+
       // Build display content: embed file metadata as HTML comment for MessageItem to parse
       let displayContent = content;
       if (files && files.length > 0) {
@@ -790,10 +835,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             content,
             ...(apiContent !== content ? { prompt: apiContent } : {}),
             mode,
-            model: currentModel,
+            model: branchMode ? branchModelOverride : currentModel,
             ...(files && files.length > 0 ? { files } : {}),
             ...(currentEffort ? { effort: currentEffort } : {}),
             ...(codexSkills && codexSkills.length > 0 ? { codexSkills } : {}),
+            ...(branchMode ? { disable_tools: true, max_turns: 1 } : {}),
           }),
           signal: controller.signal,
         });
@@ -925,8 +971,42 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             token_usage: result.tokenUsage ? JSON.stringify(result.tokenUsage) : null,
           };
           setMessages((prev) => [...prev, assistantMessage]);
+
+          // Branch flow: if this response was triggered by /branch, use the
+          // accumulated text as the summary and create a new session.
+          if (pendingBranchRef.current) {
+            pendingBranchRef.current = false;
+            const summary = accumulated.trim();
+            if (summary) {
+              try {
+                const branchRes = await fetch('/api/chat/sessions', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    title: `${sessionTitle || 'Chat'} (cont.)`,
+                    working_directory: workingDirectory,
+                    model: currentModel,
+                    mode,
+                    backend: currentBackend,
+                    branch_summary: summary,
+                    branch_source_session_id: sessionId,
+                  }),
+                });
+                if (branchRes.ok) {
+                  const { session: newSession } = await branchRes.json();
+                  window.dispatchEvent(new CustomEvent('session-created'));
+                  window.location.href = `/chat/${newSession.id}`;
+                  return; // Skip normal finally cleanup — page is navigating away
+                }
+              } catch (branchErr) {
+                console.error('[ChatView] Branch session creation failed:', branchErr);
+                // Fall through to normal completion — user still has the summary in chat
+              }
+            }
+          }
         }
       } catch (error) {
+        pendingBranchRef.current = false; // Clear branch state on any error
         if (error instanceof DOMException && error.name === 'AbortError') {
           // Tab-resume recovery: we cancelled the reader to unblock the hung read().
           // The backend Claude process is still running — poll DB for the result.
@@ -994,6 +1074,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           startRecovery();
         }
       } finally {
+        pendingBranchRef.current = false; // Safety reset
         // Always stop the heartbeat watchdog — recovery has its own polling
         if (heartbeatWatchdogRef.current) {
           clearInterval(heartbeatWatchdogRef.current);
@@ -1215,6 +1296,12 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
           No bookmarked messages in this session.
         </div>
+      )}
+      {branchSummary && (
+        <BranchSummaryCard
+          summary={branchSummary}
+          sourceSessionId={branchSourceSessionId}
+        />
       )}
       <MessageList
         key={bookmarkFilterActive ? 'bookmarks' : 'all'}

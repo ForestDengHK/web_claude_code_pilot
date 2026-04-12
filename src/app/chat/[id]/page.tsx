@@ -25,6 +25,8 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const [sessionMode, setSessionMode] = useState<string>('');
   const [sessionBackend, setSessionBackend] = useState<'claude' | 'codex'>('claude');
   const [sessionAdvisorModel, setSessionAdvisorModel] = useState<string | null>(null);
+  const [branchSummary, setBranchSummary] = useState<string | null>(null);
+  const [branchSourceSessionId, setBranchSourceSessionId] = useState<string | null>(null);
   const [projectName, setProjectName] = useState<string>('');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editTitle, setEditTitle] = useState('');
@@ -97,6 +99,8 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           setSessionMode(data.session.mode || 'code');
           setSessionBackend(data.session.backend || 'claude');
           setSessionAdvisorModel(data.session.advisor_model || null);
+          setBranchSummary(data.session.branch_summary || null);
+          setBranchSourceSessionId(data.session.branch_source_session_id || null);
           setProjectName(data.session.project_name || '');
         }
       } catch {
@@ -221,7 +225,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           )}
         </div>
       )}
-      <ChatView key={id} sessionId={id} initialMessages={messages} initialHasMore={hasMore} modelName={sessionModel} initialMode={sessionMode} backend={sessionBackend} advisorModel={sessionAdvisorModel} />
+      <ChatView key={id} sessionId={id} initialMessages={messages} initialHasMore={hasMore} modelName={sessionModel} initialMode={sessionMode} backend={sessionBackend} advisorModel={sessionAdvisorModel} branchSummary={branchSummary} branchSourceSessionId={branchSourceSessionId} />
     </div>
   );
 }

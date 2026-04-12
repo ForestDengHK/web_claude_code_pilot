@@ -21,6 +21,8 @@ export interface ChatSession {
   last_claude_bridged_msg_id?: string | null;
   last_codex_bridged_msg_id?: string | null;
   advisor_model?: string | null;
+  branch_summary?: string | null;
+  branch_source_session_id?: string | null;
 }
 
 // ==========================================
@@ -175,6 +177,8 @@ export interface CreateSessionRequest {
   working_directory?: string;
   mode?: string;
   backend?: 'claude' | 'codex';
+  branch_summary?: string;
+  branch_source_session_id?: string;
 }
 
 export interface SendMessageRequest {
@@ -528,4 +532,6 @@ export interface ClaudeStreamOptions {
   onQueryCreated?: (query: unknown) => void; // Callback to register SDK Query for interrupt support
   effort?: string; // Effort level for Claude models (low/medium/high/max)
   advisorModel?: string; // Advisor model for server-side review (Claude-only)
+  disableTools?: boolean; // When true, pass tools: [] to disable all tool use
+  maxTurns?: number; // Limit the number of agentic turns
 }
