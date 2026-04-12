@@ -80,6 +80,7 @@ function OrganizePage() {
   const [scope, setScope] = useState<string>(initialProject ? `project:${initialProject}` : 'all');
   const [model, setModel] = useState(DEFAULT_ORGANIZE_CONFIG.model);
   const [effort, setEffort] = useState(DEFAULT_ORGANIZE_CONFIG.effort);
+  const [forceRescanAll, setForceRescanAll] = useState(false);
   const [trustMode, setTrustMode] = useState(false);
   const [cleanupCli, setCleanupCli] = useState(false);
 
@@ -230,6 +231,7 @@ function OrganizePage() {
             setScope(data.config.scope);
             setModel(data.config.model);
             setEffort(data.config.effort);
+            setForceRescanAll(data.config.forceRescanAll);
             setTrustMode(data.config.trustMode);
             setCleanupCli(data.config.cleanupCli);
           }
@@ -308,6 +310,7 @@ function OrganizePage() {
           setScope(data.config.scope);
           setModel(data.config.model);
           setEffort(data.config.effort);
+          setForceRescanAll(data.config.forceRescanAll);
           setTrustMode(data.config.trustMode);
           setCleanupCli(data.config.cleanupCli);
         }
@@ -365,6 +368,7 @@ function OrganizePage() {
       model,
       backend: inferBackendFromModel(model, codexModelInfo),
       effort,
+      forceRescanAll,
       trustMode,
       cleanupCli,
       scope,
@@ -452,7 +456,7 @@ function OrganizePage() {
       startRecoveryPolling();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [model, codexModelInfo, effort, trustMode, cleanupCli, scope, startRecoveryPolling]);
+  }, [model, codexModelInfo, effort, forceRescanAll, trustMode, cleanupCli, scope, startRecoveryPolling]);
 
   // --- Execute actions ---
   const executeActions = useCallback(
@@ -674,6 +678,18 @@ function OrganizePage() {
                     This model does not expose multiple effort levels.
                   </div>
                 )}
+
+                <div className="flex items-center justify-between gap-4 rounded-lg border p-4">
+                  <div className="min-w-0 flex-1">
+                    <Label className="text-sm font-medium">
+                      Force Re-scan All
+                    </Label>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Ignore cached organize results and analyze every session in this scope again
+                    </p>
+                  </div>
+                  <Switch checked={forceRescanAll} onCheckedChange={setForceRescanAll} />
+                </div>
 
                 {/* Trust mode */}
                 <div className="flex items-center justify-between gap-4 rounded-lg border p-4">

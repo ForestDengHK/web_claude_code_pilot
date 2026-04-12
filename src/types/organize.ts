@@ -18,6 +18,7 @@ export interface OrganizeConfig {
   backend: 'claude' | 'codex';
   effort: string;
   scope: string;
+  forceRescanAll: boolean;
   trustMode: boolean;
   cleanupCli: boolean;
   headPairs: number;
@@ -33,6 +34,7 @@ export const DEFAULT_ORGANIZE_CONFIG: OrganizeConfig = {
   backend: 'claude',
   effort: '',
   scope: 'all',
+  forceRescanAll: false,
   trustMode: false,
   cleanupCli: false,
   headPairs: 4,
@@ -48,6 +50,7 @@ export interface OrganizeRequest {
   backend?: 'claude' | 'codex';
   effort?: string;
   scope?: string;
+  forceRescanAll?: boolean;
   trustMode?: boolean;
   cleanupCli?: boolean;
   headPairs?: number;

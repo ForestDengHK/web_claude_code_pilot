@@ -320,7 +320,7 @@ export async function runOrganizeAnalysis(
     for (const session of sessions) {
       const stats = getSessionContentFingerprint(session.id);
       const cached = cachedBySessionId.get(session.id);
-      if (cached && cached.content_fingerprint === stats.fingerprint) {
+      if (!config.forceRescanAll && cached && cached.content_fingerprint === stats.fingerprint) {
         continue;
       }
 
