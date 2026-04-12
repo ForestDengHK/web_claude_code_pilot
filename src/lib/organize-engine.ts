@@ -12,6 +12,8 @@ import crypto from 'crypto';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import type { ChatSession } from '@/types';
+import { streamCodex } from '@/lib/codex-client';
+import { CodexProcessManager } from '@/lib/codex-process-manager';
 import type {
   OrganizeConfig,
   OrganizeSuggestion,
@@ -29,6 +31,7 @@ import { classifyByRules } from '@/lib/organize-rules';
 import {
   initOrganizeBuffer,
   updateOrganizePhase,
+  incrementOrganizeProgress,
   pushOrganizeSuggestion,
   clearOrganizeBuffer,
 } from '@/lib/organize-buffer-registry';
@@ -44,6 +47,9 @@ export interface OrganizeCallbacks {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+const AI_ANALYSIS_CONCURRENCY = 3;
+const CLAUDE_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max']);
 
 /**
  * Extract readable text from a message's content field.
@@ -129,21 +135,6 @@ async function analyzeSessionWithAI(
   config: OrganizeConfig,
   abortSignal?: AbortSignal,
 ): Promise<OrganizeSuggestion> {
-  // Codex backend not supported for organize analysis
-  if (config.backend === 'codex') {
-    return {
-      sessionId: session.id,
-      sessionTitle: session.title,
-      projectName: session.project_name,
-      messageCount,
-      lastUpdated: session.updated_at,
-      action: 'keep',
-      reason: 'Codex backend not yet supported for organize analysis',
-      confidence: 'ai',
-      analyzed: true,
-    };
-  }
-
   try {
     // Get sampled messages (head + tail)
     const { messages, totalCount } = getSessionHeadTailMessages(
@@ -153,32 +144,83 @@ async function analyzeSessionWithAI(
     );
 
     const prompt = buildAnalysisPrompt(session, messageCount, messages, totalCount, config);
-
-    const abortController = new AbortController();
-
-    // Forward external abort signal
-    if (abortSignal) {
-      if (abortSignal.aborted) {
-        abortController.abort();
-      } else {
-        abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
-      }
-    }
-
-    const queryOptions: Options = {
-      abortController,
-      maxTurns: 1,
-      permissionMode: 'bypassPermissions',
-      allowDangerouslySkipPermissions: true,
-    };
-    if (config.model) queryOptions.model = config.model;
-    queryOptions.effort = 'low';
-
     let responseText = '';
-    const conversation = query({ prompt, options: queryOptions });
-    for await (const message of conversation) {
-      if (message.type === 'assistant') {
-        responseText = extractMessageText(JSON.stringify(message.message.content));
+
+    if (config.backend === 'codex') {
+      const tempSessionId = `__organize__:${crypto.randomUUID()}`;
+      const codexAbortController = new AbortController();
+
+      if (abortSignal) {
+        if (abortSignal.aborted) {
+          codexAbortController.abort();
+        } else {
+          abortSignal.addEventListener('abort', () => codexAbortController.abort(), { once: true });
+        }
+      }
+
+      try {
+        const stream = streamCodex({
+          prompt: `${prompt}\n\nDo not use tools. Reply with JSON only.`,
+          sessionId: tempSessionId,
+          model: config.model || undefined,
+          workingDirectory: session.working_directory || undefined,
+          abortController: codexAbortController,
+          effort: config.effort || undefined,
+          summary: 'none',
+        });
+
+        const reader = stream.getReader();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += value;
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+
+            const event = JSON.parse(line.slice(6).trim()) as { type?: string; data?: string };
+            if (event.type === 'text' && typeof event.data === 'string') {
+              responseText += event.data;
+            } else if (event.type === 'error' && typeof event.data === 'string') {
+              throw new Error(event.data);
+            }
+          }
+        }
+      } finally {
+        await CodexProcessManager.kill(tempSessionId).catch(() => {});
+      }
+    } else {
+      const abortController = new AbortController();
+
+      if (abortSignal) {
+        if (abortSignal.aborted) {
+          abortController.abort();
+        } else {
+          abortSignal.addEventListener('abort', () => abortController.abort(), { once: true });
+        }
+      }
+
+      const queryOptions: Options = {
+        abortController,
+        maxTurns: 1,
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true,
+      };
+      if (config.model) queryOptions.model = config.model;
+      if (config.effort && CLAUDE_EFFORT_LEVELS.has(config.effort)) {
+        queryOptions.effort = config.effort as 'low' | 'medium' | 'high' | 'max';
+      }
+
+      const conversation = query({ prompt, options: queryOptions });
+      for await (const message of conversation) {
+        if (message.type === 'assistant') {
+          responseText = extractMessageText(JSON.stringify(message.message.content));
+        }
       }
     }
 
@@ -228,6 +270,19 @@ async function analyzeSessionWithAI(
   }
 }
 
+function filterSessionsByScope(sessions: ChatSession[], scope: string): ChatSession[] {
+  if (!scope || scope === 'all') return sessions;
+
+  if (scope.startsWith('project:')) {
+    const workingDirectory = scope.slice('project:'.length);
+    return sessions.filter((session) => session.working_directory === workingDirectory);
+  }
+
+  return sessions.filter(
+    (session) => session.project_name === scope || session.working_directory === scope,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main orchestrator
 // ---------------------------------------------------------------------------
@@ -252,10 +307,7 @@ export async function runOrganizeAnalysis(
 
   try {
     // Get all sessions, filtered by scope if project-specific
-    let sessions: ChatSession[] = getAllSessions();
-    if (config.scope !== 'all') {
-      sessions = sessions.filter((s) => s.project_name === config.scope);
-    }
+    const sessions = filterSessionsByScope(getAllSessions(), config.scope);
 
     const totalSessions = sessions.length;
 
@@ -282,6 +334,8 @@ export async function runOrganizeAnalysis(
         needsAI.push({ session, messageCount });
       }
 
+      incrementOrganizeProgress(taskId);
+
       callbacks.onEvent({
         type: 'progress',
         phase: 'rules',
@@ -298,32 +352,50 @@ export async function runOrganizeAnalysis(
     // -----------------------------------------------------------------------
     if (needsAI.length > 0 && !abortSignal?.aborted) {
       updateOrganizePhase(taskId, 'ai', needsAI.length);
+      let completed = 0;
+      let nextIndex = 0;
 
-      for (let i = 0; i < needsAI.length; i++) {
-        if (abortSignal?.aborted) break;
+      const worker = async () => {
+        while (true) {
+          if (abortSignal?.aborted) return;
 
-        const { session, messageCount } = needsAI[i];
-        const suggestion = await analyzeSessionWithAI(
-          session,
-          messageCount,
-          config,
-          abortSignal,
-        );
+          const currentIndex = nextIndex++;
+          if (currentIndex >= needsAI.length) return;
 
-        allSuggestions.push(suggestion);
-        pushOrganizeSuggestion(taskId, suggestion);
-        callbacks.onEvent({ type: 'suggestion', data: suggestion });
+          const { session, messageCount } = needsAI[currentIndex];
+          const suggestion = await analyzeSessionWithAI(
+            session,
+            messageCount,
+            config,
+            abortSignal,
+          );
 
-        callbacks.onEvent({
-          type: 'progress',
-          phase: 'ai',
-          completed: i + 1,
-          total: needsAI.length,
-        });
+          allSuggestions.push(suggestion);
+          pushOrganizeSuggestion(taskId, suggestion);
+          incrementOrganizeProgress(taskId);
+          completed += 1;
 
-        // Checkpoint after each AI result
-        updateOrganizeTaskResults(taskId, JSON.stringify(allSuggestions));
-      }
+          callbacks.onEvent({ type: 'suggestion', data: suggestion });
+          callbacks.onEvent({
+            type: 'progress',
+            phase: 'ai',
+            completed,
+            total: needsAI.length,
+          });
+
+          // Checkpoint after each AI result so reconnects see fresh results.
+          updateOrganizeTaskResults(
+            taskId,
+            JSON.stringify([...allSuggestions]),
+          );
+        }
+      };
+
+      const workers = Array.from(
+        { length: Math.min(AI_ANALYSIS_CONCURRENCY, needsAI.length) },
+        () => worker(),
+      );
+      await Promise.all(workers);
     }
 
     // -----------------------------------------------------------------------

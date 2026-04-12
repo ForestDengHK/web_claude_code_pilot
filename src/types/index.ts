@@ -332,6 +332,7 @@ export interface MCPConfigResponse {
 export interface FileTreeResponse {
   tree: FileTreeNode[];
   root: string;
+  gitBranch?: string | null;
 }
 
 export interface FilePreviewResponse {

@@ -21,13 +21,17 @@ export async function GET() {
   } catch { /* ignore */ }
 
   const buffer = getOrganizeBuffer(task.id);
+  const liveResults =
+    task.status === 'running' && buffer
+      ? buffer.suggestions
+      : results;
 
   const response: OrganizeStatusResponse = {
     hasTask: true,
     taskId: task.id,
     status: task.status as 'running' | 'done' | 'error',
     config,
-    results,
+    results: liveResults,
     progress: buffer
       ? { phase: buffer.phase, completed: buffer.completed, total: buffer.total }
       : undefined,

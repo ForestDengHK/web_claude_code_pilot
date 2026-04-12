@@ -16,6 +16,7 @@ export interface OrganizeSuggestion {
 export interface OrganizeConfig {
   model: string;
   backend: 'claude' | 'codex';
+  effort: string;
   scope: string;
   trustMode: boolean;
   cleanupCli: boolean;
@@ -28,8 +29,9 @@ export interface OrganizeConfig {
 }
 
 export const DEFAULT_ORGANIZE_CONFIG: OrganizeConfig = {
-  model: 'claude-sonnet-4-20250514',
+  model: 'default',
   backend: 'claude',
+  effort: '',
   scope: 'all',
   trustMode: false,
   cleanupCli: false,
@@ -44,6 +46,7 @@ export const DEFAULT_ORGANIZE_CONFIG: OrganizeConfig = {
 export interface OrganizeRequest {
   model?: string;
   backend?: 'claude' | 'codex';
+  effort?: string;
   scope?: string;
   trustMode?: boolean;
   cleanupCli?: boolean;

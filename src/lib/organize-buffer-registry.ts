@@ -44,11 +44,17 @@ export function updateOrganizePhase(taskId: string, phase: 'rules' | 'ai', total
   }
 }
 
+export function incrementOrganizeProgress(taskId: string): void {
+  const buf = getRegistry().get(taskId);
+  if (buf) {
+    buf.completed += 1;
+  }
+}
+
 export function pushOrganizeSuggestion(taskId: string, suggestion: OrganizeSuggestion): void {
   const buf = getRegistry().get(taskId);
   if (buf) {
     buf.suggestions.push(suggestion);
-    buf.completed++;
   }
 }
 

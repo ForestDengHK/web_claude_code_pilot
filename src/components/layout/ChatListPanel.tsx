@@ -145,6 +145,14 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
   const [creatingChat, setCreatingChat] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
+  const navigateToOrganize = useCallback((projectPath?: string) => {
+    const href = projectPath
+      ? `/chat/organize?project=${encodeURIComponent(projectPath)}`
+      : '/chat/organize';
+    router.push(href);
+    onClose?.();
+  }, [router, onClose]);
+
   const handleNewChat = useCallback(async () => {
     const lastDir = typeof window !== 'undefined'
       ? localStorage.getItem("codepilot:last-working-directory")
@@ -458,13 +466,13 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
               variant="outline"
               size="icon-sm"
               className="h-8 w-8 shrink-0"
-              onClick={() => router.push('/chat/organize')}
+              onClick={() => navigateToOrganize()}
             >
               <HugeiconsIcon icon={CleanIcon} className="h-3.5 w-3.5" />
               <span className="sr-only">Organize sessions</span>
             </Button>
           </TooltipTrigger>
-          <TooltipContent side="bottom">整理 Sessions</TooltipContent>
+          <TooltipContent side="bottom">Organize sessions</TooltipContent>
         </Tooltip>
       </div>
 
@@ -719,13 +727,13 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                               className="h-5 w-5 shrink-0 opacity-100 md:opacity-0 md:group-hover/folder:opacity-100"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                router.push(`/chat/organize?project=${encodeURIComponent(group.workingDirectory)}`);
+                                navigateToOrganize(group.workingDirectory);
                               }}
                             >
                               <HugeiconsIcon icon={CleanIcon} className="h-3 w-3" />
                             </Button>
                           </TooltipTrigger>
-                          <TooltipContent side="right">整理 {group.displayName}</TooltipContent>
+                          <TooltipContent side="right">Organize {group.displayName}</TooltipContent>
                         </Tooltip>
                       )}
                     </div>

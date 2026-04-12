@@ -16,8 +16,6 @@ export async function POST(request: NextRequest) {
     ...body,
   };
 
-  const abortController = new AbortController();
-
   let heartbeatInterval: ReturnType<typeof setInterval>;
 
   const stream = new ReadableStream<string>({
@@ -42,7 +40,6 @@ export async function POST(request: NextRequest) {
               }
             },
           },
-          abortController.signal,
         );
       } catch (error) {
         try {
@@ -64,7 +61,6 @@ export async function POST(request: NextRequest) {
     },
     cancel() {
       clearInterval(heartbeatInterval);
-      abortController.abort();
     },
   });
 

@@ -34,8 +34,19 @@ import {
   CleanIcon,
   PlayIcon,
 } from '@hugeicons/core-free-icons';
+import {
+  fetchModelCatalog,
+  getEffortOptionsForModel,
+  getPreferredDefaultModel,
+  inferBackendFromModel,
+  normalizeEffortForModel,
+  type ModelOption,
+  type ClaudeModelEffortInfo,
+  type CodexModelInfo,
+} from '@/lib/model-selection';
 
 type Phase = 'config' | 'analyzing' | 'results' | 'executing' | 'done';
+type ResultsTab = 'delete' | 'rename' | 'keep';
 
 interface ExecutionSummary {
   success: number;
@@ -67,11 +78,16 @@ function OrganizePage() {
 
   // --- Config state ---
   const [scope, setScope] = useState<string>(initialProject ? `project:${initialProject}` : 'all');
+  const [model, setModel] = useState(DEFAULT_ORGANIZE_CONFIG.model);
+  const [effort, setEffort] = useState(DEFAULT_ORGANIZE_CONFIG.effort);
   const [trustMode, setTrustMode] = useState(false);
   const [cleanupCli, setCleanupCli] = useState(false);
 
   // --- Project list for scope picker ---
   const [projects, setProjects] = useState<Array<{ path: string; name: string }>>([]);
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [claudeEffortInfo, setClaudeEffortInfo] = useState<Map<string, ClaudeModelEffortInfo>>(new Map());
+  const [codexModelInfo, setCodexModelInfo] = useState<Map<string, CodexModelInfo>>(new Map());
 
   useEffect(() => {
     fetch('/api/chat/sessions')
@@ -90,6 +106,27 @@ function OrganizePage() {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    fetchModelCatalog()
+      .then((catalog) => {
+        setModels(catalog.models);
+        setClaudeEffortInfo(catalog.claudeEffortInfo);
+        setCodexModelInfo(catalog.codexModelInfo);
+
+        setModel((currentModel) => {
+          if (catalog.models.some((modelOption) => modelOption.value === currentModel)) {
+            return currentModel;
+          }
+          return getPreferredDefaultModel(catalog.models) || currentModel;
+        });
+      })
+      .catch(() => {
+        setModels([]);
+        setClaudeEffortInfo(new Map());
+        setCodexModelInfo(new Map());
+      });
+  }, []);
+
   // --- Phase state ---
   const [phase, setPhase] = useState<Phase>('config');
   const [taskId, setTaskId] = useState<string | null>(null);
@@ -101,6 +138,7 @@ function OrganizePage() {
 
   // --- Suggestions ---
   const [suggestions, setSuggestions] = useState<OrganizeSuggestion[]>([]);
+  const [resultsTab, setResultsTab] = useState<ResultsTab>('delete');
 
   // --- Selection state ---
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -189,31 +227,14 @@ function OrganizePage() {
             setAnalysisTotal(data.progress.total);
           }
           if (data.config) {
+            setScope(data.config.scope);
+            setModel(data.config.model);
+            setEffort(data.config.effort);
             setTrustMode(data.config.trustMode);
             setCleanupCli(data.config.cleanupCli);
           }
           setPhase('analyzing');
           startRecoveryPolling();
-        } else if (data.status === 'done' && data.results) {
-          setSuggestions(data.results);
-          if (data.config) {
-            setTrustMode(data.config.trustMode);
-            setCleanupCli(data.config.cleanupCli);
-          }
-          const ids = new Set(
-            data.results
-              .filter((s) => s.action === 'delete' || s.action === 'rename')
-              .map((s) => s.sessionId),
-          );
-          setSelectedIds(ids);
-          const titles: Record<string, string> = {};
-          data.results.forEach((s) => {
-            if (s.action === 'rename' && s.suggestedTitle) {
-              titles[s.sessionId] = s.suggestedTitle;
-            }
-          });
-          setEditedTitles(titles);
-          setPhase('results');
         }
       } catch {
         // Status check failed, stay on config
@@ -226,6 +247,43 @@ function OrganizePage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const normalizedEffort = normalizeEffortForModel(
+      model,
+      effort,
+      claudeEffortInfo,
+      codexModelInfo,
+    );
+    if (normalizedEffort !== effort) {
+      setEffort(normalizedEffort);
+    }
+  }, [model, effort, claudeEffortInfo, codexModelInfo]);
+
+  useEffect(() => {
+    const nextTab: ResultsTab =
+      deleteSuggestions.length > 0
+        ? 'delete'
+        : renameSuggestions.length > 0
+          ? 'rename'
+          : 'keep';
+
+    if (phase === 'results') {
+      setResultsTab((current) => {
+        if (current === 'delete' && deleteSuggestions.length > 0) return current;
+        if (current === 'rename' && renameSuggestions.length > 0) return current;
+        if (current === 'keep' && keepSuggestions.length > 0) return current;
+        return nextTab;
+      });
+    }
+  }, [phase, deleteSuggestions.length, renameSuggestions.length, keepSuggestions.length]);
+
+  const stopRecoveryPolling = useCallback(() => {
+    if (recoveryIntervalRef.current) {
+      clearInterval(recoveryIntervalRef.current);
+      recoveryIntervalRef.current = null;
+    }
   }, []);
 
   // --- Recovery polling ---
@@ -245,6 +303,13 @@ function OrganizePage() {
           setAnalysisPhase(data.progress.phase as 'rules' | 'ai');
           setAnalysisCompleted(data.progress.completed);
           setAnalysisTotal(data.progress.total);
+        }
+        if (data.config) {
+          setScope(data.config.scope);
+          setModel(data.config.model);
+          setEffort(data.config.effort);
+          setTrustMode(data.config.trustMode);
+          setCleanupCli(data.config.cleanupCli);
         }
 
         if (data.status === 'done' && data.results) {
@@ -272,14 +337,7 @@ function OrganizePage() {
         // Polling failed, will retry next interval
       }
     }, 3000);
-  }, []);
-
-  const stopRecoveryPolling = useCallback(() => {
-    if (recoveryIntervalRef.current) {
-      clearInterval(recoveryIntervalRef.current);
-      recoveryIntervalRef.current = null;
-    }
-  }, []);
+  }, [stopRecoveryPolling]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -304,6 +362,9 @@ function OrganizePage() {
 
     const config: Partial<OrganizeConfig> = {
       ...DEFAULT_ORGANIZE_CONFIG,
+      model,
+      backend: inferBackendFromModel(model, codexModelInfo),
+      effort,
       trustMode,
       cleanupCli,
       scope,
@@ -386,12 +447,12 @@ function OrganizePage() {
           }
         }
       }
-    } catch (err) {
+    } catch {
       if (abort.signal.aborted) return;
       startRecoveryPolling();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trustMode, cleanupCli, scope, startRecoveryPolling]);
+  }, [model, codexModelInfo, effort, trustMode, cleanupCli, scope, startRecoveryPolling]);
 
   // --- Execute actions ---
   const executeActions = useCallback(
@@ -487,6 +548,7 @@ function OrganizePage() {
   // --- Reset to config ---
   const resetToConfig = useCallback(() => {
     setPhase('config');
+    setTaskId(null);
     setSuggestions([]);
     setSelectedIds(new Set());
     setEditedTitles({});
@@ -499,6 +561,12 @@ function OrganizePage() {
   const scopeLabel = scope !== 'all'
     ? `Project: ${scope.replace('project:', '').split('/').pop()}`
     : 'All Sessions';
+  const currentBackend = inferBackendFromModel(model, codexModelInfo);
+  const currentEffortOptions = getEffortOptionsForModel(
+    model,
+    claudeEffortInfo,
+    codexModelInfo,
+  );
 
   // --- Progress percentage ---
   const analysisPct =
@@ -549,15 +617,73 @@ function OrganizePage() {
                   </Select>
                 </div>
 
+                <div className="rounded-lg border p-4">
+                  <Label className="text-sm font-medium">Analysis Model</Label>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Selected model decides the backend automatically
+                  </p>
+                  {models.length > 0 ? (
+                    <Select value={model} onValueChange={setModel}>
+                      <SelectTrigger className="mt-2">
+                        <SelectValue placeholder="Select a model" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {models.map((modelOption) => (
+                          <SelectItem key={modelOption.value} value={modelOption.value}>
+                            {`${modelOption.group === 'codex' ? 'Codex' : 'Claude'} · ${modelOption.label || modelOption.value}`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                      placeholder="default"
+                      className="mt-2"
+                    />
+                  )}
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Backend: {currentBackend === 'codex' ? 'Codex / GPT' : 'Claude'}
+                  </p>
+                </div>
+
+                {currentEffortOptions.length > 1 && (
+                  <div className="rounded-lg border p-4">
+                    <Label className="text-sm font-medium">Reasoning Effort</Label>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Lower is faster; higher is slower but more thorough
+                    </p>
+                    <Select value={effort} onValueChange={setEffort}>
+                      <SelectTrigger className="mt-2">
+                        <SelectValue placeholder="Select effort" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {currentEffortOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                {currentEffortOptions.length <= 1 && (
+                  <div className="rounded-lg border p-4 text-xs text-muted-foreground">
+                    This model does not expose multiple effort levels.
+                  </div>
+                )}
+
                 {/* Trust mode */}
                 <div className="flex items-center justify-between gap-4 rounded-lg border p-4">
                   <div className="min-w-0 flex-1">
                     <Label className="text-sm font-medium">
                       Trust Mode (skip review, auto-execute)
                     </Label>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Automatically execute all suggested actions after analysis
-                    </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Automatically execute all suggested actions after analysis
+                  </p>
                   </div>
                   <Switch checked={trustMode} onCheckedChange={setTrustMode} />
                 </div>
@@ -568,11 +694,15 @@ function OrganizePage() {
                     <Label className="text-sm font-medium">
                       Clean up Claude Code CLI files
                     </Label>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Also delete CLI .jsonl session files when removing sessions
-                    </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Also delete CLI .jsonl session files when removing sessions
+                  </p>
                   </div>
                   <Switch checked={cleanupCli} onCheckedChange={setCleanupCli} />
+                </div>
+
+                <div className="rounded-lg border p-4 text-xs text-muted-foreground">
+                  AI review runs a small number of sessions in parallel so large projects finish faster.
                 </div>
               </div>
 
@@ -650,7 +780,7 @@ function OrganizePage() {
                   Re-scan
                 </Button>
               </div>
-              <Tabs defaultValue="delete">
+              <Tabs value={resultsTab} onValueChange={(value) => setResultsTab(value as ResultsTab)}>
                 <TabsList className="w-full">
                   <TabsTrigger value="delete" className="flex-1">
                     <HugeiconsIcon icon={Delete01Icon} className="size-3.5" />

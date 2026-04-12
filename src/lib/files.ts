@@ -259,6 +259,20 @@ export async function getGitStatusMap(dir: string): Promise<Map<string, string>>
 }
 
 /**
+ * Return the current git branch for a directory, or null when the directory is
+ * not in a git repo or HEAD is detached.
+ */
+export async function getGitBranch(dir: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync('git', ['-C', dir, 'symbolic-ref', '--short', 'HEAD']);
+    const branch = stdout.trim();
+    return branch || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Annotate a file tree with git status. Mutates nodes in place.
  * Returns true if any descendant has a status (used for recursive propagation to parents).
  */

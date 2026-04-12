@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { RefreshIcon, Search01Icon, SourceCodeIcon, CodeIcon, File01Icon, CheckListIcon } from "@hugeicons/core-free-icons";
+import { RefreshIcon, Search01Icon, SourceCodeIcon, CodeIcon, File01Icon, CheckListIcon, GitBranchIcon } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
   AlertDialog,
@@ -130,6 +131,13 @@ function buildGitStatusMap(nodes: FileTreeNode[]): Map<string, string> {
   return map;
 }
 
+function getDirectoryLabel(dir: string): string {
+  if (!dir) return "No directory selected";
+  const normalized = dir.replace(/[\\/]+$/, "");
+  const segments = normalized.split(/[\\/]/).filter(Boolean);
+  return segments[segments.length - 1] || dir;
+}
+
 function RenderTreeNodes({ nodes, searchQuery }: { nodes: FileTreeNode[]; searchQuery: string }) {
   const filtered = searchQuery ? filterTree(nodes, searchQuery) : nodes;
 
@@ -162,6 +170,7 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
   const [tree, setTree] = useState<FileTreeNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [gitBranch, setGitBranch] = useState<string | null>(null);
   const [attachedPaths, setAttachedPaths] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -185,6 +194,7 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
 
   const abortRef = useRef<AbortController | null>(null);
   const lazyLoadingRef = useRef<Set<string>>(new Set());
+  const directoryLabel = getDirectoryLabel(workingDirectory);
 
   // Lazy-load children for directories that were truncated by depth limit
   const lazyLoadChildren = useCallback(async (dirPath: string) => {
@@ -266,6 +276,7 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
     if (!workingDirectory) {
       setTree([]);
       setGitStatusMap(new Map());
+      setGitBranch(null);
       setExpandedPaths(new Set());
       return;
     }
@@ -284,17 +295,20 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
         const newTree = data.tree || [];
         setTree(newTree);
         setGitStatusMap(buildGitStatusMap(newTree));
+        setGitBranch(typeof data.gitBranch === "string" && data.gitBranch.length > 0 ? data.gitBranch : null);
         // Start collapsed on fresh load — user can expand as needed
         setExpandedPaths(prev => prev.size === 0 ? new Set() : prev);
       } else {
         setTree([]);
         setGitStatusMap(new Map());
+        setGitBranch(null);
       }
     } catch (e) {
       // Silently ignore aborted requests
       if (e instanceof DOMException && e.name === "AbortError") return;
       setTree([]);
       setGitStatusMap(new Map());
+      setGitBranch(null);
     } finally {
       if (!controller.signal.aborted) {
         setLoading(false);
@@ -560,10 +574,28 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Header */}
-      <div className="flex items-center gap-2 px-4 py-2 shrink-0">
-        <p className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground" title={workingDirectory}>
-          {workingDirectory || 'No directory selected'}
-        </p>
+      <div className="flex items-start gap-2 px-4 py-2 shrink-0">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-xs font-medium text-foreground" title={workingDirectory}>
+            {directoryLabel}
+          </p>
+          {workingDirectory && (
+            <div
+              className="mt-0.5 overflow-x-auto whitespace-nowrap text-[11px] text-muted-foreground [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              title={workingDirectory}
+            >
+              {workingDirectory}
+            </div>
+          )}
+          {gitBranch && (
+            <div className="mt-1 flex items-center gap-2">
+              <Badge variant="outline" className="h-5 max-w-full gap-1.5 px-1.5 py-0 text-[10px] font-mono text-muted-foreground">
+                <HugeiconsIcon icon={GitBranchIcon} className="size-3 shrink-0" />
+                <span className="truncate">{gitBranch}</span>
+              </Badge>
+            </div>
+          )}
+        </div>
         {tree.length > 0 && (
           <>
             {!selectionMode && (
