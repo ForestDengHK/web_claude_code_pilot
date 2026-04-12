@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, useEffect, useState, useRef, useCallback } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import type {
   OrganizeConfig,
   OrganizeSuggestion,
@@ -16,6 +16,13 @@ import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
   Loading02Icon,
@@ -55,11 +62,33 @@ function OrganizeLoading() {
 
 function OrganizePage() {
   const searchParams = useSearchParams();
-  const projectScope = searchParams.get('project');
+  const router = useRouter();
+  const initialProject = searchParams.get('project');
 
   // --- Config state ---
+  const [scope, setScope] = useState<string>(initialProject ? `project:${initialProject}` : 'all');
   const [trustMode, setTrustMode] = useState(false);
   const [cleanupCli, setCleanupCli] = useState(false);
+
+  // --- Project list for scope picker ---
+  const [projects, setProjects] = useState<Array<{ path: string; name: string }>>([]);
+
+  useEffect(() => {
+    fetch('/api/chat/sessions')
+      .then((r) => r.json())
+      .then((data: { sessions: Array<{ working_directory: string }> }) => {
+        const paths = new Set<string>();
+        data.sessions.forEach((s) => {
+          if (s.working_directory) paths.add(s.working_directory);
+        });
+        setProjects(
+          Array.from(paths)
+            .sort()
+            .map((p) => ({ path: p, name: p.split('/').pop() || p })),
+        );
+      })
+      .catch(() => {});
+  }, []);
 
   // --- Phase state ---
   const [phase, setPhase] = useState<Phase>('config');
@@ -277,10 +306,8 @@ function OrganizePage() {
       ...DEFAULT_ORGANIZE_CONFIG,
       trustMode,
       cleanupCli,
+      scope,
     };
-    if (projectScope) {
-      config.scope = `project:${projectScope}`;
-    }
 
     const abort = new AbortController();
     abortRef.current = abort;
@@ -364,7 +391,7 @@ function OrganizePage() {
       startRecoveryPolling();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trustMode, cleanupCli, projectScope, startRecoveryPolling]);
+  }, [trustMode, cleanupCli, scope, startRecoveryPolling]);
 
   // --- Execute actions ---
   const executeActions = useCallback(
@@ -469,8 +496,8 @@ function OrganizePage() {
   }, [stopRecoveryPolling]);
 
   // --- Scope display ---
-  const scopeLabel = projectScope
-    ? `Project: ${projectScope.split('/').pop()}`
+  const scopeLabel = scope !== 'all'
+    ? `Project: ${scope.replace('project:', '').split('/').pop()}`
     : 'All Sessions';
 
   // --- Progress percentage ---
@@ -482,9 +509,9 @@ function OrganizePage() {
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center gap-3 border-b px-4 py-3 shrink-0">
-        <a href="/chat" className="shrink-0 rounded-md p-1 hover:bg-muted">
+        <button onClick={() => router.back()} className="shrink-0 rounded-md p-1 hover:bg-muted">
           <HugeiconsIcon icon={ArrowLeft01Icon} className="size-5 text-muted-foreground" />
-        </a>
+        </button>
         <div className="min-w-0 flex-1">
           <h1 className="text-base font-semibold">Organize Sessions</h1>
           <p className="text-xs text-muted-foreground truncate">{scopeLabel}</p>
@@ -504,6 +531,24 @@ function OrganizePage() {
               )}
 
               <div className="space-y-4">
+                {/* Scope selector */}
+                <div className="rounded-lg border p-4">
+                  <Label className="text-sm font-medium">Scope</Label>
+                  <Select value={scope} onValueChange={setScope}>
+                    <SelectTrigger className="mt-2">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Sessions</SelectItem>
+                      {projects.map((p) => (
+                        <SelectItem key={p.path} value={`project:${p.path}`}>
+                          {p.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
                 {/* Trust mode */}
                 <div className="flex items-center justify-between gap-4 rounded-lg border p-4">
                   <div className="min-w-0 flex-1">
