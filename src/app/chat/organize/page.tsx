@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { Suspense, useEffect, useState, useRef, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import type {
   OrganizeConfig,
@@ -15,7 +15,6 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
@@ -27,7 +26,6 @@ import {
   CheckmarkCircle01Icon,
   CleanIcon,
   PlayIcon,
-  Cancel01Icon,
 } from '@hugeicons/core-free-icons';
 
 type Phase = 'config' | 'analyzing' | 'results' | 'executing' | 'done';
@@ -38,7 +36,24 @@ interface ExecutionSummary {
   failures: Array<{ sessionId: string; error: string }>;
 }
 
-export default function OrganizePage() {
+/** Wrap the page with Suspense so useSearchParams doesn't block navigation */
+export default function OrganizePageWrapper() {
+  return (
+    <Suspense fallback={<OrganizeLoading />}>
+      <OrganizePage />
+    </Suspense>
+  );
+}
+
+function OrganizeLoading() {
+  return (
+    <div className="flex h-full items-center justify-center">
+      <HugeiconsIcon icon={Loading02Icon} className="size-6 animate-spin text-muted-foreground" />
+    </div>
+  );
+}
+
+function OrganizePage() {
   const searchParams = useSearchParams();
   const projectScope = searchParams.get('project');
 
@@ -135,7 +150,6 @@ export default function OrganizePage() {
         if (!data.hasTask) return;
 
         if (data.status === 'running') {
-          // Reconnect to running task
           setTaskId(data.taskId ?? null);
           if (data.results && data.results.length > 0) {
             setSuggestions(data.results);
@@ -150,7 +164,6 @@ export default function OrganizePage() {
             setCleanupCli(data.config.cleanupCli);
           }
           setPhase('analyzing');
-          // Start recovery polling
           startRecoveryPolling();
         } else if (data.status === 'done' && data.results) {
           setSuggestions(data.results);
@@ -158,14 +171,12 @@ export default function OrganizePage() {
             setTrustMode(data.config.trustMode);
             setCleanupCli(data.config.cleanupCli);
           }
-          // Auto-select delete and rename suggestions
           const ids = new Set(
             data.results
               .filter((s) => s.action === 'delete' || s.action === 'rename')
               .map((s) => s.sessionId),
           );
           setSelectedIds(ids);
-          // Pre-fill edited titles
           const titles: Record<string, string> = {};
           data.results.forEach((s) => {
             if (s.action === 'rename' && s.suggestedTitle) {
@@ -208,7 +219,6 @@ export default function OrganizePage() {
         }
 
         if (data.status === 'done' && data.results) {
-          // Analysis completed during polling
           stopRecoveryPolling();
           const ids = new Set(
             data.results
@@ -226,7 +236,7 @@ export default function OrganizePage() {
           setPhase('results');
         } else if (data.status === 'error') {
           stopRecoveryPolling();
-          setError('分析过程中出现错误');
+          setError('An error occurred during analysis');
           setPhase('config');
         }
       } catch {
@@ -269,7 +279,7 @@ export default function OrganizePage() {
       cleanupCli,
     };
     if (projectScope) {
-      config.scope = projectScope;
+      config.scope = `project:${projectScope}`;
     }
 
     const abort = new AbortController();
@@ -284,11 +294,11 @@ export default function OrganizePage() {
       });
 
       if (!res.ok) {
-        throw new Error(`分析请求失败: ${res.status}`);
+        throw new Error(`Analysis request failed: ${res.status}`);
       }
 
       const reader = res.body?.getReader();
-      if (!reader) throw new Error('无法读取响应流');
+      if (!reader) throw new Error('Cannot read response stream');
 
       const decoder = new TextDecoder();
       let buffer = '';
@@ -318,14 +328,12 @@ export default function OrganizePage() {
               collectedSuggestions.push(event.data);
               setSuggestions([...collectedSuggestions]);
             } else if (event.type === 'done') {
-              // Auto-select delete and rename suggestions
               const ids = new Set(
                 collectedSuggestions
                   .filter((s) => s.action === 'delete' || s.action === 'rename')
                   .map((s) => s.sessionId),
               );
               setSelectedIds(ids);
-              // Pre-fill edited titles
               const titles: Record<string, string> = {};
               collectedSuggestions.forEach((s) => {
                 if (s.action === 'rename' && s.suggestedTitle) {
@@ -335,9 +343,7 @@ export default function OrganizePage() {
               setEditedTitles(titles);
 
               if (trustMode) {
-                // Trust mode: auto-execute
                 setPhase('results');
-                // We set results phase briefly then execute
                 setTimeout(() => {
                   executeActions(collectedSuggestions, ids, titles);
                 }, 500);
@@ -355,7 +361,6 @@ export default function OrganizePage() {
       }
     } catch (err) {
       if (abort.signal.aborted) return;
-      // SSE connection dropped — start recovery polling
       startRecoveryPolling();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -405,11 +410,11 @@ export default function OrganizePage() {
         });
 
         if (!res.ok) {
-          throw new Error(`执行请求失败: ${res.status}`);
+          throw new Error(`Execute request failed: ${res.status}`);
         }
 
         const reader = res.body?.getReader();
-        if (!reader) throw new Error('无法读取响应流');
+        if (!reader) throw new Error('Cannot read response stream');
 
         const decoder = new TextDecoder();
         let buffer = '';
@@ -436,7 +441,6 @@ export default function OrganizePage() {
               } else if (event.type === 'done') {
                 setExecSummary(event.summary);
                 setPhase('done');
-                // Dispatch session-updated event so sidebar refreshes
                 window.dispatchEvent(new CustomEvent('session-updated'));
               }
             } catch {
@@ -446,7 +450,7 @@ export default function OrganizePage() {
         }
       } catch (err) {
         if (abort.signal.aborted) return;
-        setError(err instanceof Error ? err.message : '执行过程中出现错误');
+        setError(err instanceof Error ? err.message : 'An error occurred during execution');
         setPhase('results');
       }
     },
@@ -466,8 +470,8 @@ export default function OrganizePage() {
 
   // --- Scope display ---
   const scopeLabel = projectScope
-    ? `项目: ${projectScope.split('/').pop()}`
-    : '全部 Sessions';
+    ? `Project: ${projectScope.split('/').pop()}`
+    : 'All Sessions';
 
   // --- Progress percentage ---
   const analysisPct =
@@ -477,18 +481,18 @@ export default function OrganizePage() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-3 border-b px-4 py-3">
+      <div className="flex items-center gap-3 border-b px-4 py-3 shrink-0">
         <a href="/chat" className="shrink-0 rounded-md p-1 hover:bg-muted">
           <HugeiconsIcon icon={ArrowLeft01Icon} className="size-5 text-muted-foreground" />
         </a>
         <div className="min-w-0 flex-1">
-          <h1 className="text-base font-semibold">Session 整理</h1>
+          <h1 className="text-base font-semibold">Organize Sessions</h1>
           <p className="text-xs text-muted-foreground truncate">{scopeLabel}</p>
         </div>
       </div>
 
-      {/* Main content area */}
-      <ScrollArea className="flex-1">
+      {/* Main content area — scrollable */}
+      <div className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-2xl px-4 py-4">
           {/* --- Config phase --- */}
           {phase === 'config' && (
@@ -504,10 +508,10 @@ export default function OrganizePage() {
                 <div className="flex items-center justify-between gap-4 rounded-lg border p-4">
                   <div className="min-w-0 flex-1">
                     <Label className="text-sm font-medium">
-                      信任模式（跳过 Review，自动执行）
+                      Trust Mode (skip review, auto-execute)
                     </Label>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      分析完成后自动执行所有建议操作
+                      Automatically execute all suggested actions after analysis
                     </p>
                   </div>
                   <Switch checked={trustMode} onCheckedChange={setTrustMode} />
@@ -517,10 +521,10 @@ export default function OrganizePage() {
                 <div className="flex items-center justify-between gap-4 rounded-lg border p-4">
                   <div className="min-w-0 flex-1">
                     <Label className="text-sm font-medium">
-                      同时清理 Claude Code CLI 文件
+                      Clean up Claude Code CLI files
                     </Label>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      删除 Session 时同时清理对应的 CLI .jsonl 文件
+                      Also delete CLI .jsonl session files when removing sessions
                     </p>
                   </div>
                   <Switch checked={cleanupCli} onCheckedChange={setCleanupCli} />
@@ -533,7 +537,7 @@ export default function OrganizePage() {
                 size="lg"
               >
                 <HugeiconsIcon icon={PlayIcon} className="size-4" />
-                开始分析
+                Start Analysis
               </Button>
             </div>
           )}
@@ -544,7 +548,7 @@ export default function OrganizePage() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-muted-foreground">
-                    {analysisPhase === 'rules' ? '规则分析中...' : 'AI 分析中...'}
+                    {analysisPhase === 'rules' ? 'Running rules...' : 'AI analyzing...'}
                   </span>
                   <span className="font-mono text-xs text-muted-foreground">
                     {analysisCompleted}/{analysisTotal}
@@ -563,19 +567,19 @@ export default function OrganizePage() {
               {suggestions.length > 0 && (
                 <div className="rounded-lg border p-4 text-sm">
                   <p className="text-muted-foreground">
-                    已发现{' '}
+                    Found{' '}
                     <span className="font-medium text-foreground">{suggestions.length}</span>{' '}
-                    条建议
+                    suggestions
                   </p>
                   <div className="mt-2 flex gap-4 text-xs text-muted-foreground">
                     {deleteSuggestions.length > 0 && (
-                      <span>删除: {deleteSuggestions.length}</span>
+                      <span>Delete: {deleteSuggestions.length}</span>
                     )}
                     {renameSuggestions.length > 0 && (
-                      <span>改名: {renameSuggestions.length}</span>
+                      <span>Rename: {renameSuggestions.length}</span>
                     )}
                     {keepSuggestions.length > 0 && (
-                      <span>保留: {keepSuggestions.length}</span>
+                      <span>Keep: {keepSuggestions.length}</span>
                     )}
                   </div>
                 </div>
@@ -597,22 +601,22 @@ export default function OrganizePage() {
                 <TabsList className="w-full">
                   <TabsTrigger value="delete" className="flex-1">
                     <HugeiconsIcon icon={Delete01Icon} className="size-3.5" />
-                    建议删除 ({deleteSuggestions.length})
+                    Delete ({deleteSuggestions.length})
                   </TabsTrigger>
                   <TabsTrigger value="rename" className="flex-1">
                     <HugeiconsIcon icon={PencilEdit01Icon} className="size-3.5" />
-                    建议改名 ({renameSuggestions.length})
+                    Rename ({renameSuggestions.length})
                   </TabsTrigger>
                   <TabsTrigger value="keep" className="flex-1">
                     <HugeiconsIcon icon={Tick01Icon} className="size-3.5" />
-                    保留 ({keepSuggestions.length})
+                    Keep ({keepSuggestions.length})
                   </TabsTrigger>
                 </TabsList>
 
                 {/* Delete tab */}
                 <TabsContent value="delete" className="mt-3">
                   {deleteSuggestions.length === 0 ? (
-                    <EmptyState text="没有建议删除的 Session" />
+                    <EmptyState text="No sessions suggested for deletion" />
                   ) : (
                     <div className="space-y-2">
                       <SelectAllRow
@@ -635,7 +639,7 @@ export default function OrganizePage() {
                 {/* Rename tab */}
                 <TabsContent value="rename" className="mt-3">
                   {renameSuggestions.length === 0 ? (
-                    <EmptyState text="没有建议改名的 Session" />
+                    <EmptyState text="No sessions suggested for renaming" />
                   ) : (
                     <div className="space-y-2">
                       <SelectAllRow
@@ -660,7 +664,7 @@ export default function OrganizePage() {
                 {/* Keep tab */}
                 <TabsContent value="keep" className="mt-3">
                   {keepSuggestions.length === 0 ? (
-                    <EmptyState text="没有保留的 Session" />
+                    <EmptyState text="No sessions marked as keep" />
                   ) : (
                     <div className="space-y-2">
                       {keepSuggestions.map((s) => (
@@ -682,12 +686,12 @@ export default function OrganizePage() {
                 <div className="sticky bottom-0 rounded-lg border bg-background p-4 shadow-md">
                   <Button onClick={() => executeActions()} className="w-full" size="lg">
                     <HugeiconsIcon icon={CleanIcon} className="size-4" />
-                    执行选中操作
+                    Execute Selected
                     {selectedDeletes.length > 0 && selectedRenames.length > 0
-                      ? `（删除 ${selectedDeletes.length} 个 + 改名 ${selectedRenames.length} 个）`
+                      ? ` (Delete ${selectedDeletes.length} + Rename ${selectedRenames.length})`
                       : selectedDeletes.length > 0
-                        ? `（删除 ${selectedDeletes.length} 个）`
-                        : `（改名 ${selectedRenames.length} 个）`}
+                        ? ` (Delete ${selectedDeletes.length})`
+                        : ` (Rename ${selectedRenames.length})`}
                   </Button>
                 </div>
               )}
@@ -699,7 +703,7 @@ export default function OrganizePage() {
             <div className="space-y-6">
               <div className="space-y-3">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">正在执行操作...</span>
+                  <span className="text-muted-foreground">Executing actions...</span>
                   <span className="font-mono text-xs text-muted-foreground">
                     {execCompleted}/{execTotal}
                   </span>
@@ -728,17 +732,17 @@ export default function OrganizePage() {
                   icon={CheckmarkCircle01Icon}
                   className="size-10 text-green-500"
                 />
-                <h2 className="text-lg font-semibold">整理完成</h2>
+                <h2 className="text-lg font-semibold">Cleanup Complete</h2>
                 <div className="flex gap-6 text-sm text-muted-foreground">
                   <span>
-                    成功:{' '}
+                    Success:{' '}
                     <span className="font-medium text-foreground">
                       {execSummary.success}
                     </span>
                   </span>
                   {execSummary.failed > 0 && (
                     <span>
-                      失败:{' '}
+                      Failed:{' '}
                       <span className="font-medium text-destructive">
                         {execSummary.failed}
                       </span>
@@ -760,12 +764,12 @@ export default function OrganizePage() {
               </div>
 
               <Button onClick={resetToConfig} variant="outline" className="w-full">
-                返回
+                Back
               </Button>
             </div>
           )}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }
@@ -808,7 +812,7 @@ function SelectAllRow({
           <HugeiconsIcon icon={Tick01Icon} className="size-3" />
         )}
       </span>
-      全选
+      Select All
     </button>
   );
 }
@@ -819,7 +823,7 @@ function ConfidenceBadge({ confidence }: { confidence: 'rule' | 'ai' }) {
       variant={confidence === 'rule' ? 'secondary' : 'outline'}
       className="text-[10px] px-1.5 py-0"
     >
-      {confidence === 'rule' ? '规则' : 'AI'}
+      {confidence === 'rule' ? 'Rule' : 'AI'}
     </Badge>
   );
 }
@@ -864,7 +868,7 @@ function SuggestionCard({
         <p className="text-xs text-muted-foreground line-clamp-2">{suggestion.reason}</p>
         <div className="flex items-center gap-3 text-[11px] text-muted-foreground/70">
           {suggestion.projectName && <span>{suggestion.projectName}</span>}
-          <span>{suggestion.messageCount} 条消息</span>
+          <span>{suggestion.messageCount} msgs</span>
           <span>{formatDate(suggestion.lastUpdated)}</span>
         </div>
       </div>
@@ -911,7 +915,7 @@ function RenameSuggestionCard({
             <ConfidenceBadge confidence={suggestion.confidence} />
           </div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <HugeiconsIcon icon={ArrowLeft01Icon} className="size-3 rotate-180" />
+            <span>→</span>
             <Input
               value={editedTitle}
               onChange={(e) => onTitleChange(e.target.value)}
@@ -922,7 +926,7 @@ function RenameSuggestionCard({
           <p className="text-xs text-muted-foreground line-clamp-2">{suggestion.reason}</p>
           <div className="flex items-center gap-3 text-[11px] text-muted-foreground/70">
             {suggestion.projectName && <span>{suggestion.projectName}</span>}
-            <span>{suggestion.messageCount} 条消息</span>
+            <span>{suggestion.messageCount} msgs</span>
             <span>{formatDate(suggestion.lastUpdated)}</span>
           </div>
         </div>
@@ -933,17 +937,17 @@ function RenameSuggestionCard({
 
 function formatDate(dateStr: string): string {
   try {
-    const date = new Date(dateStr);
+    const date = new Date(dateStr.replace(' ', 'T') + (dateStr.includes('T') ? '' : 'Z'));
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffDays === 0) return '今天';
-    if (diffDays === 1) return '昨天';
-    if (diffDays < 7) return `${diffDays} 天前`;
-    if (diffDays < 30) return `${Math.floor(diffDays / 7)} 周前`;
-    if (diffDays < 365) return `${Math.floor(diffDays / 30)} 个月前`;
-    return `${Math.floor(diffDays / 365)} 年前`;
+    if (diffDays === 0) return 'today';
+    if (diffDays === 1) return 'yesterday';
+    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+    if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo ago`;
+    return `${Math.floor(diffDays / 365)}y ago`;
   } catch {
     return dateStr;
   }
