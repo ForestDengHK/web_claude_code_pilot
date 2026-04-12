@@ -151,6 +151,15 @@ function initDb(db: Database.Database): void {
       last_seen   INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS organize_tasks (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'running',
+      config TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      results TEXT NOT NULL DEFAULT '[]'
+    );
+
     CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
     CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
     CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON chat_sessions(updated_at);
@@ -969,6 +978,69 @@ export function getAllPushSubscriptions(): Array<{
 export function toggleBookmark(messageId: string, bookmarked: boolean): void {
   const db = getDb();
   db.prepare('UPDATE messages SET bookmarked = ? WHERE id = ?').run(bookmarked ? 1 : 0, messageId);
+}
+
+// ==========================================
+// Session Organize Operations
+// ==========================================
+
+export function createOrganizeTask(id: string, config: string): void {
+  const db = getDb();
+  const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+  db.prepare(
+    'INSERT INTO organize_tasks (id, status, config, created_at, updated_at, results) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(id, 'running', config, now, now, '[]');
+}
+
+export function getLatestOrganizeTask(): { id: string; status: string; config: string; created_at: string; updated_at: string; results: string } | undefined {
+  const db = getDb();
+  return db.prepare("SELECT * FROM organize_tasks ORDER BY created_at DESC LIMIT 1").get() as { id: string; status: string; config: string; created_at: string; updated_at: string; results: string } | undefined;
+}
+
+export function updateOrganizeTaskResults(id: string, results: string): void {
+  const db = getDb();
+  const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+  db.prepare('UPDATE organize_tasks SET results = ?, updated_at = ? WHERE id = ?').run(results, now, id);
+}
+
+export function updateOrganizeTaskStatus(id: string, status: string): void {
+  const db = getDb();
+  const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+  db.prepare('UPDATE organize_tasks SET status = ?, updated_at = ? WHERE id = ?').run(status, now, id);
+}
+
+export function getSessionMessageCount(sessionId: string): number {
+  const db = getDb();
+  const result = db.prepare('SELECT COUNT(*) as count FROM messages WHERE session_id = ?').get(sessionId) as { count: number };
+  return result.count;
+}
+
+export function getSessionHeadTailMessages(
+  sessionId: string,
+  headCount: number,
+  tailCount: number,
+): { messages: Array<{ role: string; content: string; created_at: string }>; totalCount: number } {
+  const db = getDb();
+  const totalResult = db.prepare('SELECT COUNT(*) as count FROM messages WHERE session_id = ?').get(sessionId) as { count: number };
+  const totalCount = totalResult.count;
+
+  if (totalCount <= headCount + tailCount) {
+    const all = db.prepare(
+      'SELECT role, content, created_at FROM messages WHERE session_id = ? ORDER BY rowid ASC'
+    ).all(sessionId) as Array<{ role: string; content: string; created_at: string }>;
+    return { messages: all, totalCount };
+  }
+
+  const head = db.prepare(
+    'SELECT role, content, created_at FROM messages WHERE session_id = ? ORDER BY rowid ASC LIMIT ?'
+  ).all(sessionId, headCount) as Array<{ role: string; content: string; created_at: string }>;
+
+  const tail = db.prepare(
+    'SELECT role, content, created_at FROM messages WHERE session_id = ? ORDER BY rowid DESC LIMIT ?'
+  ).all(sessionId, tailCount) as Array<{ role: string; content: string; created_at: string }>;
+  tail.reverse();
+
+  return { messages: [...head, ...tail], totalCount };
 }
 
 // ==========================================
