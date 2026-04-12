@@ -1360,7 +1360,9 @@ export function MessageInput({
                   >
                     <span className="text-xs font-mono max-w-[10ch] truncate sm:max-w-none">
                       {getShortModelName(currentModelOption.label)}
-                      {currentModelEfforts && currentEffort ? `\u00B7${effortShortLabel(currentEffort)}` : ''}
+                      {currentModelEfforts && currentEffort && (
+                        <span className="hidden sm:inline">{`\u00B7${effortShortLabel(currentEffort)}`}</span>
+                      )}
                     </span>
                     <HugeiconsIcon icon={ArrowDown01Icon} className={cn("h-2.5 w-2.5 shrink-0 transition-transform duration-200", modelMenuOpen && "rotate-180")} />
                   </PromptInputButton>
@@ -1462,7 +1464,7 @@ export function MessageInput({
                   )}
                 </div>
 
-                {/* Per-session skip permissions toggle */}
+                {/* Codex review button */}
                 {backend === 'codex' && sessionId && (
                   <Tooltip>
                     <TooltipTrigger asChild>

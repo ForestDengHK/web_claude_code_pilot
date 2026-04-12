@@ -24,6 +24,7 @@ import { cacheRateLimit } from './rate-limit-cache';
 import { getSetting, getActiveProvider, getSession, updateSdkSessionId, getAllMessages } from './db';
 import { formatMessagesForContext } from './context-bridge';
 import { sendPushNotification } from './push-notifications';
+import { wasInterrupted } from './abort-registry';
 import { findClaudeBinary, findGitBash, getExpandedPath } from './platform';
 import os from 'os';
 import fs from 'fs';
@@ -337,6 +338,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
     skipPermissions: skipPermissionsOption,
     onQueryCreated,
     effort,
+    advisorModel,
   } = options;
 
   let heartbeatInterval: ReturnType<typeof setInterval>;
@@ -502,6 +504,13 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
         if (effort && ['low', 'medium', 'high', 'max'].includes(effort)) {
           queryOptions.effort = effort as 'low' | 'medium' | 'high' | 'max';
+        }
+
+        if (advisorModel) {
+          queryOptions.settings = {
+            ...(typeof queryOptions.settings === 'object' ? queryOptions.settings : {}),
+            advisorModel,
+          };
         }
 
         if (systemPrompt) {
@@ -939,7 +948,15 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
                     session_id: resultMsg.session_id,
                   };
                   if (resultMsg.is_error && 'errors' in resultMsg && Array.isArray((resultMsg as Record<string, unknown>).errors)) {
-                    resultPayload.errors = (resultMsg as Record<string, unknown>).errors;
+                    // Suppress error details when the user triggered a graceful interrupt.
+                    // The SDK reports "[ede_diagnostic] ... Request was aborted" which is
+                    // the expected consequence of interrupt(), not a real error.
+                    if (!wasInterrupted(sessionId)) {
+                      resultPayload.errors = (resultMsg as Record<string, unknown>).errors;
+                    } else {
+                      // Still mark as error-ish but without the confusing details
+                      resultPayload.is_error = false;
+                    }
                   }
                   controller.enqueue(formatSSE({
                     type: 'result',
@@ -994,7 +1011,11 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // Suppress spurious "exited with code 1" that the SDK throws after a
         // successful result — the conversation already completed fine.
         const isSpuriousExit = gotResult && /exited with code 1/i.test(errorMessage);
-        if (!isSpuriousExit) {
+        // Suppress errors caused by graceful interrupt — the user clicked Stop,
+        // so "Request was aborted" / "[ede_diagnostic]" are expected side effects,
+        // not real errors worth surfacing.
+        const isInterruptError = wasInterrupted(sessionId);
+        if (!isSpuriousExit && !isInterruptError) {
           controller.enqueue(formatSSE({ type: 'error', data: errorMessage }));
         }
         controller.enqueue(formatSSE({ type: 'done', data: '' }));

@@ -19,6 +19,7 @@ import type { Query } from '@anthropic-ai/claude-agent-sdk';
 // module instances, so a module-level variable would NOT be shared.
 const globalKey = '__abortRegistry__' as const;
 const queryKey = '__queryRegistry__' as const;
+const interruptedKey = '__interruptedRegistry__' as const;
 
 function getRegistry(): Map<string, AbortController> {
   if (!(globalThis as Record<string, unknown>)[globalKey]) {
@@ -32,6 +33,13 @@ function getQueryRegistry(): Map<string, Query> {
     (globalThis as Record<string, unknown>)[queryKey] = new Map<string, Query>();
   }
   return (globalThis as Record<string, unknown>)[queryKey] as Map<string, Query>;
+}
+
+function getInterruptedRegistry(): Set<string> {
+  if (!(globalThis as Record<string, unknown>)[interruptedKey]) {
+    (globalThis as Record<string, unknown>)[interruptedKey] = new Set<string>();
+  }
+  return (globalThis as Record<string, unknown>)[interruptedKey] as Set<string>;
 }
 
 export function registerAbort(sessionId: string, controller: AbortController): void {
@@ -51,6 +59,7 @@ export async function interruptSession(sessionId: string): Promise<boolean> {
   const queryRegistry = getQueryRegistry();
   const q = queryRegistry.get(sessionId);
   if (q) {
+    getInterruptedRegistry().add(sessionId);
     await q.interrupt();
     return true;
   }
@@ -75,8 +84,18 @@ export function abortSession(sessionId: string): boolean {
 export function unregisterAbort(sessionId: string): void {
   getRegistry().delete(sessionId);
   getQueryRegistry().delete(sessionId);
+  getInterruptedRegistry().delete(sessionId);
 }
 
 export function isSessionActive(sessionId: string): boolean {
   return getRegistry().has(sessionId);
+}
+
+/**
+ * Check whether a graceful interrupt was requested for a session.
+ * Used by claude-client to suppress spurious error messages that the
+ * SDK throws when an API request is mid-flight during interrupt().
+ */
+export function wasInterrupted(sessionId: string): boolean {
+  return getInterruptedRegistry().has(sessionId);
 }

@@ -217,6 +217,9 @@ function migrateDb(db: Database.Database): void {
   if (!colNames.includes('last_codex_bridged_msg_id')) {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN last_codex_bridged_msg_id TEXT");
   }
+  if (!colNames.includes('advisor_model')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN advisor_model TEXT");
+  }
 
   const msgColumns = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[];
   const msgColNames = msgColumns.map(c => c.name);
@@ -446,6 +449,11 @@ export function updateSessionMode(id: string, mode: string): void {
 export function updateSessionSkipPermissions(id: string, skip: boolean): void {
   const db = getDb();
   db.prepare('UPDATE chat_sessions SET skip_permissions = ? WHERE id = ?').run(skip ? 1 : 0, id);
+}
+
+export function updateSessionAdvisorModel(id: string, advisorModel: string | null): void {
+  const db = getDb();
+  db.prepare('UPDATE chat_sessions SET advisor_model = ? WHERE id = ?').run(advisorModel, id);
 }
 
 // ==========================================

@@ -822,10 +822,13 @@ export async function runCodexReview({
   sessionId,
   workingDirectory,
   model,
+  onProgress,
 }: {
   sessionId: string;
   workingDirectory?: string;
   model?: string;
+  /** Called with intermediate progress updates as the review runs. */
+  onProgress?: (update: { thinkingPreview?: string; statusText?: string; event?: string }) => void;
 }): Promise<CodexReviewResult> {
   const reviewProcessSessionId = `${sessionId}:codex-review`;
   const codexProcess = await CodexProcessManager.getOrCreate(reviewProcessSessionId);
@@ -859,10 +862,21 @@ export async function runCodexReview({
         findings: [],
       };
 
+      // progressHandler is defined later but referenced in cleanup — use a
+      // local variable that we overwrite once the handler is created.
+      let progressHandler: ((msg: JsonRpcMessage) => void) | null = null;
+
       const timeout = setTimeout(() => {
         codexProcess.offMessage(handler);
+        if (progressHandler) codexProcess.offMessage(progressHandler);
         reject(new Error('review/start timed out after 10m'));
       }, 600_000);
+
+      const cleanup = () => {
+        clearTimeout(timeout);
+        codexProcess.offMessage(handler);
+        if (progressHandler) codexProcess.offMessage(progressHandler);
+      };
 
       const finalize = (review: string) => {
         const result = normalizeReviewResult(review);
@@ -872,8 +886,7 @@ export async function runCodexReview({
         }
 
         sawReviewResult = true;
-        clearTimeout(timeout);
-        codexProcess.offMessage(handler);
+        cleanup();
         resolve({
           review: result.review,
           reviewThreadId,
@@ -886,8 +899,7 @@ export async function runCodexReview({
       };
 
       const fail = (message: string) => {
-        clearTimeout(timeout);
-        codexProcess.offMessage(handler);
+        cleanup();
         reject(new Error(message));
       };
 
@@ -991,6 +1003,72 @@ export async function runCodexReview({
         }
       };
 
+      // ---- Progress handler: captures intermediate events for the UI ----
+      let thinkingBuffer = '';
+      let agentMessageBuffer = '';
+
+      progressHandler = onProgress ? (msg: JsonRpcMessage) => {
+        if (msg.type !== 'notification') return;
+
+        switch (msg.method) {
+          // Primary reasoning (gpt-5.4+)
+          case 'codex/event/reasoning_content_delta': {
+            const inner = isRecord(msg.params.msg) ? msg.params.msg : msg.params;
+            const delta = typeof inner.delta === 'string' ? inner.delta : '';
+            if (delta) {
+              thinkingBuffer += delta;
+              onProgress({ thinkingPreview: thinkingBuffer.slice(-500) });
+            }
+            break;
+          }
+          // Reasoning summary (older models)
+          case 'item/reasoning/summaryTextDelta': {
+            const delta = typeof msg.params.delta === 'string' ? msg.params.delta : '';
+            if (delta) {
+              thinkingBuffer += delta;
+              onProgress({ thinkingPreview: thinkingBuffer.slice(-500) });
+            }
+            break;
+          }
+          // Agent reasoning snippet
+          case 'codex/event/agent_reasoning_delta': {
+            const inner = isRecord(msg.params.msg) ? msg.params.msg : msg.params;
+            const delta = typeof inner.delta === 'string' ? inner.delta : '';
+            if (delta) {
+              const snippet = delta.replace(/\n/g, ' ').trim();
+              if (snippet) onProgress({ statusText: snippet });
+            }
+            break;
+          }
+          // Agent message text (the review being written)
+          case 'item/agentMessage/delta': {
+            const delta = typeof msg.params.delta === 'string' ? msg.params.delta : '';
+            if (delta) {
+              agentMessageBuffer += delta;
+              onProgress({ statusText: agentMessageBuffer.slice(-300).replace(/\n/g, ' ').trim() });
+            }
+            break;
+          }
+          // Tool use started
+          case 'item/started':
+          case 'codex/event/item_started': {
+            const item = msg.method === 'item/started'
+              ? (isRecord(msg.params.item) ? msg.params.item : null)
+              : (isRecord(msg.params.msg) && isRecord((msg.params.msg as Record<string, unknown>).item)
+                  ? (msg.params.msg as Record<string, unknown>).item as Record<string, unknown>
+                  : null);
+            if (!item) break;
+            const type = item.type as string;
+            if (type === 'commandExecution' || type === 'CommandExecution') {
+              onProgress({ event: `Running: ${(item.command as string) || 'command'}` });
+            } else if (type === 'fileChange' || type === 'FileChange') {
+              onProgress({ event: 'Editing file...' });
+            }
+            break;
+          }
+        }
+      } : null;
+
       const request = formatJsonRpcRequest('review/start', {
         threadId,
         target: { type: 'uncommittedChanges' },
@@ -999,6 +1077,7 @@ export async function runCodexReview({
       const requestId = getLastRequestId();
 
       codexProcess.onMessage(handler);
+      if (progressHandler) codexProcess.onMessage(progressHandler);
       codexProcess.send(request);
     });
   } finally {

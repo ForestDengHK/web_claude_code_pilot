@@ -20,6 +20,7 @@ export interface ChatSession {
   codex_thread_id?: string | null;
   last_claude_bridged_msg_id?: string | null;
   last_codex_bridged_msg_id?: string | null;
+  advisor_model?: string | null;
 }
 
 // ==========================================
@@ -525,4 +526,5 @@ export interface ClaudeStreamOptions {
   skipPermissions?: boolean; // Per-session override for dangerously_skip_permissions
   onQueryCreated?: (query: unknown) => void; // Callback to register SDK Query for interrupt support
   effort?: string; // Effort level for Claude models (low/medium/high/max)
+  advisorModel?: string; // Advisor model for server-side review (Claude-only)
 }

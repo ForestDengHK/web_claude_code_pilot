@@ -7,7 +7,7 @@ import { MessageInput } from './MessageInput';
 import { SearchBar } from './SearchBar';
 import { SearchIcon } from 'lucide-react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Bookmark02Icon } from '@hugeicons/core-free-icons';
+import { Bookmark02Icon, BrainIcon, Cancel01Icon } from '@hugeicons/core-free-icons';
 import { usePanel } from '@/hooks/usePanel';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
 import type { RateLimitInfo } from '@/hooks/useSSEStream';
@@ -68,9 +68,10 @@ interface ChatViewProps {
   modelName?: string;
   initialMode?: string;
   backend?: 'claude' | 'codex';
+  advisorModel?: string | null;
 }
 
-export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, initialMode, backend = 'claude' }: ChatViewProps) {
+export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, initialMode, backend = 'claude', advisorModel }: ChatViewProps) {
   const { setStreamingSessionId, workingDirectory, setWorkingDirectory, setPanelOpen, setPendingApprovalSessionId, sessionTitle } = usePanel();
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [hasMore, setHasMore] = useState(initialHasMore);
@@ -88,11 +89,16 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [currentBackend, setCurrentBackendRaw] = useState<'claude' | 'codex'>(backend || 'claude');
   const [currentModel, setCurrentModelRaw] = useState(modelName || '');
   const [currentEffort, setCurrentEffort] = useState<string | undefined>();
+  const [currentAdvisorModel, setCurrentAdvisorModelRaw] = useState<string | null>(advisorModel || null);
 
   // Sync backend prop → state when parent loads session data after initial render
   useEffect(() => {
     if (backend) setCurrentBackendRaw(backend);
   }, [backend]);
+  // Sync advisorModel prop → state
+  useEffect(() => {
+    if (advisorModel !== undefined) setCurrentAdvisorModelRaw(advisorModel || null);
+  }, [advisorModel]);
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
   const [pendingInputRequest, setPendingInputRequest] = useState<InputRequestEvent | null>(null);
@@ -154,6 +160,17 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     }
   }, [sessionId]);
 
+  const setCurrentAdvisorModel = useCallback((newAdvisorModel: string | null) => {
+    setCurrentAdvisorModelRaw(newAdvisorModel);
+    if (sessionId) {
+      fetch(`/api/chat/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ advisor_model: newAdvisorModel || '' }),
+      }).catch(() => { /* silent */ });
+    }
+  }, [sessionId]);
+
   const handleModeChange = useCallback((newMode: string) => {
     setMode(newMode);
     // Persist mode to database and notify chat list
@@ -168,6 +185,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     }
   }, [sessionId]);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Generation counter: incremented each time sendMessage starts.
+  // Used to detect and discard stale recovery polls that would clobber
+  // the new stream's state (see startRecovery/poll guard).
+  const streamGenerationRef = useRef(0);
 
   // Ref to keep accumulated streaming content in sync regardless of React batching
   const accumulatedRef = useRef('');
@@ -254,9 +276,19 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     setStatusText('Reconnecting...');
 
     let doneRetries = 0;
+    // Capture the generation at the time recovery starts.
+    // If sendMessage increments the generation (new stream started), this
+    // poll becomes stale and must not touch UI state.
+    const recoveryGeneration = streamGenerationRef.current;
+    const isStale = () => !recoveryActiveRef.current || streamGenerationRef.current !== recoveryGeneration;
+
     const poll = async () => {
+      // Guard: recovery was already stopped or a new stream started — bail out.
+      if (isStale()) return;
       try {
         const res = await fetch(`/api/chat/sessions/${sessionId}/status`);
+        // Re-check after async: a new sendMessage may have started while the fetch was in flight.
+        if (isStale()) return;
         if (!res.ok) {
           setStatusText('Connection lost, retrying...');
           return;
@@ -273,11 +305,14 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           } | null;
         } = await res.json();
 
+        if (isStale()) return;
+
         if (!status.isProcessing) {
           // Claude has finished — fetch final messages and stop recovery.
           // Only stop if messages were successfully recovered; otherwise keep
           // polling so we don't lose the UI state before messages are loaded.
           const done = await recoverMessages();
+          if (isStale()) return;
           if (done) {
             stopRecovery();
           } else {
@@ -287,6 +322,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             if (doneRetries >= 10) {
               // Last resort: fetch one more time before giving up
               await recoverMessages();
+              if (isStale()) return;
               stopRecovery();
             }
           }
@@ -333,6 +369,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           setStatusText(`Reconnecting... ${backendLabel} is still running`);
         }
       } catch {
+        if (isStale()) return;
         setStatusText('Connection lost, retrying...');
       }
     };
@@ -354,14 +391,18 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         // Only fetch messages if Claude is done — avoids replacing the messages array
         // mid-processing which can cause messages to briefly disappear.
         if (recoveryActiveRef.current) {
+          const gen = streamGenerationRef.current;
           fetch(`/api/chat/sessions/${sessionId}/status`)
             .then(res => res.ok ? res.json() : null)
             .then(status => {
+              // Bail if recovery was stopped or a new stream started while we fetched
+              if (!recoveryActiveRef.current || streamGenerationRef.current !== gen) return;
               if (status && !status.isProcessing) {
                 // Only stop recovery if messages were successfully recovered.
                 // If the fetch fails (e.g. mobile network still waking up),
                 // let the poll continue retrying.
                 recoverMessages().then(done => {
+                  if (!recoveryActiveRef.current || streamGenerationRef.current !== gen) return;
                   if (done) stopRecovery();
                 });
               }
@@ -683,6 +724,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     async (content: string, files?: FileAttachment[], skillInfo?: { name: string; content: string }, codexSkills?: Array<{ name: string; path: string }>) => {
       if (isStreaming) return;
 
+      // Bump generation: any in-flight recovery polls from the previous stream
+      // will see a generation mismatch and bail out, preventing them from
+      // clobbering this new stream's messages/state.
+      streamGenerationRef.current++;
+
       // Cancel any ongoing recovery from a previous disconnection
       if (recoveryActiveRef.current) {
         stopRecovery();
@@ -723,6 +769,10 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       toolUsesRef.current = [];
       toolResultsRef.current = [];
       setStatusText(undefined);
+
+      // Capture the generation for this stream.  The finally block checks this
+      // to avoid resetting state if a NEWER sendMessage call has already started.
+      const myGeneration = streamGenerationRef.current;
 
       const controller = new AbortController();
       abortControllerRef.current = controller;
@@ -950,7 +1000,16 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           heartbeatWatchdogRef.current = null;
         }
         toolTimeoutRef.current = null;
-        if (recoveryActiveRef.current) {
+
+        // Stale-stream guard: if a newer sendMessage has started (bumped the
+        // generation counter), this finally block belongs to an old stream and
+        // must NOT reset state — doing so would clobber the new stream's
+        // isStreaming, streamingContent, abortController, etc.
+        if (streamGenerationRef.current !== myGeneration) {
+          // Only clean up refs that are exclusive to this invocation.
+          // Do NOT touch shared state or refs the new stream may have set.
+          recoveryAbortRef.current = false;
+        } else if (recoveryActiveRef.current) {
           // Recovery is active — only clean up internal refs, keep UI state visible
           // so the user sees "Reconnecting..." and any pending permission dialog.
           // stopRecovery() will perform the full state cleanup later.
@@ -1181,6 +1240,65 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         activeMessageId={activeMessageId}
         searchQuery={searchQuery}
       />
+      {/* Advisor Mode Bar — Claude backend only */}
+      {currentBackend === 'claude' && (() => {
+        const hasMessages = messages.length > 0;
+        const isEditable = !hasMessages; // Only allow changes before first message
+        const advisorConflict = !!currentAdvisorModel && currentModel.toLowerCase().includes(currentAdvisorModel.toLowerCase());
+
+        // Has messages + no advisor → hide entirely
+        if (hasMessages && !currentAdvisorModel) return null;
+
+        return (
+          <div className="mx-auto w-full max-w-3xl px-4 pt-1.5 pb-0.5">
+            {currentAdvisorModel ? (
+              <div className="flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2">
+                <HugeiconsIcon icon={BrainIcon} className="h-4 w-4 text-amber-500 shrink-0" />
+                <span className="text-xs font-medium text-amber-600 dark:text-amber-400 shrink-0">Advisor</span>
+                {isEditable ? (
+                  <select
+                    value={currentAdvisorModel}
+                    onChange={(e) => setCurrentAdvisorModel(e.target.value)}
+                    className="text-xs font-mono bg-transparent text-amber-500 border border-amber-500/30 rounded px-1.5 py-0.5 cursor-pointer focus:outline-none focus:ring-1 focus:ring-amber-500/50 capitalize"
+                  >
+                    <option value="opus">Opus</option>
+                    <option value="sonnet">Sonnet</option>
+                  </select>
+                ) : (
+                  <span className="text-xs text-amber-500 font-mono shrink-0 capitalize">{currentAdvisorModel}</span>
+                )}
+                {advisorConflict && (
+                  <span className="text-[10px] text-amber-600/80 dark:text-amber-400/80 truncate hidden sm:inline">
+                    · Same as main model — consider a new session without Advisor
+                  </span>
+                )}
+                {isEditable && (
+                  <button
+                    type="button"
+                    onClick={() => setCurrentAdvisorModel(null)}
+                    className="ml-auto p-1 rounded-md hover:bg-amber-500/20 text-amber-500 transition-colors"
+                  >
+                    <HugeiconsIcon icon={Cancel01Icon} className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            ) : (
+              /* OFF state — only visible when no messages (isEditable is guaranteed true here) */
+              <button
+                type="button"
+                onClick={() => setCurrentAdvisorModel('opus')}
+                className="flex items-center gap-2 w-full rounded-lg border border-dashed border-border/50 px-3 py-2 text-muted-foreground hover:border-amber-500/40 hover:text-amber-600 dark:hover:text-amber-400 transition-colors group"
+              >
+                <HugeiconsIcon icon={BrainIcon} className="h-4 w-4 shrink-0 group-hover:text-amber-500 transition-colors" />
+                <span className="text-xs">Advisor Mode</span>
+                <span className="text-[10px] text-muted-foreground/50 ml-auto hidden sm:inline">
+                  Stronger model reviews work
+                </span>
+              </button>
+            )}
+          </div>
+        );
+      })()}
       <MessageInput
         onSend={sendMessage}
         onCommand={handleCommand}

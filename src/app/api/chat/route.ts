@@ -188,6 +188,7 @@ export async function POST(request: NextRequest) {
       skipPermissions: session.skip_permissions === 1,
       onQueryCreated: (q) => registerQuery(session_id, q as Query),
       effort,
+      advisorModel: session.advisor_model || undefined,
     });
 
     // Tee the stream: one for client, one for collecting the response
