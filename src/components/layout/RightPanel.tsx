@@ -18,7 +18,7 @@ interface RightPanelProps {
 }
 
 export function RightPanel({ width }: RightPanelProps) {
-  const { panelOpen, setPanelOpen, workingDirectory, previewFile, setPreviewFile, setPreviewLine, setPreviewViewMode } = usePanel();
+  const { panelOpen, setPanelOpen, workingDirectory, sessionId, previewFile, setPreviewFile, setPreviewLine, setPreviewViewMode } = usePanel();
 
   const handleFileAdd = useCallback((path: string, isDirectory?: boolean) => {
     window.dispatchEvent(new CustomEvent('attach-file-to-chat', { detail: { path, isDirectory: isDirectory ?? false } }));
@@ -120,6 +120,7 @@ export function RightPanel({ width }: RightPanelProps) {
       <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
         <FileTree
           workingDirectory={workingDirectory}
+          sessionId={sessionId}
           onFileSelect={handleFileSelect}
           onFileAdd={handleFileAdd}
           onFileRemove={handleFileRemove}

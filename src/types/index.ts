@@ -23,6 +23,7 @@ export interface ChatSession {
   advisor_model?: string | null;
   branch_summary?: string | null;
   branch_source_session_id?: string | null;
+  git_branch?: string | null;
 }
 
 // ==========================================

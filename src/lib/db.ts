@@ -249,6 +249,11 @@ function migrateDb(db: Database.Database): void {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN branch_source_session_id TEXT");
   }
 
+  // Git branch tracking per session
+  if (!colNames.includes('git_branch')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN git_branch TEXT");
+  }
+
   const msgColumns = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[];
   const msgColNames = msgColumns.map(c => c.name);
 
@@ -484,6 +489,11 @@ export function updateSessionSkipPermissions(id: string, skip: boolean): void {
 export function updateSessionAdvisorModel(id: string, advisorModel: string | null): void {
   const db = getDb();
   db.prepare('UPDATE chat_sessions SET advisor_model = ? WHERE id = ?').run(advisorModel, id);
+}
+
+export function updateSessionGitBranch(id: string, gitBranch: string | null): void {
+  const db = getDb();
+  db.prepare('UPDATE chat_sessions SET git_branch = ? WHERE id = ?').run(gitBranch, id);
 }
 
 // ==========================================

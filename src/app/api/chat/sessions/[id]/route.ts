@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { deleteSession, getSession, updateSessionWorkingDirectory, updateSessionTitle, updateSessionModel, updateSessionMode, updateSessionSkipPermissions, clearSessionMessages, updateSessionBackend, updateSessionAdvisorModel } from '@/lib/db';
+import { deleteSession, getSession, updateSessionWorkingDirectory, updateSessionTitle, updateSessionModel, updateSessionMode, updateSessionSkipPermissions, clearSessionMessages, updateSessionBackend, updateSessionAdvisorModel, updateSessionGitBranch } from '@/lib/db';
 
 export async function GET(
   _request: NextRequest,
@@ -54,6 +54,9 @@ export async function PATCH(
     }
     if (body.advisor_model !== undefined) {
       updateSessionAdvisorModel(id, body.advisor_model || null);
+    }
+    if (body.git_branch !== undefined) {
+      updateSessionGitBranch(id, body.git_branch || null);
     }
 
     const updated = getSession(id);

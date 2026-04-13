@@ -2,9 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { RefreshIcon, Search01Icon, SourceCodeIcon, CodeIcon, File01Icon, CheckListIcon, GitBranchIcon } from "@hugeicons/core-free-icons";
+import { RefreshIcon, Search01Icon, SourceCodeIcon, CodeIcon, File01Icon, CheckListIcon } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
   AlertDialog,
@@ -30,6 +29,7 @@ import {
   FileTreeFile,
 } from "@/components/ai-elements/file-tree";
 import { EllipsisIcon, UploadIcon, FolderPlusIcon } from "lucide-react";
+import { BranchSelector } from "@/components/project/BranchSelector";
 import type { ReactNode } from "react";
 
 const PREVIEWABLE_EXTENSIONS = new Set([
@@ -56,6 +56,7 @@ const PREVIEWABLE_EXTENSIONS = new Set([
 
 interface FileTreeProps {
   workingDirectory: string;
+  sessionId?: string | null;
   onFileSelect: (path: string) => void;
   onFileAdd?: (path: string, isDirectory?: boolean) => void;
   onFileRemove?: (path: string) => void;
@@ -166,7 +167,7 @@ function RenderTreeNodes({ nodes, searchQuery }: { nodes: FileTreeNode[]; search
   );
 }
 
-export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemove, onFilePreview }: FileTreeProps) {
+export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd, onFileRemove, onFilePreview }: FileTreeProps) {
   const [tree, setTree] = useState<FileTreeNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -589,10 +590,15 @@ export function FileTree({ workingDirectory, onFileSelect, onFileAdd, onFileRemo
           )}
           {gitBranch && (
             <div className="mt-1 flex items-center gap-2">
-              <Badge variant="outline" className="h-5 max-w-full gap-1.5 px-1.5 py-0 text-[10px] font-mono text-muted-foreground">
-                <HugeiconsIcon icon={GitBranchIcon} className="size-3 shrink-0" />
-                <span className="truncate">{gitBranch}</span>
-              </Badge>
+              <BranchSelector
+                workingDirectory={workingDirectory}
+                gitBranch={gitBranch}
+                sessionId={sessionId}
+                onBranchChanged={(newBranch) => {
+                  setGitBranch(newBranch);
+                  fetchTree();
+                }}
+              />
             </div>
           )}
         </div>
