@@ -9,6 +9,7 @@ import { ChatListPanel } from "./ChatListPanel";
 import { RightPanel } from "./RightPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { DocPreview } from "./DocPreview";
+import { DiffViewer } from "@/components/project/DiffViewer";
 import { PanelContext, type PanelContent, type PreviewViewMode, type DiffTarget } from "@/hooks/usePanel";
 import { TTSProvider } from "@/contexts/TTSContext";
 
@@ -298,12 +299,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
             <main className="relative flex-1 overflow-hidden">{children}</main>
           </div>
-          {isChatDetailRoute && previewFile && (
+          {isChatDetailRoute && (previewFile || diffTarget) && (
             <div className="hidden md:block">
               <ResizeHandle side="right" onResize={handleDocPreviewResize} onResizeEnd={handleDocPreviewResizeEnd} />
             </div>
           )}
-          {isChatDetailRoute && previewFile && (
+          {isChatDetailRoute && diffTarget && (
+            <DiffViewer
+              workingDirectory={workingDirectory}
+              file={diffTarget.file}
+              commit={diffTarget.commit}
+              onClose={() => setDiffTarget(null)}
+              width={docPreviewWidth}
+            />
+          )}
+          {isChatDetailRoute && !diffTarget && previewFile && (
             <DocPreview
               filePath={previewFile}
               viewMode={previewViewMode}
