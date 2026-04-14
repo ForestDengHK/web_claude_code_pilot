@@ -9,7 +9,7 @@ import { ChatListPanel } from "./ChatListPanel";
 import { RightPanel } from "./RightPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { DocPreview } from "./DocPreview";
-import { PanelContext, type PanelContent, type PreviewViewMode } from "@/hooks/usePanel";
+import { PanelContext, type PanelContent, type PreviewViewMode, type DiffTarget } from "@/hooks/usePanel";
 import { TTSProvider } from "@/contexts/TTSContext";
 
 /**
@@ -192,6 +192,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  // --- Diff target state ---
+  const [diffTarget, setDiffTargetRaw] = useState<DiffTarget | null>(null);
+  const setDiffTarget = useCallback((target: DiffTarget | null) => {
+    setDiffTargetRaw(target);
+  }, []);
+
   // Auto-open panel on chat detail routes (desktop only), close on others
   // Also close doc preview when navigating away or switching sessions
   useEffect(() => {
@@ -268,8 +274,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       setPreviewLine,
       previewViewMode,
       setPreviewViewMode,
+      diffTarget,
+      setDiffTarget,
     }),
-    [panelOpen, setPanelOpen, panelContent, workingDirectory, sessionId, sessionTitle, streamingSessionId, pendingApprovalSessionId, previewFile, setPreviewFile, previewLine, previewViewMode]
+    [panelOpen, setPanelOpen, panelContent, workingDirectory, sessionId, sessionTitle, streamingSessionId, pendingApprovalSessionId, previewFile, setPreviewFile, previewLine, previewViewMode, diffTarget, setDiffTarget]
   );
 
   return (

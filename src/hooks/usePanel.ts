@@ -2,9 +2,14 @@
 
 import { createContext, useContext } from "react";
 
-export type PanelContent = "files" | "tasks";
+export type PanelContent = "files" | "tasks" | "history";
 
 export type PreviewViewMode = "source" | "rendered";
+
+export interface DiffTarget {
+  file: string;
+  commit?: string;
+}
 
 export interface PanelContextValue {
   panelOpen: boolean;
@@ -27,6 +32,8 @@ export interface PanelContextValue {
   setPreviewLine: (line: number | null) => void;
   previewViewMode: PreviewViewMode;
   setPreviewViewMode: (mode: PreviewViewMode) => void;
+  diffTarget: DiffTarget | null;
+  setDiffTarget: (target: DiffTarget | null) => void;
 }
 
 export const PanelContext = createContext<PanelContextValue | null>(null);
