@@ -12,13 +12,14 @@ import {
 } from "@/components/ui/tooltip";
 import { usePanel } from "@/hooks/usePanel";
 import { FileTree } from "@/components/project/FileTree";
+import { HistoryPanel } from "@/components/project/HistoryPanel";
 
 interface RightPanelProps {
   width?: number;
 }
 
 export function RightPanel({ width }: RightPanelProps) {
-  const { panelOpen, setPanelOpen, workingDirectory, sessionId, previewFile, setPreviewFile, setPreviewLine, setPreviewViewMode } = usePanel();
+  const { panelOpen, setPanelOpen, panelContent, setPanelContent, workingDirectory, sessionId, previewFile, setPreviewFile, setPreviewLine, setPreviewViewMode } = usePanel();
 
   const handleFileAdd = useCallback((path: string, isDirectory?: boolean) => {
     window.dispatchEvent(new CustomEvent('attach-file-to-chat', { detail: { path, isDirectory: isDirectory ?? false } }));
@@ -88,7 +89,28 @@ export function RightPanel({ width }: RightPanelProps) {
     >
       {/* Mobile header with close */}
       <div className="flex h-12 shrink-0 items-center justify-between px-4 md:hidden">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Files</span>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            className={cn(
+              "text-[11px] font-semibold uppercase tracking-wider transition-colors",
+              panelContent === "files" ? "text-foreground" : "text-muted-foreground"
+            )}
+            onClick={() => setPanelContent("files")}
+          >
+            Files
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "text-[11px] font-semibold uppercase tracking-wider transition-colors",
+              panelContent === "history" ? "text-foreground" : "text-muted-foreground"
+            )}
+            onClick={() => setPanelContent("history")}
+          >
+            History
+          </button>
+        </div>
         <Button
           variant="ghost"
           size="icon-sm"
@@ -100,7 +122,28 @@ export function RightPanel({ width }: RightPanelProps) {
       </div>
       {/* Desktop header */}
       <div className="hidden h-12 shrink-0 items-center justify-between px-4 md:flex">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Files</span>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            className={cn(
+              "text-[11px] font-semibold uppercase tracking-wider transition-colors",
+              panelContent === "files" ? "text-foreground" : "text-muted-foreground"
+            )}
+            onClick={() => setPanelContent("files")}
+          >
+            Files
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "text-[11px] font-semibold uppercase tracking-wider transition-colors",
+              panelContent === "history" ? "text-foreground" : "text-muted-foreground"
+            )}
+            onClick={() => setPanelContent("history")}
+          >
+            History
+          </button>
+        </div>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -118,14 +161,19 @@ export function RightPanel({ width }: RightPanelProps) {
 
       {/* Body */}
       <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
-        <FileTree
-          workingDirectory={workingDirectory}
-          sessionId={sessionId}
-          onFileSelect={handleFileSelect}
-          onFileAdd={handleFileAdd}
-          onFileRemove={handleFileRemove}
-          onFilePreview={handleFilePreview}
-        />
+        {panelContent === "files" && (
+          <FileTree
+            workingDirectory={workingDirectory}
+            sessionId={sessionId}
+            onFileSelect={handleFileSelect}
+            onFileAdd={handleFileAdd}
+            onFileRemove={handleFileRemove}
+            onFilePreview={handleFilePreview}
+          />
+        )}
+        {panelContent === "history" && (
+          <HistoryPanel workingDirectory={workingDirectory} />
+        )}
       </div>
     </aside>
   );
