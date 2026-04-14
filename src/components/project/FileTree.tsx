@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { usePanel } from "@/hooks/usePanel";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { RefreshIcon, Search01Icon, SourceCodeIcon, CodeIcon, File01Icon, CheckListIcon } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
@@ -192,6 +193,15 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   // Note: folder deletion reuses the existing deleteTarget/handleDeleteConfirm flow
+
+  const { setDiffTarget } = usePanel();
+
+  const handleDiff = useCallback((absolutePath: string) => {
+    const relative = absolutePath.startsWith(workingDirectory)
+      ? absolutePath.slice(workingDirectory.length).replace(/^\//, '')
+      : absolutePath;
+    setDiffTarget({ file: relative });
+  }, [workingDirectory, setDiffTarget]);
 
   const abortRef = useRef<AbortController | null>(null);
   const lazyLoadingRef = useRef<Set<string>>(new Set());
@@ -713,6 +723,7 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
               a.remove();
             }}
             onDelete={(filePath: string) => setDeleteTarget(filePath)}
+            onDiff={handleDiff}
             onUpload={handleUpload}
             onCreateFolder={handleCreateFolder}
             selectionMode={selectionMode}

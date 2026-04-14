@@ -22,6 +22,7 @@ import {
   CopyIcon,
   DownloadIcon,
   EllipsisIcon,
+  FileDiffIcon,
   FileIcon,
   FolderIcon,
   FolderOpenIcon,
@@ -52,6 +53,7 @@ interface FileTreeContextType {
   onPreview?: (path: string) => void;
   onDownload?: (path: string) => void;
   onDelete?: (path: string) => void;
+  onDiff?: (path: string) => void;
   onUpload?: (dirPath: string) => void;
   onCreateFolder?: (dirPath: string) => void;
   attachedPaths?: Set<string>;
@@ -112,6 +114,7 @@ export type FileTreeProps = HTMLAttributes<HTMLDivElement> & {
   onPreview?: (path: string) => void;
   onDownload?: (path: string) => void;
   onDelete?: (path: string) => void;
+  onDiff?: (path: string) => void;
   onUpload?: (dirPath: string) => void;
   onCreateFolder?: (dirPath: string) => void;
   onExpandedChange?: (expanded: Set<string>) => void;
@@ -133,6 +136,7 @@ export const FileTree = ({
   onPreview,
   onDownload,
   onDelete,
+  onDiff,
   onUpload,
   onCreateFolder,
   onExpandedChange,
@@ -163,8 +167,8 @@ export const FileTree = ({
   );
 
   const contextValue = useMemo(
-    () => ({ attachedPaths, expandedPaths, gitStatusMap, onAdd, onCreateFolder, onDelete, onDownload, onPreview, onRemove, onSelect, onToggleSelect, onUpload, selectedPath, selectedPaths, selectionMode, togglePath }),
-    [attachedPaths, expandedPaths, gitStatusMap, onAdd, onCreateFolder, onDelete, onDownload, onPreview, onRemove, onSelect, onToggleSelect, onUpload, selectedPath, selectedPaths, selectionMode, togglePath]
+    () => ({ attachedPaths, expandedPaths, gitStatusMap, onAdd, onCreateFolder, onDelete, onDiff, onDownload, onPreview, onRemove, onSelect, onToggleSelect, onUpload, selectedPath, selectedPaths, selectionMode, togglePath }),
+    [attachedPaths, expandedPaths, gitStatusMap, onAdd, onCreateFolder, onDelete, onDiff, onDownload, onPreview, onRemove, onSelect, onToggleSelect, onUpload, selectedPath, selectedPaths, selectionMode, togglePath]
   );
 
   return (
@@ -428,7 +432,7 @@ export const FileTreeFile = ({
   children,
   ...props
 }: FileTreeFileProps) => {
-  const { selectedPath, onSelect, onAdd, onRemove, onDownload, onDelete, attachedPaths, gitStatusMap, selectionMode, selectedPaths, onToggleSelect } = useContext(FileTreeContext);
+  const { selectedPath, onSelect, onAdd, onRemove, onDownload, onDelete, onDiff, attachedPaths, gitStatusMap, selectionMode, selectedPaths, onToggleSelect } = useContext(FileTreeContext);
   const isSelected = selectedPath === path;
   const isAttached = attachedPaths?.has(path) ?? false;
   const isChecked = selectedPaths?.has(path) ?? false;
@@ -490,6 +494,14 @@ export const FileTreeFile = ({
     [onDelete, path]
   );
 
+  const handleDiff = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onDiff?.(path);
+    },
+    [onDiff, path]
+  );
+
   const fileContextValue = useMemo(() => ({ name, path }), [name, path]);
 
   return (
@@ -548,8 +560,18 @@ export const FileTreeFile = ({
                     </span>
                   );
                 })()}
-            {(onDownload || onDelete || onAdd) && (
+            {(onDownload || onDelete || onAdd || (onDiff && gitStatus)) && (
               <span className="ml-auto flex shrink-0 items-center">
+                {!selectionMode && gitStatus && onDiff && (
+                  <button
+                    type="button"
+                    className="flex size-8 items-center justify-center rounded transition-opacity hover:bg-muted md:size-5 md:opacity-0 md:group-hover/file:opacity-100"
+                    onClick={handleDiff}
+                    title="View diff"
+                  >
+                    <FileDiffIcon className="size-4 text-muted-foreground md:size-3" />
+                  </button>
+                )}
                 <CopyNameButton name={name} />
                 {(onDownload || onDelete) && (
                   <DropdownMenu>
