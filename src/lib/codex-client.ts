@@ -433,6 +433,34 @@ function extractReviewTextFromItem(item: Record<string, unknown>): string | null
   return null;
 }
 
+function extractAgentMessageTextFromItem(item: Record<string, unknown>): string | null {
+  const itemType = item.type;
+  if (
+    itemType !== 'agentMessage' &&
+    itemType !== 'AgentMessage' &&
+    itemType !== 'message' &&
+    itemType !== 'Message'
+  ) {
+    return null;
+  }
+
+  if (!Array.isArray(item.content)) {
+    return null;
+  }
+
+  const parts = item.content
+    .map((part) => {
+      if (!isRecord(part)) return '';
+      if (part.type === 'Text' && typeof part.text === 'string') {
+        return part.text;
+      }
+      return '';
+    })
+    .filter((part) => part.length > 0);
+
+  return parts.length > 0 ? parts.join('') : null;
+}
+
 function normalizeReviewResult(review: string): { review: string } | { error: string } {
   const normalizedReview = review.trim();
   if (!normalizedReview) {
@@ -1082,6 +1110,126 @@ export async function runCodexReview({
     });
   } finally {
     await CodexProcessManager.kill(reviewProcessSessionId);
+  }
+}
+
+export async function runCodexOneShot({
+  prompt,
+  workingDirectory,
+  model,
+  effort,
+}: {
+  prompt: string;
+  workingDirectory?: string;
+  model?: string;
+  effort?: string;
+}): Promise<string> {
+  const tempSessionId = `__codex_oneshot__:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+  const codexProcess = await CodexProcessManager.getOrCreate(tempSessionId);
+
+  try {
+    const startedThread = await startThread(
+      codexProcess,
+      tempSessionId,
+      model,
+      workingDirectory,
+      effort,
+      'never',
+      'read-only',
+      { persistThreadId: false },
+    );
+
+    const threadId = startedThread.threadId;
+    const cwd = workingDirectory || process.cwd();
+
+    return await new Promise<string>((resolve, reject) => {
+      let text = '';
+      const timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error('Codex one-shot request timed out after 2m'));
+      }, 120_000);
+
+      const cleanup = () => {
+        clearTimeout(timeout);
+        codexProcess.offMessage(handler);
+      };
+
+      const finish = () => {
+        cleanup();
+        resolve(text.trim());
+      };
+
+      const fail = (message: string) => {
+        cleanup();
+        reject(new Error(message));
+      };
+
+      const handler = (msg: JsonRpcMessage) => {
+        if (msg.type === 'response' && msg.id === requestId) {
+          if (msg.error) {
+            fail(msg.error.message || 'Codex one-shot turn failed');
+          }
+          return;
+        }
+
+        if (msg.type !== 'notification') return;
+
+        if (msg.method === 'item/agentMessage/delta') {
+          const delta = typeof msg.params.delta === 'string' ? msg.params.delta : '';
+          if (delta) text += delta;
+          return;
+        }
+
+        if (msg.method === 'item/completed') {
+          const item = isRecord(msg.params.item) ? msg.params.item : null;
+          if (!item) return;
+          const fullText = extractAgentMessageTextFromItem(item);
+          if (fullText && !text.trim()) {
+            text = fullText;
+          }
+          return;
+        }
+
+        if (msg.method === 'turn/completed') {
+          const turn = isRecord(msg.params.turn) ? msg.params.turn : null;
+          const turnError = turn && isRecord(turn.error) ? turn.error : null;
+          if (typeof turnError?.message === 'string' && turnError.message) {
+            fail(turnError.message);
+            return;
+          }
+          finish();
+          return;
+        }
+
+        if (msg.method === 'error') {
+          const error = isRecord(msg.params.error) ? msg.params.error : null;
+          const willRetry = msg.params.willRetry === true;
+          if (!willRetry) {
+            fail(typeof error?.message === 'string' ? error.message : 'Codex one-shot request failed');
+          }
+        }
+      };
+
+      const request = formatJsonRpcRequest('turn/start', {
+        threadId,
+        cwd,
+        input: buildUserInputs(prompt),
+        approvalPolicy: 'never',
+        sandboxPolicy: {
+          type: 'readOnly',
+          access: { type: 'fullAccess' },
+        },
+        ...(model ? { model } : {}),
+        ...(effort ? { effort } : {}),
+        summary: 'none',
+      });
+      const requestId = getLastRequestId();
+
+      codexProcess.onMessage(handler);
+      codexProcess.send(request);
+    });
+  } finally {
+    await CodexProcessManager.kill(tempSessionId);
   }
 }
 

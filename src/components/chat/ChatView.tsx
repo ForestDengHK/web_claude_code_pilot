@@ -9,6 +9,7 @@ import { SearchBar } from './SearchBar';
 import { SearchIcon } from 'lucide-react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Bookmark02Icon, BrainIcon, Cancel01Icon } from '@hugeicons/core-free-icons';
+import { RememberDialog } from './RememberDialog';
 import { usePanel } from '@/hooks/usePanel';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
 import type { RateLimitInfo } from '@/hooks/useSSEStream';
@@ -110,6 +111,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [currentEffort, setCurrentEffort] = useState<string | undefined>();
   const [currentAdvisorModel, setCurrentAdvisorModelRaw] = useState<string | null>(advisorModel || null);
 
+  // Memory system state: null = use global default, true/false = session override
+  const [memoryEnabled, setMemoryEnabledRaw] = useState<boolean | null>(null);
+  const [memoryGlobalDefault, setMemoryGlobalDefault] = useState(false);
+  const [sessionRememberOpen, setSessionRememberOpen] = useState(false);
+
   // Sync backend prop → state when parent loads session data after initial render
   useEffect(() => {
     if (backend) setCurrentBackendRaw(backend);
@@ -118,6 +124,38 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   useEffect(() => {
     if (advisorModel !== undefined) setCurrentAdvisorModelRaw(advisorModel || null);
   }, [advisorModel]);
+
+  // Fetch memory state from session and global settings
+  useEffect(() => {
+    Promise.all([
+      fetch(`/api/chat/sessions/${sessionId}`).then(r => r.ok ? r.json() : null),
+      fetch('/api/settings/app').then(r => r.ok ? r.json() : null),
+    ]).then(([sessionData, settingsData]) => {
+      if (sessionData?.session) {
+        const me = sessionData.session.memory_enabled;
+        setMemoryEnabledRaw(me === null || me === undefined ? null : me === 1);
+      }
+      if (settingsData?.settings) {
+        setMemoryGlobalDefault(settingsData.settings.memory_enabled === 'true');
+      }
+    }).catch(() => { /* silent */ });
+  }, [sessionId]);
+
+  const setMemoryEnabled = useCallback((enabled: boolean | null) => {
+    setMemoryEnabledRaw(enabled);
+    if (sessionId) {
+      fetch(`/api/chat/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memory_enabled: enabled }),
+      }).catch(() => { /* silent */ });
+    }
+  }, [sessionId]);
+
+  // Effective memory state: session override > global default
+  const isMemoryActive = memoryEnabled !== null ? memoryEnabled : memoryGlobalDefault;
+  const isMemoryToggleLocked = messages.length > 0;
+
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
   const [pendingInputRequest, setPendingInputRequest] = useState<InputRequestEvent | null>(null);
@@ -1386,6 +1424,68 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           </div>
         );
       })()}
+      {/* Memory bar — always visible */}
+      <div className="mx-auto w-full max-w-3xl px-4 pt-1 pb-0.5">
+        <div className={`flex items-center gap-2 rounded-lg px-3 py-2 ${
+          isMemoryActive
+            ? 'bg-blue-500/10 border border-blue-500/20'
+            : 'border border-dashed border-border/50'
+        }`}>
+          {/* Toggle: only editable before the session starts; memory is injected once */}
+          <button
+            type="button"
+            onClick={() => {
+              if (!isMemoryToggleLocked) {
+                setMemoryEnabled(isMemoryActive ? false : true);
+              }
+            }}
+            disabled={isMemoryToggleLocked}
+            className={`flex items-center gap-1.5 shrink-0 transition-colors ${
+              isMemoryActive
+                ? 'text-blue-600 dark:text-blue-400'
+                : 'text-muted-foreground'
+            } ${isMemoryToggleLocked ? 'opacity-60 cursor-not-allowed' : ''}`}
+          >
+            <HugeiconsIcon icon={BrainIcon} className="h-4 w-4" />
+            <span className="text-xs font-medium">Memory</span>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+              isMemoryActive
+                ? 'bg-blue-500/20 text-blue-600 dark:text-blue-400'
+                : 'bg-muted text-muted-foreground'
+            }`}>
+              {isMemoryActive ? 'ON' : 'OFF'}
+            </span>
+          </button>
+
+          {isMemoryToggleLocked && (
+            <span className="text-[10px] text-muted-foreground hidden sm:inline">
+              Locked after the first message
+            </span>
+          )}
+
+          {/* Summarize Session — always available when there are messages */}
+          {messages.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setSessionRememberOpen(true)}
+              className="ml-auto text-xs font-medium px-2.5 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 active:bg-blue-500/30 transition-colors"
+            >
+              Summarize
+            </button>
+          )}
+        </div>
+      </div>
+      {/* Session-level Remember dialog */}
+      {sessionRememberOpen && (
+        <RememberDialog
+          open={sessionRememberOpen}
+          onClose={() => setSessionRememberOpen(false)}
+          defaultContent=""
+          sourceSessionId={sessionId}
+          workingDirectory={workingDirectory}
+          sessionMode
+        />
+      )}
       <MessageInput
         onSend={sendMessage}
         onCommand={handleCommand}

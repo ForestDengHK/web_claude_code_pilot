@@ -8,6 +8,7 @@ import {
   CodeIcon,
   Mic01Icon,
   Notification02Icon,
+  BrainIcon,
 } from "@hugeicons/core-free-icons";
 import { Plug01Icon } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
@@ -16,8 +17,9 @@ import { ProviderManager } from "./ProviderManager";
 import { CliSettingsSection } from "./CliSettingsSection";
 import { SttSection } from "./SttSection";
 import NotificationSection from "./NotificationSection";
+import { MemorySection } from "./MemorySection";
 
-type Section = "general" | "providers" | "cli" | "stt" | "notifications";
+type Section = "general" | "providers" | "cli" | "stt" | "notifications" | "memory";
 
 interface SidebarItem {
   id: Section;
@@ -28,6 +30,7 @@ interface SidebarItem {
 const sidebarItems: SidebarItem[] = [
   { id: "general", label: "General", icon: Settings02Icon },
   { id: "providers", label: "Providers", icon: Plug01Icon },
+  { id: "memory", label: "Memory", icon: BrainIcon },
   { id: "cli", label: "Claude CLI", icon: CodeIcon },
   { id: "stt", label: "Voice Input", icon: Mic01Icon },
   { id: "notifications", label: "Notifications", icon: Notification02Icon },
@@ -108,6 +111,7 @@ export function SettingsLayout() {
         <div className="flex-1 overflow-auto p-4 md:p-6">
           {activeSection === "general" && <GeneralSection />}
           {activeSection === "providers" && <ProviderManager />}
+          {activeSection === "memory" && <MemorySection />}
           {activeSection === "cli" && <CliSettingsSection />}
           {activeSection === "stt" && <SttSection />}
           {activeSection === "notifications" && <NotificationSection />}

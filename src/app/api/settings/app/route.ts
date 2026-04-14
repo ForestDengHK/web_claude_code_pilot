@@ -20,6 +20,7 @@ const ALLOWED_KEYS = [
   'tts_voice_en',
   'tts_voice_zh',
   'tts_voice_mixed',
+  'memory_enabled',
 ];
 
 export async function GET() {

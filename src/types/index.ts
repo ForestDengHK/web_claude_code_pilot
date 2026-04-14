@@ -24,6 +24,50 @@ export interface ChatSession {
   branch_summary?: string | null;
   branch_source_session_id?: string | null;
   git_branch?: string | null;
+  memory_enabled?: number | null; // NULL = use global default, 0 = off, 1 = on
+  memory_injected_at?: string | null;
+}
+
+// ==========================================
+// Memory System Types
+// ==========================================
+
+export interface MemoryItem {
+  id: string;
+  scope: 'user' | 'project';
+  scope_key: string | null;
+  type: 'memory' | 'skill';
+  content: string;
+  description: string | null;
+  source_session_id: string | null;
+  pinned: number; // SQLite boolean: 0 or 1
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateMemoryRequest {
+  scope: 'user' | 'project';
+  type: 'memory' | 'skill';
+  content: string;
+  scope_key?: string;
+  description?: string;
+  source_session_id?: string;
+  pinned?: boolean;
+}
+
+export interface UpdateMemoryRequest {
+  content?: string;
+  description?: string;
+  pinned?: boolean;
+  type?: 'memory' | 'skill';
+}
+
+export interface MemoriesResponse {
+  memories: MemoryItem[];
+}
+
+export interface MemoryResponse {
+  memory: MemoryItem;
 }
 
 // ==========================================

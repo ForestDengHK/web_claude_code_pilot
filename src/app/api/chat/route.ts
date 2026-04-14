@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
-import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting } from '@/lib/db';
+import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected } from '@/lib/db';
 import { sendPushNotification } from '@/lib/push-notifications';
 import { detectBackendSwitch, buildIncrementalBridge } from '@/lib/context-bridge';
 import { registerAbort, registerQuery, unregisterAbort } from '@/lib/abort-registry';
@@ -181,6 +181,15 @@ export async function POST(request: NextRequest) {
     if (contextBridgePrompt) {
       effectivePrompt = `${contextBridgePrompt}\n\n---\n\n${effectivePrompt}`;
     }
+
+    // Inject memory context at most once per session, regardless of backend switches.
+    if (!hasSessionInjectedMemory(session_id) && isMemoryEnabled(session_id) && session.working_directory) {
+      const memoryContext = buildMemoryContext(session.working_directory);
+      if (memoryContext) {
+        effectivePrompt = `${memoryContext}\n\n---\n\n${effectivePrompt}`;
+        markSessionMemoryInjected(session_id);
+      }
+    }
     const stream = streamClaude({
       prompt: effectivePrompt,
       sessionId: session_id,
@@ -251,6 +260,18 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
       .map(b => b.text)
       .join('')
       .trim();
+  }
+
+  function hasToolUseBlock(toolId: string): boolean {
+    return contentBlocks.some(
+      (block) => block.type === 'tool_use' && block.id === toolId,
+    );
+  }
+
+  function hasToolResultBlock(toolUseId: string): boolean {
+    return contentBlocks.some(
+      (block) => block.type === 'tool_result' && block.tool_use_id === toolUseId,
+    );
   }
 
   /** Save or update draft in DB. */
@@ -324,12 +345,14 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
               }
               try {
                 const toolData = JSON.parse(event.data);
-                contentBlocks.push({
-                  type: 'tool_use',
-                  id: toolData.id,
-                  name: toolData.name,
-                  input: toolData.input,
-                });
+                if (!hasToolUseBlock(toolData.id)) {
+                  contentBlocks.push({
+                    type: 'tool_use',
+                    id: toolData.id,
+                    name: toolData.name,
+                    input: toolData.input,
+                  });
+                }
                 pushStreamToolUse(sessionId, {
                   id: toolData.id,
                   name: toolData.name,
@@ -341,12 +364,14 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
             } else if (event.type === 'tool_result') {
               try {
                 const resultData = JSON.parse(event.data);
-                contentBlocks.push({
-                  type: 'tool_result',
-                  tool_use_id: resultData.tool_use_id,
-                  content: resultData.content,
-                  is_error: resultData.is_error || false,
-                });
+                if (!hasToolResultBlock(resultData.tool_use_id)) {
+                  contentBlocks.push({
+                    type: 'tool_result',
+                    tool_use_id: resultData.tool_use_id,
+                    content: resultData.content,
+                    is_error: resultData.is_error || false,
+                  });
+                }
                 pushStreamToolResult(sessionId, {
                   tool_use_id: resultData.tool_use_id,
                   content: resultData.content,

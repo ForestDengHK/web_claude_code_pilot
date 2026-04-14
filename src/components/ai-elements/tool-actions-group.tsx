@@ -348,7 +348,7 @@ export function ToolActionsGroup({
                   const status = getStatus(tool, isStreaming);
                   const showImage = category === 'write' && filePath && isImagePath(filePath) && status !== 'running';
                   return (
-                    <div key={tool.id || `tool-${i}`}>
+                    <div key={`${tool.id || 'tool'}-${i}`}>
                       <ToolActionRow tool={tool} isStreaming={isStreaming} />
                       {showImage && <ImagePreview filePath={filePath} />}
                     </div>

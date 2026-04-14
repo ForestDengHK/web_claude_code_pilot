@@ -10,8 +10,9 @@ import {
 import { ToolActionsGroup } from '@/components/ai-elements/tool-actions-group';
 import { CopyIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon } from 'lucide-react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Bookmark02Icon } from '@hugeicons/core-free-icons';
+import { Bookmark02Icon, BrainIcon } from '@hugeicons/core-free-icons';
 import { usePanel } from '@/hooks/usePanel';
+import { RememberDialog } from './RememberDialog';
 import { DownloadMenu } from './DownloadMenu';
 import { FileAttachmentDisplay } from './FileAttachmentDisplay';
 import { TTSButton } from './TTSButton';
@@ -293,7 +294,8 @@ function StoredThinkingBlock({ content }: { content: string }) {
 const COLLAPSE_HEIGHT = 300;
 
 export function MessageItem({ message, searchQuery, isLatestMessage }: MessageItemProps) {
-  const { sessionTitle } = usePanel();
+  const { sessionTitle, workingDirectory } = usePanel();
+  const [rememberDialogOpen, setRememberDialogOpen] = useState(false);
 
   // Build filename base for downloads: {sessionTitle}-{YYYY-MM-DD-HH-mm}
   const filenameBase = (() => {
@@ -556,6 +558,15 @@ export function MessageItem({ message, searchQuery, isLatestMessage }: MessageIt
               />
             </button>
           )}
+          {!isUser && (
+            <button
+              onClick={() => setRememberDialogOpen(true)}
+              className="p-0.5 rounded text-muted-foreground/50 hover:text-blue-500 transition-colors"
+              title="Remember this"
+            >
+              <HugeiconsIcon icon={BrainIcon} size={14} />
+            </button>
+          )}
           {!isUser && displayText && (
             <TTSButton messageId={`msg-${message.id}`} text={displayText} />
           )}
@@ -565,6 +576,17 @@ export function MessageItem({ message, searchQuery, isLatestMessage }: MessageIt
           )}
         </div>
       </div>
+
+      {/* Remember dialog */}
+      {rememberDialogOpen && (
+        <RememberDialog
+          open={rememberDialogOpen}
+          onClose={() => setRememberDialogOpen(false)}
+          defaultContent={displayText?.slice(0, 500) || ''}
+          sourceSessionId={message.session_id}
+          workingDirectory={workingDirectory}
+        />
+      )}
     </AIMessage>
   );
 }

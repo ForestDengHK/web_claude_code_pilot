@@ -3,7 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
-import type { ChatSession, Message, SettingsMap, TaskItem, TaskStatus, ApiProvider, CreateProviderRequest, UpdateProviderRequest } from '@/types';
+import type { ChatSession, Message, SettingsMap, TaskItem, TaskStatus, ApiProvider, CreateProviderRequest, UpdateProviderRequest, MemoryItem } from '@/types';
 
 /**
  * Extract searchable plain text from a message content string.
@@ -253,6 +253,9 @@ function migrateDb(db: Database.Database): void {
   if (!colNames.includes('git_branch')) {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN git_branch TEXT");
   }
+  if (!colNames.includes('memory_injected_at')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN memory_injected_at TEXT");
+  }
 
   const msgColumns = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[];
   const msgColNames = msgColumns.map(c => c.name);
@@ -369,6 +372,29 @@ function migrateDb(db: Database.Database): void {
       last_seen   INTEGER NOT NULL
     )
   `);
+
+  // Memory system: persistent knowledge extracted from conversations
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memories (
+      id                TEXT PRIMARY KEY,
+      scope             TEXT NOT NULL CHECK(scope IN ('user', 'project')),
+      scope_key         TEXT,
+      type              TEXT NOT NULL DEFAULT 'memory' CHECK(type IN ('memory', 'skill')),
+      content           TEXT NOT NULL,
+      description       TEXT,
+      source_session_id TEXT,
+      pinned            INTEGER NOT NULL DEFAULT 0,
+      created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope, scope_key);
+    CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
+  `);
+
+  // Memory-enabled toggle per session
+  if (!colNames.includes('memory_enabled')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN memory_enabled INTEGER DEFAULT NULL");
+  }
 }
 
 // ==========================================
@@ -494,6 +520,12 @@ export function updateSessionAdvisorModel(id: string, advisorModel: string | nul
 export function updateSessionGitBranch(id: string, gitBranch: string | null): void {
   const db = getDb();
   db.prepare('UPDATE chat_sessions SET git_branch = ? WHERE id = ?').run(gitBranch, id);
+}
+
+export function markSessionMemoryInjected(id: string): void {
+  const db = getDb();
+  const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+  db.prepare('UPDATE chat_sessions SET memory_injected_at = ? WHERE id = ?').run(now, id);
 }
 
 // ==========================================
@@ -1141,6 +1173,192 @@ export function getSessionHeadTailMessages(
   tail.reverse();
 
   return { messages: [...head, ...tail], totalCount };
+}
+
+// ==========================================
+// Memory System Operations
+// ==========================================
+
+export function getMemories(
+  scope?: 'user' | 'project',
+  scopeKey?: string,
+  type?: 'memory' | 'skill',
+): MemoryItem[] {
+  const db = getDb();
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  if (scope) {
+    conditions.push('scope = ?');
+    params.push(scope);
+  }
+  if (scopeKey !== undefined) {
+    conditions.push('scope_key = ?');
+    params.push(scopeKey);
+  }
+  if (type) {
+    conditions.push('type = ?');
+    params.push(type);
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  return db.prepare(
+    `SELECT * FROM memories ${where} ORDER BY pinned DESC, updated_at DESC`
+  ).all(...params) as MemoryItem[];
+}
+
+export function getMemory(id: string): MemoryItem | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM memories WHERE id = ?').get(id) as MemoryItem | undefined;
+}
+
+export function createMemory(
+  scope: 'user' | 'project',
+  type: 'memory' | 'skill',
+  content: string,
+  options?: {
+    scopeKey?: string;
+    description?: string;
+    sourceSessionId?: string;
+    pinned?: boolean;
+  },
+): MemoryItem {
+  const db = getDb();
+  const id = crypto.randomBytes(16).toString('hex');
+  const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+
+  db.prepare(
+    'INSERT INTO memories (id, scope, scope_key, type, content, description, source_session_id, pinned, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(
+    id,
+    scope,
+    options?.scopeKey ?? null,
+    type,
+    content,
+    options?.description ?? null,
+    options?.sourceSessionId ?? null,
+    options?.pinned ? 1 : 0,
+    now,
+    now,
+  );
+
+  return getMemory(id)!;
+}
+
+export function updateMemory(
+  id: string,
+  updates: { content?: string; description?: string; pinned?: boolean; type?: 'memory' | 'skill' },
+): MemoryItem | undefined {
+  const db = getDb();
+  const existing = getMemory(id);
+  if (!existing) return undefined;
+
+  const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+  const content = updates.content ?? existing.content;
+  const description = updates.description !== undefined ? updates.description : existing.description;
+  const pinned = updates.pinned !== undefined ? (updates.pinned ? 1 : 0) : existing.pinned;
+  const type = updates.type ?? existing.type;
+
+  db.prepare(
+    'UPDATE memories SET content = ?, description = ?, pinned = ?, type = ?, updated_at = ? WHERE id = ?'
+  ).run(content, description, pinned, type, now, id);
+
+  return getMemory(id);
+}
+
+export function deleteMemory(id: string): boolean {
+  const db = getDb();
+  const result = db.prepare('DELETE FROM memories WHERE id = ?').run(id);
+  return result.changes > 0;
+}
+
+/**
+ * Build a memory context string to inject into Claude conversations.
+ * Follows the Hermes Agent pattern:
+ * - Memories injected as full entries (they are short facts)
+ * - Skills injected as a compact index (name + description only)
+ *
+ * Returns null if no memories/skills exist.
+ */
+export function buildMemoryContext(workingDirectory: string): string | null {
+  const userMemories = getMemories('user', undefined, 'memory');
+  const projectMemories = getMemories('project', workingDirectory, 'memory');
+  const userSkills = getMemories('user', undefined, 'skill');
+  const projectSkills = getMemories('project', workingDirectory, 'skill');
+
+  const parts: string[] = [];
+
+  // Memory entries — injected in full (they are short facts)
+  const allMemories = [...userMemories, ...projectMemories];
+  if (allMemories.length > 0) {
+    const projectName = path.basename(workingDirectory);
+    const totalChars = allMemories.reduce((sum, m) => sum + m.content.length, 0);
+    const maxChars = 3000;
+
+    parts.push(
+      `<memory-context>\n` +
+      `[CodePilot Memory — ${projectName}] [${Math.round(totalChars / maxChars * 100)}% — ${totalChars}/${maxChars} chars]\n` +
+      `These are recalled facts from previous sessions. Treat as background context.\n\n` +
+      allMemories.map(m => {
+        const prefix = m.scope === 'user' ? '' : `[${projectName}] `;
+        return `${prefix}${m.content}`;
+      }).join('\n§\n') +
+      `\n</memory-context>`
+    );
+  }
+
+  // Skills — injected as index only (name + description)
+  const allSkills = [...userSkills, ...projectSkills];
+  if (allSkills.length > 0) {
+    // Extract name and description from SKILL.md frontmatter or use the description field
+    const skillLines = allSkills.map(s => {
+      const desc = s.description || s.content.split('\n')[0]?.replace(/^#\s*/, '') || 'No description';
+      // Truncate to keep index compact
+      return `- ${desc.slice(0, 120)}`;
+    });
+
+    parts.push(
+      `<available-skills>\n` +
+      `[CodePilot Skills] The following reusable procedures are available.\n` +
+      `If a skill is relevant to the current task, tell the user "I found a relevant skill" ` +
+      `and the user can provide its full content.\n\n` +
+      skillLines.join('\n') +
+      `\n</available-skills>`
+    );
+  }
+
+  if (parts.length === 0) return null;
+  return parts.join('\n\n');
+}
+
+/**
+ * Check if memory injection is enabled for a given session.
+ * Session-level setting (memory_enabled) overrides the global default.
+ */
+export function isMemoryEnabled(sessionId: string): boolean {
+  const session = getSession(sessionId);
+  if (!session) return false;
+
+  // Session-level override: NULL = use global default, 0 = off, 1 = on
+  if (session.memory_enabled !== null && session.memory_enabled !== undefined) {
+    return session.memory_enabled === 1;
+  }
+
+  // Global default from settings
+  const globalSetting = getSetting('memory_enabled');
+  return globalSetting === 'true';
+}
+
+export function hasSessionInjectedMemory(sessionId: string): boolean {
+  const session = getSession(sessionId);
+  if (!session) return false;
+  return !!session.memory_injected_at;
+}
+
+export function updateSessionMemoryEnabled(id: string, enabled: boolean | null): void {
+  const db = getDb();
+  const value = enabled === null ? null : (enabled ? 1 : 0);
+  db.prepare('UPDATE chat_sessions SET memory_enabled = ? WHERE id = ?').run(value, id);
 }
 
 // ==========================================

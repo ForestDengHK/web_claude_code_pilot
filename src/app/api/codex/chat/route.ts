@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { streamCodex, type CodexSkillRef } from '@/lib/codex-client';
 import { detectBackendSwitch, buildIncrementalBridge } from '@/lib/context-bridge';
-import { addMessage, getSession, updateSessionTitle } from '@/lib/db';
+import { addMessage, getSession, updateSessionTitle, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected } from '@/lib/db';
 import { sendPushNotification } from '@/lib/push-notifications';
 import { registerAbort, unregisterAbort } from '@/lib/abort-registry';
 import {
@@ -142,15 +142,35 @@ export async function POST(request: NextRequest) {
       : undefined;
 
     // Stream Codex response
+    let effectivePrompt = prompt || content;
+
+    // Inject branch summary on the first turn of a branched session.
+    if (session.branch_summary && !session.codex_thread_id) {
+      effectivePrompt = `[Context from previous conversation]\n---\n${session.branch_summary}\n---\n\n${effectivePrompt}`;
+    }
+
+    if (contextBridgePrompt) {
+      effectivePrompt = `${contextBridgePrompt}\n\n---\n\n${effectivePrompt}`;
+    }
+
+    // Inject memory context at most once per session, regardless of backend switches.
+    if (!hasSessionInjectedMemory(session_id) && isMemoryEnabled(session_id) && session.working_directory) {
+      const memoryContext = buildMemoryContext(session.working_directory);
+      if (memoryContext) {
+        effectivePrompt = `${memoryContext}\n\n---\n\n${effectivePrompt}`;
+        markSessionMemoryInjected(session_id);
+      }
+    }
+
     const stream = streamCodex({
-      prompt: prompt || content,
+      prompt: effectivePrompt,
       sessionId: session_id,
       codexThreadId: session.codex_thread_id || undefined,
       model: effectiveModel,
       workingDirectory: session.working_directory || undefined,
       abortController,
       files: fileAttachments,
-      contextBridgePrompt,
+      contextBridgePrompt: undefined,
       effort: effort || undefined,
       skills: codexSkills,
       skipPermissions: session.skip_permissions === 1,
@@ -191,6 +211,18 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
   // status endpoint can return intermediate output to the client.
   initStreamBuffer(sessionId);
 
+  function hasToolUseBlock(toolId: string): boolean {
+    return contentBlocks.some(
+      (block) => block.type === 'tool_use' && block.id === toolId,
+    );
+  }
+
+  function hasToolResultBlock(toolUseId: string): boolean {
+    return contentBlocks.some(
+      (block) => block.type === 'tool_result' && block.tool_use_id === toolUseId,
+    );
+  }
+
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -227,12 +259,14 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
               }
               try {
                 const toolData = JSON.parse(event.data);
-                contentBlocks.push({
-                  type: 'tool_use',
-                  id: toolData.id,
-                  name: toolData.name,
-                  input: toolData.input,
-                });
+                if (!hasToolUseBlock(toolData.id)) {
+                  contentBlocks.push({
+                    type: 'tool_use',
+                    id: toolData.id,
+                    name: toolData.name,
+                    input: toolData.input,
+                  });
+                }
                 pushStreamToolUse(sessionId, {
                   id: toolData.id,
                   name: toolData.name,
@@ -244,12 +278,14 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
             } else if (event.type === 'tool_result') {
               try {
                 const resultData = JSON.parse(event.data);
-                contentBlocks.push({
-                  type: 'tool_result',
-                  tool_use_id: resultData.tool_use_id,
-                  content: resultData.content,
-                  is_error: resultData.is_error || false,
-                });
+                if (!hasToolResultBlock(resultData.tool_use_id)) {
+                  contentBlocks.push({
+                    type: 'tool_result',
+                    tool_use_id: resultData.tool_use_id,
+                    content: resultData.content,
+                    is_error: resultData.is_error || false,
+                  });
+                }
                 pushStreamToolResult(sessionId, {
                   tool_use_id: resultData.tool_use_id,
                   content: resultData.content,
