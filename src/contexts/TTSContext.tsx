@@ -55,6 +55,14 @@ export function TTSProvider({ children }: { children: ReactNode }) {
   const chunkIndexRef = useRef(0);
   const segmentMapRef = useRef<Array<{ chunkIdx: number; localIdx: number }>>([]);
 
+  // Streaming state refs
+  const streamingDoneRef = useRef(true);
+  const pendingPlayIndexRef = useRef<number | null>(null);
+
+  // Mirror state into a ref for use in event handlers (avoids stale closures)
+  const stateRef = useRef<TTSState>('idle');
+  useEffect(() => { stateRef.current = state; }, [state]);
+
   // Segment tracking
   const segmentIndexRef = useRef(-1);
   const intervalRef = useRef<ReturnType<typeof setInterval>>(undefined);
@@ -66,6 +74,24 @@ export function TTSProvider({ children }: { children: ReactNode }) {
       clearInterval(intervalRef.current);
       if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
     };
+  }, []);
+
+  // ── Mobile: resume audio when returning from background ──
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState !== 'visible') return;
+      const audio = audioRef.current;
+      if (!audio) return;
+
+      // Resume if we were playing but the OS paused the audio
+      if (stateRef.current === 'playing' && audio.paused) {
+        audio.play().catch(() => {
+          // If play fails (gesture required), user can tap resume
+        });
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, []);
 
   const startSegmentTracking = useCallback(() => {
@@ -110,6 +136,7 @@ export function TTSProvider({ children }: { children: ReactNode }) {
     chunksRef.current = [];
     chunkIndexRef.current = 0;
     segmentMapRef.current = [];
+    pendingPlayIndexRef.current = null;
     setSegments([]);
     if (blobUrlRef.current) {
       URL.revokeObjectURL(blobUrlRef.current);
@@ -120,6 +147,7 @@ export function TTSProvider({ children }: { children: ReactNode }) {
   const stopAudio = useCallback(() => {
     abortRef.current?.abort();
     stopSegmentTracking();
+    pendingPlayIndexRef.current = null;
     if (audioRef.current) {
       audioRef.current.onended = null;
       audioRef.current.onerror = null;
@@ -137,10 +165,18 @@ export function TTSProvider({ children }: { children: ReactNode }) {
   const playChunk = useCallback((index: number) => {
     const chunks = chunksRef.current;
     if (index >= chunks.length) {
-      resetState();
+      if (streamingDoneRef.current) {
+        // All chunks played and streaming finished
+        resetState();
+      } else {
+        // Still streaming — wait for the next chunk to arrive
+        pendingPlayIndexRef.current = index;
+        // Keep state as 'playing' so UI doesn't flash; audio is just briefly silent
+      }
       return;
     }
 
+    pendingPlayIndexRef.current = null;
     chunkIndexRef.current = index;
     const chunk = chunks[index];
     const audio = audioRef.current!;
@@ -170,6 +206,7 @@ export function TTSProvider({ children }: { children: ReactNode }) {
 
   /** Load cached data into refs and state, then start playback */
   const startFromCache = useCallback((messageId: string, cached: CachedTTS) => {
+    streamingDoneRef.current = true;
     chunksRef.current = cached.chunks;
     segmentMapRef.current = cached.segmentMap;
     setSegments(cached.allSegments);
@@ -189,6 +226,8 @@ export function TTSProvider({ children }: { children: ReactNode }) {
     setActiveSegmentIndex(-1);
     segmentIndexRef.current = -1;
     chunkIndexRef.current = 0;
+    streamingDoneRef.current = false;
+    pendingPlayIndexRef.current = null;
 
     // ── Cache hit: instant replay ──
     const cached = ttsCache.get(messageId);
@@ -201,7 +240,7 @@ export function TTSProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // ── Cache miss: fetch from API ──
+    // ── Cache miss: streaming fetch with progressive playback ──
     const controller = new AbortController();
     abortRef.current = controller;
 
@@ -219,47 +258,119 @@ export function TTSProvider({ children }: { children: ReactNode }) {
     audio.src = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0VAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA/+M4wAAAAAAAAAAAAEluZm8AAAAPAAAAAwAAAbAAqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV////////////////////////////////////////////AAAAAExhdmM1OC4xMwAAAAAAAAAAAAAAACQAAAAAAAAAAAGwRGNS8QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/+M4wAAKiAHIAAAAADFciFAIBAEB4PB4PBAEAQOf/g+D4f/WD4f/5cHw//y4Ph///BAKAICgoP/+D4f/+XB8P//5QfD////ygIAgGBQb/+M4wB0AAAAH/EAAAAD8HwfB8Hw//DLMstBlwEQBAAAAA7TBcM0wPaJbNF8zOhCXP/oRUxqAwNEbJE0N4jxODGo/TKJvTP/+M4wHYAAADSAAAAAO3aA5NSgNDKRSEjxJiUJMYGBkDCRp85kcI1Aot9w8xFYk6HFHt0hOpP//TGa6f///qjJBQmP/iaHh/+M4wLAAAANIAAAAAP///yNEBQT///3///LigoJ//1DhEjv////8jRNf///////yx4eH//+IhIoMAAADSAAAAAAAA';
     audio.play().catch(() => {});
 
-    fetch('/api/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-      signal: controller.signal,
-    })
-      .then(res => {
-        if (!res.ok) return res.json().then(e => { throw new Error(e.error || 'TTS failed'); });
-        return res.json();
-      })
-      .then(data => {
-        const { chunks } = data;
+    // Read NDJSON stream — play first chunk immediately, accumulate rest
+    (async () => {
+      let firstChunkStarted = false;
+      const allChunks: TTSChunk[] = [];
+      const allSegs: TTSTimedSegment[] = [];
+      const map: Array<{ chunkIdx: number; localIdx: number }> = [];
 
-        // Build flattened segments + mapping
-        const allSegs: TTSTimedSegment[] = [];
-        const map: Array<{ chunkIdx: number; localIdx: number }> = [];
-        for (let ci = 0; ci < chunks.length; ci++) {
-          for (let si = 0; si < chunks[ci].segments.length; si++) {
-            allSegs.push(chunks[ci].segments[si]);
-            map.push({ chunkIdx: ci, localIdx: si });
+      try {
+        const response = await fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({ error: 'TTS failed' }));
+          throw new Error(err.error || 'TTS failed');
+        }
+
+        const reader = response.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop()!; // Keep incomplete line in buffer
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const parsed = JSON.parse(line);
+
+            // Server may send an error line on synthesis failure
+            if (parsed.error) {
+              throw new Error(parsed.error);
+            }
+
+            const chunk: TTSChunk = parsed;
+            const chunkIdx = allChunks.length;
+            allChunks.push(chunk);
+
+            for (let si = 0; si < chunk.segments.length; si++) {
+              allSegs.push(chunk.segments[si]);
+              map.push({ chunkIdx, localIdx: si });
+            }
+
+            // Update refs so playChunk can access new chunks
+            chunksRef.current = allChunks.slice();
+            segmentMapRef.current = map.slice();
+            setSegments(allSegs.slice());
+
+            if (!firstChunkStarted) {
+              firstChunkStarted = true;
+              playChunk(0);
+            } else {
+              // If playback was waiting for this chunk, trigger it
+              const pending = pendingPlayIndexRef.current;
+              if (pending !== null && pending < allChunks.length) {
+                pendingPlayIndexRef.current = null;
+                playChunk(pending);
+              }
+            }
           }
         }
 
-        // Store in cache for instant replay
-        ttsCache.set(messageId, { chunks, allSegments: allSegs, segmentMap: map });
+        // Streaming complete — cache the full result
+        streamingDoneRef.current = true;
+        if (allChunks.length > 0) {
+          ttsCache.set(messageId, { chunks: allChunks, allSegments: allSegs, segmentMap: map });
+        }
 
-        chunksRef.current = chunks;
-        segmentMapRef.current = map;
-        setSegments(allSegs);
+        // If playback was waiting and we have the chunk, play it; otherwise finish
+        const pending = pendingPlayIndexRef.current;
+        if (pending !== null) {
+          pendingPlayIndexRef.current = null;
+          if (pending < allChunks.length) {
+            playChunk(pending);
+          } else {
+            resetState();
+          }
+        }
 
-        setState('playing');
-        playChunk(0);
-      })
-      .catch(err => {
-        if (err.name !== 'AbortError') {
-          console.error('TTS error:', err);
+      } catch (err: unknown) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+
+        console.error('TTS streaming error:', err);
+
+        // Mark streaming as done so playback won't wait for more chunks
+        streamingDoneRef.current = true;
+
+        if (allChunks.length > 0 && firstChunkStarted) {
+          // We already have chunks playing — let playback continue with what we got.
+          // Partial cache (better than nothing for replay).
+          ttsCache.set(messageId, { chunks: allChunks, allSegments: allSegs, segmentMap: map });
+
+          // If playback was waiting for a chunk that won't arrive, reset
+          const pending = pendingPlayIndexRef.current;
+          if (pending !== null && pending >= allChunks.length) {
+            pendingPlayIndexRef.current = null;
+            // Current audio will end naturally → playChunk(next) → resetState
+          }
+        } else {
+          // No chunks received at all — reset to idle
           setState('idle');
           setActiveMessageId(null);
         }
-      });
-  }, [stopAudio, playChunk, startFromCache]);
+      }
+    })();
+  }, [stopAudio, playChunk, startFromCache, resetState]);
 
   const pause = useCallback(() => {
     audioRef.current?.pause();

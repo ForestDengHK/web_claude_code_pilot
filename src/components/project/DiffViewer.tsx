@@ -119,12 +119,13 @@ export function DiffViewer({
   const nonEmpty = lines.some((l) => l.type === "add" || l.type === "remove");
 
   return (
-    <aside
+    <div
+      data-mobile-overlay=""
       style={{ width }}
       className={cn(
-        "flex flex-col overflow-hidden bg-background border-l",
-        "fixed inset-x-0 top-0 bottom-14 z-50",
-        "md:static md:inset-auto md:z-auto md:h-full md:shrink-0"
+        "flex flex-col overflow-hidden bg-background",
+        "fixed inset-0 z-[60]",
+        "md:static md:inset-auto md:z-auto md:h-full md:shrink-0 md:border-l md:border-border/40"
       )}
     >
       {/* Header */}
@@ -183,6 +184,6 @@ export function DiffViewer({
           </div>
         </ScrollArea>
       )}
-    </aside>
+    </div>
   );
 }

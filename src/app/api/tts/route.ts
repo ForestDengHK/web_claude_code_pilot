@@ -7,7 +7,7 @@ import { randomBytes } from 'crypto';
 import { stripMarkdown } from '@/lib/tts/strip-markdown';
 import { parseSRT } from '@/lib/tts/parse-srt';
 import { getSetting } from '@/lib/db';
-import type { TTSChunk, TTSResponse } from '@/lib/tts/types';
+import type { TTSChunk } from '@/lib/tts/types';
 
 const MAX_TEXT_LENGTH = 100000;
 // Target chunk size in characters (~2-4 seconds of audio each)
@@ -147,29 +147,64 @@ export async function POST(request: NextRequest) {
   const textChunks = splitIntoChunks(plain);
   const batchId = randomBytes(4).toString('hex');
 
-  // Synthesize chunks with limited concurrency to avoid overwhelming edge-tts
+  // Stream NDJSON: one JSON line per synthesized chunk.
+  // First chunk is synthesized alone for fast playback startup,
+  // then remaining chunks are batched for throughput.
   const MAX_CONCURRENT = 5;
-  try {
-    const results: TTSChunk[] = [];
-    for (let start = 0; start < textChunks.length; start += MAX_CONCURRENT) {
-      const batch = textChunks.slice(start, start + MAX_CONCURRENT);
-      const batchResults = await Promise.all(
-        batch.map((chunk, j) => {
-          const i = start + j;
-          const id = `${batchId}-${i}`;
-          const textPath = join(tmpdir(), `codepilot-tts-${id}.txt`);
-          const srtPath = join(tmpdir(), `codepilot-tts-${id}.srt`);
-          return synthesizeChunk(chunk, voice, textPath, srtPath);
-        })
-      );
-      results.push(...batchResults);
-    }
-    const response: TTSResponse = { chunks: results };
-    return NextResponse.json(response);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'TTS synthesis failed';
-    return NextResponse.json({ error: msg }, { status: 500 });
-  }
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      try {
+        // Synthesize first chunk alone → client can start playing in ~2-3s
+        const firstId = `${batchId}-0`;
+        const firstResult = await synthesizeChunk(
+          textChunks[0], voice,
+          join(tmpdir(), `codepilot-tts-${firstId}.txt`),
+          join(tmpdir(), `codepilot-tts-${firstId}.srt`),
+        );
+        controller.enqueue(encoder.encode(JSON.stringify(firstResult) + '\n'));
+
+        // Batch remaining chunks with concurrency limit
+        for (let start = 1; start < textChunks.length; start += MAX_CONCURRENT) {
+          // Abort early if client disconnected
+          if (request.signal.aborted) break;
+
+          const batch = textChunks.slice(start, start + MAX_CONCURRENT);
+          const batchResults = await Promise.all(
+            batch.map((chunk, j) => {
+              const i = start + j;
+              const id = `${batchId}-${i}`;
+              return synthesizeChunk(
+                chunk, voice,
+                join(tmpdir(), `codepilot-tts-${id}.txt`),
+                join(tmpdir(), `codepilot-tts-${id}.srt`),
+              );
+            })
+          );
+          for (const result of batchResults) {
+            controller.enqueue(encoder.encode(JSON.stringify(result) + '\n'));
+          }
+        }
+
+        controller.close();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'TTS synthesis failed';
+        try {
+          controller.enqueue(encoder.encode(JSON.stringify({ error: msg }) + '\n'));
+        } catch { /* controller may already be closed */ }
+        try { controller.close(); } catch { /* ignore */ }
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'application/x-ndjson',
+      'Cache-Control': 'no-cache',
+      'X-Accel-Buffering': 'no', // Prevent proxy buffering
+    },
+  });
 }
 
 async function synthesizeChunk(
