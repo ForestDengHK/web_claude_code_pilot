@@ -118,8 +118,32 @@ function groupSessionsByProject(sessions: ChatSession[]): ProjectGroup[] {
 export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const { streamingSessionId, pendingApprovalSessionId } = usePanel();
+  const { streamingSessionId, pendingApprovalSessionId, streamingSessions } = usePanel();
   const { syncStates, pullProject, pullAll, isAnyLoading } = useGitSync();
+
+  // Track recently completed sessions for fade-out "Done" indicator
+  const [recentlyCompleted, setRecentlyCompleted] = useState<Set<string>>(new Set());
+  const prevStreamingIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const currentIds = new Set(streamingSessions.keys());
+    const prevIds = prevStreamingIdsRef.current;
+
+    for (const id of prevIds) {
+      if (!currentIds.has(id)) {
+        setRecentlyCompleted(prev => new Set(prev).add(id));
+        setTimeout(() => {
+          setRecentlyCompleted(prev => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          });
+        }, 5000);
+      }
+    }
+    prevStreamingIdsRef.current = currentIds;
+  }, [streamingSessions]);
+
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [deletingSession, setDeletingSession] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -752,10 +776,12 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                           {visibleSessions.map((session) => {
                             const isActive = pathname === `/chat/${session.id}`;
                             const isDeleting = deletingSession === session.id;
-                            const isSessionStreaming =
-                              streamingSessionId === session.id;
-                            const needsApproval =
-                              pendingApprovalSessionId === session.id;
+                            const streamingInfo = streamingSessions.get(session.id);
+                            const isSessionStreaming = !!streamingInfo || streamingSessionId === session.id;
+                            const needsApproval = streamingInfo?.status === 'waiting_permission'
+                              || streamingInfo?.status === 'waiting_input'
+                              || pendingApprovalSessionId === session.id;
+                            const justCompleted = recentlyCompleted.has(session.id);
 
                             return (
                               <div
@@ -793,12 +819,24 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                                     <span className="line-clamp-1 text-[12px] font-medium leading-tight break-all">
                                       {session.title}
                                     </span>
+                                    {isSessionStreaming && streamingInfo && (
+                                      <span className="line-clamp-1 text-[10px] text-muted-foreground/60 leading-tight">
+                                        {streamingInfo.statusText}
+                                      </span>
+                                    )}
+                                    {justCompleted && !isSessionStreaming && (
+                                      <span className="text-[10px] text-green-500 leading-tight">
+                                        ✓ Done
+                                      </span>
+                                    )}
                                   </div>
-                                  <div className="flex items-center gap-1 shrink-0">
-                                    <span className="text-[10px] text-muted-foreground/40">
-                                      {formatRelativeTime(session.updated_at)}
-                                    </span>
-                                  </div>
+                                  {!isSessionStreaming && !justCompleted && (
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      <span className="text-[10px] text-muted-foreground/40">
+                                        {formatRelativeTime(session.updated_at)}
+                                      </span>
+                                    </div>
+                                  )}
                                 </Link>
                                 <Tooltip>
                                   <TooltipTrigger asChild>
