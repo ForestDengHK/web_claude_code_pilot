@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import type { Message, TokenUsage, FileAttachment } from '@/types';
+import type { Message, TokenUsage, FileAttachment, ViewMode } from '@/types';
 import {
   Message as AIMessage,
   MessageContent,
@@ -23,6 +23,7 @@ interface MessageItemProps {
   message: Message;
   searchQuery?: string;
   isLatestMessage?: boolean;
+  viewMode?: ViewMode;
 }
 
 interface ToolBlock {
@@ -293,7 +294,7 @@ function StoredThinkingBlock({ content }: { content: string }) {
 
 const COLLAPSE_HEIGHT = 300;
 
-export function MessageItem({ message, searchQuery, isLatestMessage }: MessageItemProps) {
+export function MessageItem({ message, searchQuery, isLatestMessage, viewMode = 'normal' }: MessageItemProps) {
   const { sessionTitle, workingDirectory } = usePanel();
   const [rememberDialogOpen, setRememberDialogOpen] = useState(false);
 
@@ -466,13 +467,13 @@ export function MessageItem({ message, searchQuery, isLatestMessage }: MessageIt
           <FileAttachmentDisplay files={files} />
         )}
 
-        {/* Thinking block for Codex messages */}
-        {!isUser && thinking && (
+        {/* Thinking block for Codex messages (hidden in summary mode) */}
+        {!isUser && thinking && viewMode !== 'summary' && (
           <StoredThinkingBlock content={thinking} />
         )}
 
-        {/* Tool calls for assistant messages — compact collapsible group */}
-        {!isUser && pairedTools.length > 0 && (
+        {/* Tool calls for assistant messages — compact collapsible group (hidden in summary mode) */}
+        {!isUser && pairedTools.length > 0 && viewMode !== 'summary' && (
           <ToolActionsGroup
             tools={pairedTools.map((tool, i) => ({
               id: `hist-${i}`,
@@ -482,6 +483,7 @@ export function MessageItem({ message, searchQuery, isLatestMessage }: MessageIt
               isError: tool.isError,
             }))}
             isLatestMessage={isLatestMessage}
+            viewMode={viewMode}
           />
         )}
 
@@ -536,7 +538,7 @@ export function MessageItem({ message, searchQuery, isLatestMessage }: MessageIt
         {!isUser && (
           <div className="flex min-w-0 items-center gap-2">
             <span className="text-xs text-muted-foreground/50">{timestamp}</span>
-            {tokenUsage && <TokenUsageDisplay usage={tokenUsage} />}
+            {tokenUsage && viewMode !== 'summary' && <TokenUsageDisplay usage={tokenUsage} />}
           </div>
         )}
 

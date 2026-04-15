@@ -1,14 +1,14 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import type { Message, MessagesResponse, PermissionRequestEvent, InputRequestEvent, FileAttachment } from '@/types';
+import type { Message, MessagesResponse, PermissionRequestEvent, InputRequestEvent, FileAttachment, ViewMode } from '@/types';
 import { MessageList } from './MessageList';
 import { BranchSummaryCard } from './BranchSummaryCard';
 import { MessageInput } from './MessageInput';
 import { SearchBar } from './SearchBar';
 import { SearchIcon } from 'lucide-react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Bookmark02Icon, BrainIcon, Cancel01Icon } from '@hugeicons/core-free-icons';
+import { Bookmark02Icon, BrainIcon, Cancel01Icon, ViewIcon, ViewOffSlashIcon, DashboardSquare01Icon } from '@hugeicons/core-free-icons';
 import { RememberDialog } from './RememberDialog';
 import { usePanel } from '@/hooks/usePanel';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
@@ -116,6 +116,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [memoryGlobalDefault, setMemoryGlobalDefault] = useState(false);
   const [sessionRememberOpen, setSessionRememberOpen] = useState(false);
 
+  // View mode: verbose | normal | summary
+  const [viewMode, setViewModeRaw] = useState<ViewMode>('normal');
+
   // Sync backend prop → state when parent loads session data after initial render
   useEffect(() => {
     if (backend) setCurrentBackendRaw(backend);
@@ -125,7 +128,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     if (advisorModel !== undefined) setCurrentAdvisorModelRaw(advisorModel || null);
   }, [advisorModel]);
 
-  // Fetch memory state from session and global settings
+  // Fetch memory state and view mode from session and global settings
   useEffect(() => {
     Promise.all([
       fetch(`/api/chat/sessions/${sessionId}`).then(r => r.ok ? r.json() : null),
@@ -134,6 +137,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       if (sessionData?.session) {
         const me = sessionData.session.memory_enabled;
         setMemoryEnabledRaw(me === null || me === undefined ? null : me === 1);
+        // Restore persisted view mode
+        const vm = sessionData.session.view_mode;
+        if (vm === 'verbose' || vm === 'normal' || vm === 'summary') {
+          setViewModeRaw(vm);
+        }
       }
       if (settingsData?.settings) {
         setMemoryGlobalDefault(settingsData.settings.memory_enabled === 'true');
@@ -151,6 +159,23 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       }).catch(() => { /* silent */ });
     }
   }, [sessionId]);
+
+  const setViewMode = useCallback((mode: ViewMode) => {
+    setViewModeRaw(mode);
+    if (sessionId) {
+      fetch(`/api/chat/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ view_mode: mode }),
+      }).catch(() => { /* silent */ });
+    }
+  }, [sessionId]);
+
+  const cycleViewMode = useCallback(() => {
+    const modes: ViewMode[] = ['normal', 'verbose', 'summary'];
+    const nextIndex = (modes.indexOf(viewMode) + 1) % modes.length;
+    setViewMode(modes[nextIndex]);
+  }, [viewMode, setViewMode]);
 
   // Effective memory state: session override > global default
   const isMemoryActive = memoryEnabled !== null ? memoryEnabled : memoryGlobalDefault;
@@ -1308,6 +1333,24 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         />
       ) : messages.length > 0 && (
         <div className="absolute top-2 right-2 z-10 flex flex-col items-center gap-1">
+          {/* View mode toggle */}
+          <button
+            type="button"
+            onClick={cycleViewMode}
+            className={`p-1.5 rounded-md backdrop-blur-sm border transition-colors ${
+              viewMode !== 'normal'
+                ? viewMode === 'verbose'
+                  ? 'bg-blue-500/20 border-blue-500/50 text-blue-500'
+                  : 'bg-purple-500/20 border-purple-500/50 text-purple-500'
+                : 'bg-background/80 border-border/50 text-muted-foreground hover:text-foreground hover:bg-muted'
+            }`}
+            title={`View: ${viewMode} (tap to cycle)`}
+          >
+            <HugeiconsIcon
+              icon={viewMode === 'verbose' ? ViewIcon : viewMode === 'summary' ? DashboardSquare01Icon : ViewOffSlashIcon}
+              size={14}
+            />
+          </button>
           <button
             type="button"
             onClick={() => setBookmarkFilterActive(!bookmarkFilterActive)}
@@ -1364,6 +1407,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         highlightMessageIds={highlightMessageIds}
         activeMessageId={activeMessageId}
         searchQuery={searchQuery}
+        viewMode={viewMode}
       />
       {/* Advisor Mode Bar — Claude backend only */}
       {currentBackend === 'claude' && (() => {

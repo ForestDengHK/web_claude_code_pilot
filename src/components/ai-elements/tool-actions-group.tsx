@@ -31,6 +31,7 @@ import {
   getToolSummary,
   isImagePath,
 } from '@/lib/tool-display';
+import type { ViewMode } from '@/types';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useLongPress } from '@/hooks/useLongPress';
 import { useCallback } from 'react';
@@ -68,6 +69,7 @@ interface ToolActionsGroupProps {
   isStreaming?: boolean;
   streamingToolOutput?: string;
   isLatestMessage?: boolean;
+  viewMode?: ViewMode;
 }
 
 function getToolIcon(category: ToolCategory): IconSvgElement {
@@ -244,6 +246,7 @@ export function ToolActionsGroup({
   tools,
   isStreaming = false,
   isLatestMessage = false,
+  viewMode = 'normal',
 }: ToolActionsGroupProps) {
   const hasRunningTool = isStreaming && tools.some((t) => t.result === undefined);
   const hasImageWrite = tools.some((t) => {
@@ -256,8 +259,12 @@ export function ToolActionsGroup({
   const [userExpandedState, setUserExpandedState] = useState<boolean | null>(null);
   const headerLongPress = useLongPress();
 
-  // Derived: if user has toggled, use their choice; otherwise auto-expand based on streaming state or image writes
-  const expanded = userExpandedState !== null ? userExpandedState : (hasRunningTool || isStreaming || hasImageWrite || isLatestMessage);
+  // Derived: user toggle > viewMode default > auto-expand logic
+  const expanded = userExpandedState !== null
+    ? userExpandedState
+    : viewMode === 'verbose'
+      ? true
+      : (hasRunningTool || isStreaming || hasImageWrite || isLatestMessage);
 
   if (tools.length === 0) return null;
 

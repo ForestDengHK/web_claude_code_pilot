@@ -3,7 +3,7 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import { useSearchParams } from 'next/navigation';
-import type { Message, PermissionRequestEvent, InputRequestEvent } from '@/types';
+import type { Message, PermissionRequestEvent, InputRequestEvent, ViewMode } from '@/types';
 import {
   Conversation,
   ConversationScrollButton,
@@ -43,6 +43,7 @@ interface VirtuosoContextData {
   onInputResponse?: (answers: Record<string, string>) => void;
   inputRequestResolved?: boolean;
   onForceStop?: () => void;
+  viewMode?: ViewMode;
 }
 
 // ── Stable component definitions (defined OUTSIDE render to preserve identity) ──
@@ -78,6 +79,7 @@ function VirtuosoFooter({ context }: { context?: VirtuosoContextData }) {
         onInputResponse={context.onInputResponse}
         inputRequestResolved={context.inputRequestResolved}
         onForceStop={context.onForceStop}
+        viewMode={context.viewMode}
       />
     </div>
   );
@@ -111,6 +113,7 @@ interface MessageListProps {
   highlightMessageIds?: Set<string>;
   activeMessageId?: string | null;
   searchQuery?: string;
+  viewMode?: ViewMode;
 }
 
 export function MessageList({
@@ -135,6 +138,7 @@ export function MessageList({
   highlightMessageIds,
   activeMessageId,
   searchQuery,
+  viewMode = 'normal',
 }: MessageListProps) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const scrollerRef = useRef<HTMLElement | null>(null);
@@ -244,10 +248,12 @@ export function MessageList({
     toolUses, toolResults, streamingToolOutput, statusText,
     pendingPermission, onPermissionResponse, permissionResolved,
     pendingInputRequest, onInputResponse, inputRequestResolved, onForceStop,
+    viewMode,
   }), [hasMore, loadingMore, isStreaming, streamingContent,
     toolUses, toolResults, streamingToolOutput, statusText,
     pendingPermission, onPermissionResponse, permissionResolved,
-    pendingInputRequest, onInputResponse, inputRequestResolved, onForceStop]);
+    pendingInputRequest, onInputResponse, inputRequestResolved, onForceStop,
+    viewMode]);
 
   // Auto-scroll when Footer content grows during streaming.
   // Virtuoso's followOutput/autoscrollToBottom only fire when DATA items change.
@@ -328,6 +334,7 @@ export function MessageList({
                   message={message}
                   searchQuery={searchQuery}
                   isLatestMessage={isLast && !isStreaming}
+                  viewMode={viewMode}
                 />
               </div>
             </div>

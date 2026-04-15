@@ -395,6 +395,11 @@ function migrateDb(db: Database.Database): void {
   if (!colNames.includes('memory_enabled')) {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN memory_enabled INTEGER DEFAULT NULL");
   }
+
+  // View mode per session (verbose | normal | summary)
+  if (!colNames.includes('view_mode')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN view_mode TEXT DEFAULT NULL");
+  }
 }
 
 // ==========================================
@@ -1359,6 +1364,16 @@ export function updateSessionMemoryEnabled(id: string, enabled: boolean | null):
   const db = getDb();
   const value = enabled === null ? null : (enabled ? 1 : 0);
   db.prepare('UPDATE chat_sessions SET memory_enabled = ? WHERE id = ?').run(value, id);
+}
+
+const VALID_VIEW_MODES = ['verbose', 'normal', 'summary'] as const;
+
+export function updateSessionViewMode(id: string, viewMode: string | null): void {
+  const db = getDb();
+  const value = viewMode && VALID_VIEW_MODES.includes(viewMode as typeof VALID_VIEW_MODES[number])
+    ? viewMode
+    : null;
+  db.prepare('UPDATE chat_sessions SET view_mode = ? WHERE id = ?').run(value, id);
 }
 
 // ==========================================

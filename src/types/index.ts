@@ -1,4 +1,10 @@
 // ==========================================
+// View Mode
+// ==========================================
+
+export type ViewMode = 'verbose' | 'normal' | 'summary';
+
+// ==========================================
 // Database Models
 // ==========================================
 
@@ -26,6 +32,7 @@ export interface ChatSession {
   git_branch?: string | null;
   memory_enabled?: number | null; // NULL = use global default, 0 = off, 1 = on
   memory_injected_at?: string | null;
+  view_mode?: string | null; // 'verbose' | 'normal' | 'summary', NULL = 'normal'
 }
 
 // ==========================================

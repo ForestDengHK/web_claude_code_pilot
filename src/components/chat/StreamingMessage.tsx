@@ -18,7 +18,7 @@ import {
 } from '@/components/ai-elements/confirmation';
 import { Shimmer } from '@/components/ai-elements/shimmer';
 import type { ToolUIPart } from 'ai';
-import type { PermissionRequestEvent, InputRequestEvent } from '@/types';
+import type { PermissionRequestEvent, InputRequestEvent, ViewMode } from '@/types';
 
 interface ToolUseInfo {
   id: string;
@@ -47,6 +47,7 @@ interface StreamingMessageProps {
   onInputResponse?: (answers: Record<string, string>) => void;
   inputRequestResolved?: boolean;
   onForceStop?: () => void;
+  viewMode?: ViewMode;
 }
 
 function ElapsedTimer() {
@@ -323,6 +324,7 @@ export function StreamingMessage({
   onInputResponse,
   inputRequestResolved,
   onForceStop,
+  viewMode = 'normal',
 }: StreamingMessageProps) {
   const runningTools = toolUses.filter(
     (tool) => !toolResults.some((r) => r.tool_use_id === tool.id)
@@ -375,8 +377,8 @@ export function StreamingMessage({
   return (
     <AIMessage from="assistant">
       <MessageContent>
-        {/* Tool calls — compact collapsible group */}
-        {toolUses.length > 0 && (
+        {/* Tool calls — compact collapsible group (hidden in summary mode) */}
+        {toolUses.length > 0 && viewMode !== 'summary' && (
           <ToolActionsGroup
             tools={toolUses.map((tool) => {
               const result = toolResults.find((r) => r.tool_use_id === tool.id);
@@ -390,11 +392,12 @@ export function StreamingMessage({
             })}
             isStreaming={isStreaming}
             streamingToolOutput={streamingToolOutput}
+            viewMode={viewMode}
           />
         )}
 
-        {/* Thinking block — separate from response text (Codex only) */}
-        {thinkingContent && (
+        {/* Thinking block — separate from response text (hidden in summary mode) */}
+        {thinkingContent && viewMode !== 'summary' && (
           <ThinkingBlock content={thinkingContent} isStreaming={isStreaming} />
         )}
 
@@ -478,10 +481,12 @@ export function StreamingMessage({
           </div>
         )}
 
-        {/* Status bar during streaming */}
-        {isStreaming && !pendingPermission && !pendingInputRequest && <StreamingStatusBar statusText={
-          statusText || getRunningCommandSummary()
-        } onForceStop={onForceStop} />}
+        {/* Status bar during streaming (simplified in summary mode) */}
+        {isStreaming && !pendingPermission && !pendingInputRequest && (
+          viewMode === 'summary'
+            ? <StreamingStatusBar statusText="Working..." onForceStop={onForceStop} />
+            : <StreamingStatusBar statusText={statusText || getRunningCommandSummary()} onForceStop={onForceStop} />
+        )}
       </MessageContent>
     </AIMessage>
   );
