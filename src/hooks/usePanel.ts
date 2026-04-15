@@ -11,6 +11,14 @@ export interface DiffTarget {
   commit?: string;
 }
 
+export interface StreamingSessionInfo {
+  sessionId: string;
+  sessionTitle: string;
+  status: 'streaming' | 'waiting_permission' | 'waiting_input';
+  statusText: string;
+  startedAt: number;
+}
+
 export interface PanelContextValue {
   panelOpen: boolean;
   setPanelOpen: (open: boolean) => void;
@@ -34,6 +42,10 @@ export interface PanelContextValue {
   setPreviewViewMode: (mode: PreviewViewMode) => void;
   diffTarget: DiffTarget | null;
   setDiffTarget: (target: DiffTarget | null) => void;
+  streamingSessions: Map<string, StreamingSessionInfo>;
+  addStreamingSession: (info: StreamingSessionInfo) => void;
+  updateStreamingSession: (sessionId: string, updates: Partial<Omit<StreamingSessionInfo, 'sessionId'>>) => void;
+  removeStreamingSession: (sessionId: string) => void;
 }
 
 export const PanelContext = createContext<PanelContextValue | null>(null);

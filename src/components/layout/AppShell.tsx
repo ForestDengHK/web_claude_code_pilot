@@ -10,7 +10,7 @@ import { RightPanel } from "./RightPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { DocPreview } from "./DocPreview";
 import { DiffViewer } from "@/components/project/DiffViewer";
-import { PanelContext, type PanelContent, type PreviewViewMode, type DiffTarget } from "@/hooks/usePanel";
+import { PanelContext, type PanelContent, type PreviewViewMode, type DiffTarget, type StreamingSessionInfo } from "@/hooks/usePanel";
 import { TTSProvider } from "@/contexts/TTSContext";
 
 /**
@@ -164,6 +164,38 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [streamingSessionId, setStreamingSessionId] = useState("");
   const [pendingApprovalSessionId, setPendingApprovalSessionId] = useState("");
 
+  // --- Multi-session streaming state ---
+  const [streamingSessions, setStreamingSessions] = useState<Map<string, StreamingSessionInfo>>(
+    () => new Map()
+  );
+
+  const addStreamingSession = useCallback((info: StreamingSessionInfo) => {
+    setStreamingSessions(prev => {
+      const next = new Map(prev);
+      next.set(info.sessionId, info);
+      return next;
+    });
+  }, []);
+
+  const updateStreamingSession = useCallback((sid: string, updates: Partial<Omit<StreamingSessionInfo, 'sessionId'>>) => {
+    setStreamingSessions(prev => {
+      const existing = prev.get(sid);
+      if (!existing) return prev;
+      const next = new Map(prev);
+      next.set(sid, { ...existing, ...updates });
+      return next;
+    });
+  }, []);
+
+  const removeStreamingSession = useCallback((sid: string) => {
+    setStreamingSessions(prev => {
+      if (!prev.has(sid)) return prev;
+      const next = new Map(prev);
+      next.delete(sid);
+      return next;
+    });
+  }, []);
+
   // --- Doc Preview state ---
   const [previewFile, setPreviewFileRaw] = useState<string | null>(null);
   const [previewLine, setPreviewLine] = useState<number | null>(null);
@@ -277,8 +309,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       setPreviewViewMode,
       diffTarget,
       setDiffTarget,
+      streamingSessions,
+      addStreamingSession,
+      updateStreamingSession,
+      removeStreamingSession,
     }),
-    [panelOpen, setPanelOpen, panelContent, workingDirectory, sessionId, sessionTitle, streamingSessionId, pendingApprovalSessionId, previewFile, setPreviewFile, previewLine, previewViewMode, diffTarget, setDiffTarget]
+    [panelOpen, setPanelOpen, panelContent, workingDirectory, sessionId, sessionTitle, streamingSessionId, pendingApprovalSessionId, previewFile, setPreviewFile, previewLine, previewViewMode, diffTarget, setDiffTarget, streamingSessions]
   );
 
   return (
