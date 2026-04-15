@@ -14,6 +14,7 @@ import { usePanel } from '@/hooks/usePanel';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
 import type { RateLimitInfo } from '@/hooks/useSSEStream';
 import { formatCodexUsageMarkdown } from '@/lib/codex-usage';
+import { getRunningCommandSummary } from '@/lib/streaming-status';
 import { formatClaudeUsageMarkdown } from '@/lib/claude-usage';
 import type { ClaudeAccountInfo } from '@/lib/claude-usage';
 
@@ -92,7 +93,7 @@ interface ChatViewProps {
 }
 
 export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, initialMode, backend = 'claude', advisorModel, branchSummary, branchSourceSessionId }: ChatViewProps) {
-  const { setStreamingSessionId, workingDirectory, setWorkingDirectory, setPanelOpen, setPendingApprovalSessionId, sessionTitle } = usePanel();
+  const { setStreamingSessionId, workingDirectory, setWorkingDirectory, setPanelOpen, setPendingApprovalSessionId, sessionTitle, addStreamingSession, updateStreamingSession, removeStreamingSession } = usePanel();
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -333,6 +334,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     // Perform the deferred cleanup that the finally block skipped
     setIsStreaming(false);
     setStreamingSessionId('');
+    removeStreamingSession(sessionId);
     setStreamingContent('');
     setStreamingThinking('');
     accumulatedRef.current = '';
@@ -750,6 +752,10 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
 
     setPermissionResolved(decision === 'deny' ? 'deny' : 'allow');
     setPendingApprovalSessionId('');
+    updateStreamingSession(sessionId, {
+      status: 'streaming',
+      statusText: 'Resuming...',
+    });
 
     try {
       const permEndpoint = currentBackend === 'codex' ? '/api/codex/permission' : '/api/chat/permission';
@@ -869,6 +875,13 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       setMessages((prev) => [...prev, userMessage]);
       setIsStreaming(true);
       setStreamingSessionId(sessionId);
+      addStreamingSession({
+        sessionId,
+        sessionTitle: sessionTitle || 'New Chat',
+        status: 'streaming',
+        statusText: 'Thinking...',
+        startedAt: Date.now(),
+      });
       setStreamingContent('');
       setStreamingThinking('');
       accumulatedRef.current = '';
@@ -957,6 +970,14 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
               toolUsesRef.current = next;
               return next;
             });
+            // Update sidebar status with current tool info
+            const summary = getRunningCommandSummary(
+              [{ name: tool.name, input: tool.input }],
+              [...toolUsesRef.current],
+            );
+            if (summary) {
+              updateStreamingSession(sessionId, { statusText: summary });
+            }
           },
           onToolResult: (res) => {
             lastSseDataRef.current = Date.now();
@@ -995,6 +1016,10 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             setPendingPermission(permData);
             setPermissionResolved(null);
             setPendingApprovalSessionId(sessionId);
+            updateStreamingSession(sessionId, {
+              status: 'waiting_permission',
+              statusText: 'Waiting for approval',
+            });
           },
           onInputRequest: (inputData) => {
             setPendingInputRequest(inputData);
@@ -1099,6 +1124,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             setStopRequested(false);
             setIsStreaming(false);
             setStreamingSessionId('');
+            removeStreamingSession(sessionId);
             setStreamingContent('');
             setStreamingThinking('');
             accumulatedRef.current = '';
@@ -1165,6 +1191,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           setStopRequested(false);
           setIsStreaming(false);
           setStreamingSessionId('');
+          removeStreamingSession(sessionId);
           setStreamingContent('');
           setStreamingThinking('');
           accumulatedRef.current = '';
