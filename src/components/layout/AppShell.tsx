@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { usePathname } from "next/navigation";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { NavRail } from "./NavRail";
 import { BottomNav } from "./BottomNav";
@@ -195,6 +196,73 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       return next;
     });
   }, []);
+
+  // --- Background polling for non-active streaming sessions ---
+  useEffect(() => {
+    if (streamingSessions.size === 0) return;
+
+    const backgroundSessions = Array.from(streamingSessions.keys()).filter(
+      sid => sid !== sessionId
+    );
+    if (backgroundSessions.length === 0) return;
+
+    const poll = async () => {
+      for (const sid of backgroundSessions) {
+        try {
+          const res = await fetch(`/api/chat/sessions/${sid}/status`);
+          if (!res.ok) continue;
+          const data = await res.json();
+
+          if (!data.isProcessing) {
+            removeStreamingSession(sid);
+          } else if (data.pendingPermission) {
+            updateStreamingSession(sid, {
+              status: 'waiting_permission',
+              statusText: 'Waiting for approval',
+            });
+          } else if (data.pendingInputRequest) {
+            updateStreamingSession(sid, {
+              status: 'waiting_input',
+              statusText: 'Waiting for input',
+            });
+          } else if (data.streamingContent?.statusText) {
+            updateStreamingSession(sid, {
+              statusText: data.streamingContent.statusText,
+            });
+          }
+        } catch {
+          // Network error — skip this cycle
+        }
+      }
+    };
+
+    poll();
+    const intervalId = setInterval(poll, 3000);
+    return () => clearInterval(intervalId);
+  }, [streamingSessions, sessionId, removeStreamingSession, updateStreamingSession]);
+
+  // --- Toast notification when background session completes ---
+  const router = useRouter();
+  const prevStreamingSessionsRef = useRef<Map<string, StreamingSessionInfo>>(new Map());
+
+  useEffect(() => {
+    const prev = prevStreamingSessionsRef.current;
+    const current = streamingSessions;
+
+    for (const [sid, info] of prev) {
+      if (!current.has(sid) && sid !== sessionId) {
+        toast.success(`${info.sessionTitle} 已完成`, {
+          action: {
+            label: '查看',
+            onClick: () => router.push(`/chat/${sid}`),
+          },
+          duration: 5000,
+        });
+      }
+    }
+
+    prevStreamingSessionsRef.current = new Map(current);
+  }, [streamingSessions, sessionId, router]);
 
   // --- Doc Preview state ---
   const [previewFile, setPreviewFileRaw] = useState<string | null>(null);
