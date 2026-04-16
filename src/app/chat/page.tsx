@@ -39,7 +39,7 @@ export default function NewChatPage() {
   const [toolResults, setToolResults] = useState<ToolResultInfo[]>([]);
   const [statusText, setStatusText] = useState<string | undefined>();
   const [workingDir, setWorkingDir] = useState('');
-  const [mode, setMode] = useState('code');
+  const [mode, setMode] = useState('acceptEdits');
   const [currentModel, setCurrentModel] = useState('sonnet');
   const [selectedBackend, setSelectedBackend] = useState<'claude' | 'codex'>('claude');
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);

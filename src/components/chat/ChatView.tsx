@@ -17,6 +17,7 @@ import { formatCodexUsageMarkdown } from '@/lib/codex-usage';
 import { getRunningCommandSummary } from '@/lib/streaming-status';
 import { formatClaudeUsageMarkdown } from '@/lib/claude-usage';
 import type { ClaudeAccountInfo } from '@/lib/claude-usage';
+import { normalizeClaudeMode } from '@/lib/permission-modes';
 import { useContextHealth } from '@/hooks/useContextHealth';
 import { ContextHealthToast } from './ContextHealthToast';
 import type { HealthAction } from '@/lib/context-health';
@@ -109,7 +110,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [toolUses, setToolUses] = useState<ToolUseInfo[]>([]);
   const [toolResults, setToolResults] = useState<ToolResultInfo[]>([]);
   const [statusText, setStatusText] = useState<string | undefined>();
-  const [mode, setMode] = useState(initialMode || 'code');
+  const [mode, setMode] = useState(normalizeClaudeMode(initialMode));
   const [currentBackend, setCurrentBackendRaw] = useState<'claude' | 'codex'>(backend || 'claude');
   const [currentModel, setCurrentModelRaw] = useState(modelName || '');
   const [currentEffort, setCurrentEffort] = useState<string | undefined>();
@@ -365,13 +366,14 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   }, [sessionId]);
 
   const handleModeChange = useCallback((newMode: string) => {
-    setMode(newMode);
+    const normalized = normalizeClaudeMode(newMode);
+    setMode(normalized);
     // Persist mode to database and notify chat list
     if (sessionId) {
       fetch(`/api/chat/sessions/${sessionId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: newMode }),
+        body: JSON.stringify({ mode: normalized }),
       }).then(() => {
         window.dispatchEvent(new CustomEvent('session-updated'));
       }).catch(() => { /* silent */ });
@@ -764,7 +766,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   // Sync mode when session data loads
   useEffect(() => {
     if (initialMode) {
-      setMode(initialMode);
+      setMode(normalizeClaudeMode(initialMode));
     }
   }, [initialMode]);
 

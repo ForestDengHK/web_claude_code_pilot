@@ -8,6 +8,8 @@ export type ViewMode = 'verbose' | 'normal' | 'summary';
 // Database Models
 // ==========================================
 
+import type { ClaudeUiPermissionMode } from '@/lib/permission-modes';
+
 export interface ChatSession {
   id: string;
   title: string;
@@ -19,7 +21,10 @@ export interface ChatSession {
   sdk_session_id: string; // Claude Agent SDK session ID for resume
   project_name: string;
   status: 'active' | 'archived';
-  mode?: 'code' | 'plan' | 'ask';
+  // Chat working mode. SDK-native names: 'plan' | 'acceptEdits' | 'auto'.
+  // Legacy rows may still contain 'code' in the DB; reads go through
+  // `normalizeClaudeMode()` so callers always see the current vocabulary.
+  mode?: ClaudeUiPermissionMode;
   skip_permissions?: number;
   needs_approval?: boolean;
   backend: 'claude' | 'codex';

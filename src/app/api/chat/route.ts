@@ -3,6 +3,7 @@ import { streamClaude } from '@/lib/claude-client';
 import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected } from '@/lib/db';
 import { sendPushNotification } from '@/lib/push-notifications';
 import { detectBackendSwitch, buildIncrementalBridge } from '@/lib/context-bridge';
+import { normalizeClaudeMode } from '@/lib/permission-modes';
 import { registerAbort, registerQuery, unregisterAbort } from '@/lib/abort-registry';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import {
@@ -102,17 +103,12 @@ export async function POST(request: NextRequest) {
     // Determine model: request override > session model > default setting
     const effectiveModel = model || session.model || getSetting('default_model') || undefined;
 
-    // Determine permission mode from chat mode: code → acceptEdits, plan → plan
-    const effectiveMode = mode || session.mode || 'code';
-    let permissionMode: string;
-    switch (effectiveMode) {
-      case 'plan':
-        permissionMode = 'plan';
-        break;
-      default: // 'code'
-        permissionMode = 'acceptEdits';
-        break;
-    }
+    // Working mode uses SDK-native names directly ('plan' | 'acceptEdits' |
+    // 'auto'). `normalizeClaudeMode` handles legacy DB values ('code' →
+    // 'acceptEdits') and unknown input, so we never feed the SDK a stale
+    // vocabulary. When the shield (skipPermissions) is on, claude-client
+    // upgrades this to 'bypassPermissions' — that override lives there.
+    const permissionMode = normalizeClaudeMode(mode || session.mode);
 
     // Build incremental context bridge if switching from Codex → Claude
     let contextBridgePrompt: string | undefined;

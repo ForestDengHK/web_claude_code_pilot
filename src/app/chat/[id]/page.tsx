@@ -9,6 +9,7 @@ import { Loading02Icon, PencilEdit01Icon } from "@hugeicons/core-free-icons";
 import { DownloadMenu } from '@/components/chat/DownloadMenu';
 import { Input } from '@/components/ui/input';
 import { usePanel } from '@/hooks/usePanel';
+import { normalizeClaudeMode } from '@/lib/permission-modes';
 
 interface ChatSessionPageProps {
   params: Promise<{ id: string }>;
@@ -96,7 +97,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           setSessionTitle(title);
           setPanelSessionTitle(title);
           setSessionModel(data.session.model || '');
-          setSessionMode(data.session.mode || 'code');
+          setSessionMode(normalizeClaudeMode(data.session.mode));
           setSessionBackend(data.session.backend || 'claude');
           setSessionAdvisorModel(data.session.advisor_model || null);
           setBranchSummary(data.session.branch_summary || null);

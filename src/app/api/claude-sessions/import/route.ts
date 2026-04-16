@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
       undefined, // model — will use default
       undefined, // system prompt
       workingDirectory,
-      'code',
+      'acceptEdits',
     );
 
     // Store the original Claude Code SDK session ID so the conversation can be resumed

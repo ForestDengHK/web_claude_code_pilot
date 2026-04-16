@@ -218,8 +218,14 @@ function migrateDb(db: Database.Database): void {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
   }
   if (!colNames.includes('mode')) {
-    db.exec("ALTER TABLE chat_sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'code'");
+    // New installs: SDK-native name directly.
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'acceptEdits'");
   }
+  // One-shot migration: older rows stored CodePilot-specific aliases ('code',
+  // 'ask'). Normalize to SDK-native 'acceptEdits' so `normalizeClaudeMode`
+  // doesn't have to rewrite on every read. Idempotent: the WHERE clause makes
+  // it a no-op after the first run.
+  db.prepare("UPDATE chat_sessions SET mode = 'acceptEdits' WHERE mode IN ('code', 'ask', '') OR mode IS NULL").run();
   if (!colNames.includes('skip_permissions')) {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN skip_permissions INTEGER NOT NULL DEFAULT 0");
   }
@@ -453,7 +459,7 @@ export function createSession(
 
   db.prepare(
     'INSERT INTO chat_sessions (id, title, created_at, updated_at, model, system_prompt, working_directory, sdk_session_id, project_name, status, mode, backend, branch_summary, branch_source_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, title || 'New Chat', now, now, model || '', systemPrompt || '', wd, '', projectName, 'active', mode || 'code', backend || 'claude', branchSummary || null, branchSourceSessionId || null);
+  ).run(id, title || 'New Chat', now, now, model || '', systemPrompt || '', wd, '', projectName, 'active', mode || 'acceptEdits', backend || 'claude', branchSummary || null, branchSourceSessionId || null);
 
   return getSession(id)!;
 }

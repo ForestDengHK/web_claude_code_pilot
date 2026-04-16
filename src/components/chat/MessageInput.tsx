@@ -6,6 +6,7 @@ import {
   AtIcon,
   Wrench01Icon,
   ClipboardIcon,
+  AiMagicIcon,
   HelpCircleIcon,
   ArrowDown01Icon,
   ArrowUp02Icon,
@@ -138,9 +139,13 @@ interface ModeOption {
   description: string;
 }
 
+// SDK-native permission modes. See `src/lib/permission-modes.ts` for the
+// canonical type + normalization. `bypassPermissions` is intentionally absent
+// — the shield toggle next to this dropdown owns that danger override.
 const MODE_OPTIONS: ModeOption[] = [
-  { value: 'code', label: 'Code', icon: Wrench01Icon, description: 'Read, write files & run commands' },
-  { value: 'plan', label: 'Plan', icon: ClipboardIcon, description: 'Plan first, then confirm changes' },
+  { value: 'plan', label: 'Plan', icon: ClipboardIcon, description: 'Plan first, no tool execution' },
+  { value: 'acceptEdits', label: 'Accept Edits', icon: Wrench01Icon, description: 'Read, write files & run commands' },
+  { value: 'auto', label: 'Auto', icon: AiMagicIcon, description: 'Model classifier approves safe tools automatically' },
 ];
 
 // Fallback model options used when the API is unavailable
@@ -493,7 +498,7 @@ export function MessageInput({
   modelName,
   onModelChange,
   workingDirectory,
-  mode = 'code',
+  mode = 'acceptEdits',
   onModeChange,
   backend = 'claude',
   onBackendChange,
@@ -1461,7 +1466,9 @@ export function MessageInput({
                     </PromptInputButton>
                   </TooltipTrigger>
                   <TooltipContent side="top">
-                    {skipPermissions ? 'Auto-approve ON (click to disable)' : 'Auto-approve OFF (click to enable)'}
+                    {skipPermissions
+                      ? 'Bypass permissions ON — all tools auto-approved (click to disable)'
+                      : 'Bypass permissions OFF — follows Mode setting (click for YOLO)'}
                   </TooltipContent>
                 </Tooltip>
               </PromptInputTools>
