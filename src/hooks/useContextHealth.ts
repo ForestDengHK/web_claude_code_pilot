@@ -31,11 +31,17 @@ export function useContextHealth(backend: 'claude' | 'codex') {
     const session = sessionRef.current;
     const turnIndex = session.turns.length;
 
+    // input_tokens from Anthropic API = only non-cached tokens.
+    // Total context size = input_tokens + cache_read + cache_creation.
+    const cacheRead = usage.cache_read_input_tokens ?? 0;
+    const cacheCreation = usage.cache_creation_input_tokens ?? 0;
+    const totalInput = usage.input_tokens + cacheRead + cacheCreation;
+
     const turn: TurnMetrics = {
-      inputTokens: usage.input_tokens,
+      inputTokens: totalInput, // total context sent to model
       outputTokens: usage.output_tokens,
-      cacheReadTokens: usage.cache_read_input_tokens ?? 0,
-      cacheCreationTokens: usage.cache_creation_input_tokens ?? 0,
+      cacheReadTokens: cacheRead,
+      cacheCreationTokens: cacheCreation,
       costUsd: usage.cost_usd ?? null,
       model: usage.model ?? '',
       contextWindow: usage.contextWindow ?? 200000,

@@ -21,6 +21,11 @@ export function ContextHealthToast({ alerts, onDismiss, onAction }: Props) {
     return order[a.severity] - order[b.severity];
   })[0];
 
+  // Use alerts array length as a proxy for "new alerts arrived" —
+  // even if the same rule fires again with the same message, the alerts
+  // array reference changes, so this counter increments.
+  const alertsGeneration = alerts.length > 0 ? alerts.reduce((h, a) => h + a.message.length, 0) : 0;
+
   useEffect(() => {
     if (alert) {
       setVisible(true);
@@ -29,7 +34,7 @@ export function ContextHealthToast({ alerts, onDismiss, onAction }: Props) {
     } else {
       setVisible(false);
     }
-  }, [alert?.ruleId, alert?.message]);
+  }, [alert?.ruleId, alertsGeneration]);
 
   if (!visible || !alert) return null;
 
