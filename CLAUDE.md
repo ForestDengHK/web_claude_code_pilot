@@ -53,7 +53,9 @@ Self-hosted web app. Pull the latest tag and run:
 ## Requirements
 
 - Node.js 20+
-- At least one backend: Claude Code CLI (`claude login`) or Codex CLI (`codex`)
+- At least one backend:
+  - **Claude Code CLI v2.1.111+** (`claude login` to authenticate; upgrade with `claude update`) — required for Opus 4.7, the new `xhigh` effort level, and adaptive thinking
+  - or **Codex CLI** (`codex`)
 - `ANTHROPIC_API_KEY` for Claude backend; `OPENAI_API_KEY` for Codex backend
 
 ## Changelog (since v{previous version})

@@ -85,7 +85,8 @@ This fork diverges from the original CodePilot with the following major changes:
 |---|---|---|
 | **Node.js** | 20+ | Required |
 | **npm** | 9+ (ships with Node 20) | Required |
-| **Claude Code CLI** | Latest (`claude --version`) | Required for Claude backend; run `claude login` to authenticate |
+| **Claude Code CLI** | **v2.1.111+** (`claude --version`) | Required for Claude backend; run `claude login` to authenticate. **Opus 4.7 / `xhigh` effort / adaptive thinking need v2.1.111 or newer** — upgrade with `claude update`. |
+| **Claude Agent SDK** | 0.2.112+ (managed via `package.json`) | Opus-4.7-era capabilities (`effort: 'xhigh'`, `thinking: { type: 'adaptive' }`, `supportsAdaptiveThinking` flag) require this SDK version. Bumped automatically by `npm install`. |
 | **Codex CLI** | Latest (`codex --version`) | Optional; required only for Codex backend |
 | **edge-tts** | Latest (`pip install edge-tts`) | Optional; required only for Read Aloud (TTS) feature |
 

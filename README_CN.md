@@ -83,7 +83,8 @@
 |------|---------|------|
 | **Node.js** | 20+ | 必需 |
 | **npm** | 9+（Node 20 自带） | 必需 |
-| **Claude Code CLI** | 最新版（`claude --version`） | Claude 后端必需；运行 `claude login` 完成认证 |
+| **Claude Code CLI** | **v2.1.111+**（`claude --version`） | Claude 后端必需；运行 `claude login` 完成认证。**Opus 4.7 / `xhigh` 推理档位 / 自适应思考需要 v2.1.111 及以上** —— 用 `claude update` 升级。 |
+| **Claude Agent SDK** | 0.2.112+（随 `package.json` 管理） | Opus-4.7 时代的能力（`effort: 'xhigh'`、`thinking: { type: 'adaptive' }`、`supportsAdaptiveThinking` 标志）需要此 SDK 版本。`npm install` 自动同步。 |
 | **Codex CLI** | 最新版（`codex --version`） | 可选；仅 Codex 后端需要 |
 | **edge-tts** | 最新版（`pip install edge-tts`） | 可选；仅朗读（TTS）功能需要 |
 
