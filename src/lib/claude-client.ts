@@ -513,6 +513,16 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           queryOptions.effort = sanitizedEffort;
         }
 
+        // Opus 4.7 defaults to `display: 'omitted'`, so thinking text is
+        // hidden unless we explicitly opt into `'summarized'`. We gate this
+        // behind a user setting so TTFT stays low by default. SDK ≥ 0.2.112
+        // silently ignores this on models without adaptive-thinking support
+        // (verified in docs/bugfix-adaptive-thinking-0-2-112.md), so no
+        // per-model capability gating is needed here.
+        if (getSetting('show_thinking_text') === 'true') {
+          queryOptions.thinking = { type: 'adaptive', display: 'summarized' };
+        }
+
         if (advisorModel) {
           queryOptions.settings = {
             ...(typeof queryOptions.settings === 'object' ? queryOptions.settings : {}),
@@ -891,6 +901,19 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
                       streamedTextLength += delta.text.length;
                       accumulatedStreamedText += delta.text;
                       controller.enqueue(formatSSE({ type: 'text', data: delta.text }));
+                    } else if (
+                      // Adaptive-thinking summary text (Opus 4.7 / Sonnet 4.6+ when
+                      // `queryOptions.thinking.display === 'summarized'`). Reuses
+                      // the existing SSE 'thinking' event type that Codex already
+                      // emits, so the client-side accumulation + rendering layers
+                      // need no changes.
+                      'type' in delta &&
+                      delta.type === 'thinking_delta' &&
+                      'thinking' in delta &&
+                      typeof delta.thinking === 'string' &&
+                      delta.thinking.length > 0
+                    ) {
+                      controller.enqueue(formatSSE({ type: 'thinking', data: delta.thinking }));
                     }
                   }
                   break;

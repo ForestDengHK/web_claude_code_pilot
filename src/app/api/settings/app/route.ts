@@ -23,6 +23,11 @@ const ALLOWED_KEYS = [
   'memory_enabled',
   'context_health_enabled',
   'context_health_config',
+  // Opus-4.7-era: when 'true', ask Claude for summarized adaptive thinking
+  // so the UI can render live reasoning. Ignored by Codex (which streams its
+  // own thinking unconditionally) and by Claude models without adaptive
+  // thinking support (SDK silently drops the option).
+  'show_thinking_text',
 ];
 
 export async function GET() {

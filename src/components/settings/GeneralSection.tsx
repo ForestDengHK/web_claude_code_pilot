@@ -197,6 +197,12 @@ export function GeneralSection() {
   const [showSkipPermWarning, setShowSkipPermWarning] = useState(false);
   const [skipPermSaving, setSkipPermSaving] = useState(false);
 
+  // Claude-only: show adaptive-thinking summary above each reply.
+  // Ignored by Codex (which always streams its own reasoning) and by
+  // Claude models without adaptive-thinking support (SDK drops silently).
+  const [showThinking, setShowThinking] = useState(false);
+  const [showThinkingSaving, setShowThinkingSaving] = useState(false);
+
   // Git clone settings
   const [cloneBaseDir, setCloneBaseDir] = useState('');
   const [defaultGitHost, setDefaultGitHost] = useState('');
@@ -210,6 +216,7 @@ export function GeneralSection() {
         const data = await res.json();
         const appSettings = data.settings || {};
         setSkipPermissions(appSettings.dangerously_skip_permissions === "true");
+        setShowThinking(appSettings.show_thinking_text === "true");
         setCloneBaseDir(appSettings.clone_base_directory || '');
         setDefaultGitHost(appSettings.default_git_host || '');
       }
@@ -248,6 +255,26 @@ export function GeneralSection() {
     } finally {
       setSkipPermSaving(false);
       setShowSkipPermWarning(false);
+    }
+  };
+
+  const handleShowThinkingToggle = async (enabled: boolean) => {
+    setShowThinkingSaving(true);
+    try {
+      const res = await fetch("/api/settings/app", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          settings: { show_thinking_text: enabled ? "true" : "" },
+        }),
+      });
+      if (res.ok) {
+        setShowThinking(enabled);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setShowThinkingSaving(false);
     }
   };
 
@@ -302,6 +329,25 @@ export function GeneralSection() {
             All tool actions will be auto-approved without confirmation. Use with caution.
           </div>
         )}
+      </div>
+
+      {/* Show-thinking-text toggle (Claude only) */}
+      <div className="rounded-lg border border-border/50 p-4 transition-shadow hover:shadow-sm">
+        <div className="flex items-center justify-between">
+          <div className="pr-4">
+            <h2 className="text-sm font-medium">Show Claude&apos;s Thinking</h2>
+            <p className="text-xs text-muted-foreground">
+              Stream the model&apos;s summarized reasoning above each reply. Supported on Opus 4.7 and
+              Sonnet 4.6+. Off by default so first-token latency stays low. Doesn&apos;t affect Codex,
+              which streams its own reasoning regardless.
+            </p>
+          </div>
+          <Switch
+            checked={showThinking}
+            onCheckedChange={handleShowThinkingToggle}
+            disabled={showThinkingSaving}
+          />
+        </div>
       </div>
 
       {/* Skip-permissions warning dialog */}

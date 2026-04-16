@@ -237,6 +237,11 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
   const reader = stream.getReader();
   const contentBlocks: MessageContentBlock[] = [];
   let currentText = '';
+  // Adaptive-thinking summary text streamed from Claude when the user has
+  // `show_thinking_text` enabled (SDK ≥ 0.2.112, Opus 4.7 / Sonnet 4.6+).
+  // Mirrors the Codex route's handling so the rendered message shape — a
+  // leading `{ type: 'thinking', text }` block — is identical across backends.
+  let currentThinking = '';
   let tokenUsage: TokenUsage | null = null;
   let draftMessageId: string | null = null;
   let lastCheckpointTime = 0;
@@ -246,6 +251,16 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
   // status endpoint can return intermediate output to the client.
   initStreamBuffer(sessionId);
 
+  /**
+   * Predicate matching the serialization rule shared with the Codex route:
+   * any non-text block (tool_use / tool_result / thinking) forces JSON
+   * storage so block structure survives the round-trip, otherwise we fall
+   * back to plain concatenated text for backward compatibility.
+   */
+  function isStructuredBlock(b: MessageContentBlock): boolean {
+    return b.type === 'tool_use' || b.type === 'tool_result' || b.type === 'thinking';
+  }
+
   /** Build the content string from current accumulated blocks. */
   function buildContent(): string {
     const blocks = [...contentBlocks];
@@ -253,8 +268,8 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
       blocks.push({ type: 'text', text: currentText });
     }
     if (blocks.length === 0) return '';
-    const hasToolBlocks = blocks.some(b => b.type === 'tool_use' || b.type === 'tool_result');
-    if (hasToolBlocks) return JSON.stringify(blocks);
+    const hasStructuredBlocks = blocks.some(isStructuredBlock);
+    if (hasStructuredBlocks) return JSON.stringify(blocks);
     return blocks
       .filter((b): b is Extract<MessageContentBlock, { type: 'text' }> => b.type === 'text')
       .map(b => b.text)
@@ -337,6 +352,12 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
               } else if (Date.now() - lastCheckpointTime > CHECKPOINT_INTERVAL_MS) {
                 checkpoint();
               }
+            } else if (event.type === 'thinking') {
+              // Accumulate summarized reasoning deltas. Persisted as a leading
+              // `{ type: 'thinking', text }` content block when the message is
+              // finalized — matches the Codex route exactly so MessageItem's
+              // parser renders both backends identically.
+              currentThinking += event.data;
             } else if (event.type === 'tool_use') {
               // Flush any accumulated text before the tool use block
               if (currentText.trim()) {
@@ -416,17 +437,21 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
       }
     }
 
+    // Flush any accumulated adaptive-thinking summary as a leading block so
+    // it renders above the text in MessageItem (same shape Codex uses).
+    if (currentThinking.trim()) {
+      contentBlocks.unshift({ type: 'thinking', text: currentThinking });
+    }
+
     // Flush any remaining text
     if (currentText.trim()) {
       contentBlocks.push({ type: 'text', text: currentText });
     }
 
     if (contentBlocks.length > 0) {
-      const hasToolBlocks = contentBlocks.some(
-        (b) => b.type === 'tool_use' || b.type === 'tool_result'
-      );
+      const hasStructuredBlocks = contentBlocks.some(isStructuredBlock);
 
-      const content = hasToolBlocks
+      const content = hasStructuredBlocks
         ? JSON.stringify(contentBlocks)
         : contentBlocks
             .filter((b): b is Extract<MessageContentBlock, { type: 'text' }> => b.type === 'text')
@@ -472,14 +497,15 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
     }
   } catch {
     // Stream reading error — best effort save
+    if (currentThinking.trim()) {
+      contentBlocks.unshift({ type: 'thinking', text: currentThinking });
+    }
     if (currentText.trim()) {
       contentBlocks.push({ type: 'text', text: currentText });
     }
     if (contentBlocks.length > 0) {
-      const hasToolBlocks = contentBlocks.some(
-        (b) => b.type === 'tool_use' || b.type === 'tool_result'
-      );
-      const content = hasToolBlocks
+      const hasStructuredBlocks = contentBlocks.some(isStructuredBlock);
+      const content = hasStructuredBlocks
         ? JSON.stringify(contentBlocks)
         : contentBlocks
             .filter((b): b is Extract<MessageContentBlock, { type: 'text' }> => b.type === 'text')
