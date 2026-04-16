@@ -102,13 +102,10 @@ export function ContextHealthSection() {
     [config]
   );
 
-  const saveThreshold = useCallback(
-    (ruleId: string) => {
-      // Save current config state (called onBlur)
-      saveConfig(config);
-    },
-    [config, saveConfig]
-  );
+  const saveThreshold = useCallback(() => {
+    // Save current config state (called onBlur)
+    saveConfig(config);
+  }, [config, saveConfig]);
 
   const getRuleOverride = (ruleId: string): RuleOverride => config[ruleId] ?? {};
 
@@ -156,8 +153,9 @@ export function ContextHealthSection() {
                 }`}
               >
                 {/* Rule header */}
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 min-w-0">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-2">
                     <span
                       className={`shrink-0 inline-block px-1.5 py-0.5 rounded text-[10px] font-medium uppercase ${
                         severityColors[rule.severity]
@@ -165,52 +163,54 @@ export function ContextHealthSection() {
                     >
                       {rule.severity}
                     </span>
-                    <span className="font-medium text-sm truncate">
+                    <span className="min-w-0 break-words text-sm font-medium">
                       {rule.name}
                     </span>
+                    </div>
+                    <p className="mt-1.5 text-xs text-muted-foreground">
+                      {rule.description}
+                    </p>
                   </div>
                   <Switch
                     checked={isEnabled}
                     onCheckedChange={(checked) => toggleRule(rule.id, checked)}
+                    className="shrink-0"
                   />
                 </div>
 
-                {/* Rule description */}
-                <p className="text-xs text-muted-foreground mt-1.5">
-                  {rule.description}
-                </p>
-
                 {/* Threshold control */}
                 {schema && isEnabled && (
-                  <div className="mt-3 space-y-1.5">
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs font-medium text-muted-foreground whitespace-nowrap">
+                  <div className="mt-3 space-y-2">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <label className="text-xs font-medium text-muted-foreground">
                         {schema.label}:
                       </label>
-                      <Input
-                        type="number"
-                        value={currentThreshold}
-                        min={schema.min}
-                        max={schema.max}
-                        step={schema.step ?? 1}
-                        onChange={(e) => {
-                          const v = parseFloat(e.target.value);
-                          if (!isNaN(v)) updateThreshold(rule.id, v);
-                        }}
-                        onBlur={() => saveThreshold(rule.id)}
-                        className="w-20 h-7 text-xs"
-                        disabled={saving}
-                      />
-                      <span className="text-xs text-muted-foreground">
-                        {unitLabel[schema.type] ?? ""}
-                      </span>
-                      <span className="text-xs text-muted-foreground/60 ml-auto">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Input
+                          type="number"
+                          value={currentThreshold}
+                          min={schema.min}
+                          max={schema.max}
+                          step={schema.step ?? 1}
+                          onChange={(e) => {
+                            const v = parseFloat(e.target.value);
+                            if (!isNaN(v)) updateThreshold(rule.id, v);
+                          }}
+                          onBlur={saveThreshold}
+                          className="h-7 w-20 text-xs"
+                          disabled={saving}
+                        />
+                        <span className="text-xs text-muted-foreground">
+                          {unitLabel[schema.type] ?? ""}
+                        </span>
+                      </div>
+                      <span className="text-xs text-muted-foreground/60 sm:ml-auto">
                         default: {schema.default}
                         {unitLabel[schema.type] ?? ""}
                       </span>
                     </div>
                     {/* Tip */}
-                    <p className="text-[11px] text-muted-foreground/70 leading-relaxed">
+                    <p className="max-w-full text-[11px] leading-relaxed text-muted-foreground/70 break-words">
                       💡 {schema.tip}
                     </p>
                   </div>

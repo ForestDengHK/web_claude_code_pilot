@@ -1,13 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import type { HealthAlert } from '@/lib/context-health';
 
 interface Props {
   alerts: HealthAlert[];
 }
 
-export function ContextHealthDot({ alerts }: Props) {
+export const ContextHealthDot = memo(function ContextHealthDot({ alerts }: Props) {
   const [showTooltip, setShowTooltip] = useState(false);
   if (alerts.length === 0) return null;
 
@@ -18,20 +18,24 @@ export function ContextHealthDot({ alerts }: Props) {
     : hasWarning
       ? 'bg-yellow-500'
       : 'bg-blue-400';
+  const tooltipText = alerts.map(a => a.message).join(' · ');
 
   return (
     <span
-      className="relative inline-flex ml-1 cursor-pointer"
-      onMouseEnter={() => setShowTooltip(true)}
-      onMouseLeave={() => setShowTooltip(false)}
+      className="relative ml-1 inline-flex h-2 w-2 shrink-0 cursor-pointer align-middle"
       onClick={() => setShowTooltip(prev => !prev)}
+      onBlur={() => setShowTooltip(false)}
+      tabIndex={0}
+      role="button"
+      aria-label="Context health details"
+      aria-expanded={showTooltip}
     >
-      <span className={`inline-block w-2 h-2 rounded-full ${color}`} />
+      <span className={`block h-2 w-2 rounded-full ${color} ring-1 ring-background/80`} />
       {showTooltip && (
-        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 text-xs rounded bg-popover text-popover-foreground border shadow-md whitespace-nowrap z-50 max-w-xs">
-          {alerts.map(a => a.message).join(' · ')}
+        <span className="absolute bottom-full left-1/2 z-50 mb-1 w-max max-w-[min(20rem,calc(100vw-2rem))] -translate-x-1/2 rounded border bg-popover px-2 py-1 text-left text-xs leading-4 text-popover-foreground shadow-md whitespace-normal break-words sm:max-w-xs">
+          {tooltipText}
         </span>
       )}
     </span>
   );
-}
+});

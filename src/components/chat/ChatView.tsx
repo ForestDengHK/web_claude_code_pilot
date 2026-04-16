@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import type { Message, MessagesResponse, PermissionRequestEvent, InputRequestEvent, FileAttachment, ViewMode } from '@/types';
+import type { Message, MessagesResponse, PermissionRequestEvent, InputRequestEvent, FileAttachment, ViewMode, TokenUsage } from '@/types';
 import { MessageList } from './MessageList';
 import { BranchSummaryCard } from './BranchSummaryCard';
 import { MessageInput } from './MessageInput';
@@ -116,7 +116,16 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [currentAdvisorModel, setCurrentAdvisorModelRaw] = useState<string | null>(advisorModel || null);
 
   // Context health monitoring
-  const { alerts: healthAlerts, turnAlerts, recordTurn, recordCompact, resetSession: resetHealthSession, dismissAlert } = useContextHealth(currentBackend);
+  const {
+    alerts: healthAlerts,
+    turnAlerts,
+    recordTurn,
+    recordCompact,
+    resetSession: resetHealthSession,
+    dismissAlert,
+    hydrateHistory,
+    reloadSettings: reloadContextHealthSettings,
+  } = useContextHealth(currentBackend);
 
   // Memory system state: null = use global default, true/false = session override
   const [memoryEnabled, setMemoryEnabledRaw] = useState<boolean | null>(null);
@@ -152,9 +161,87 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       }
       if (settingsData?.settings) {
         setMemoryGlobalDefault(settingsData.settings.memory_enabled === 'true');
+        let contextHealthConfig = {};
+        if (settingsData.settings.context_health_config) {
+          try {
+            contextHealthConfig = JSON.parse(settingsData.settings.context_health_config);
+          } catch {
+            contextHealthConfig = {};
+          }
+        }
+        reloadContextHealthSettings(
+          contextHealthConfig,
+          settingsData.settings.context_health_enabled !== 'false',
+        );
       }
     }).catch(() => { /* silent */ });
+  }, [sessionId, reloadContextHealthSettings]);
+
+  // Rebuild context-health state from persisted assistant turns ONLY on session
+  // load and after recovery (stream end). We deliberately avoid depending on
+  // `messages` directly: rebuilding on every messages change races against the
+  // live `recordTurn` updates from SSE, which makes the dot flash on/off as the
+  // alert map gets repeatedly torn down and rebuilt.
+  //
+  // Strategy: derive a stable fingerprint from persisted assistant turn count +
+  // a hash of token_usage payloads, then hydrate only when that fingerprint
+  // actually changes. Live SSE updates (where `recordTurn` already populated
+  // turnAlerts) won't change the persisted fingerprint until the message lands
+  // in DB, which happens once per turn.
+  const persistedUsages = useMemo(() => {
+    if (currentBackend !== 'claude') return [];
+    return messages
+      .filter((msg) => msg.role === 'assistant' && !!msg.token_usage)
+      .map((msg) => {
+        try {
+          return typeof msg.token_usage === 'string'
+            ? JSON.parse(msg.token_usage)
+            : msg.token_usage;
+        } catch {
+          return null;
+        }
+      })
+      .filter((usage): usage is TokenUsage => !!usage);
+  }, [currentBackend, messages]);
+
+  const persistedFingerprint = useMemo(() => {
+    // Compact, stable signature: count + per-turn (input|output|cacheRead|cacheCreation|cost)
+    if (persistedUsages.length === 0) return '0';
+    const parts = persistedUsages.map(
+      (u) =>
+        `${u.input_tokens}|${u.output_tokens}|${u.cache_read_input_tokens ?? 0}|${u.cache_creation_input_tokens ?? 0}|${u.cost_usd ?? 0}`,
+    );
+    return `${persistedUsages.length}:${parts.join(',')}`;
+  }, [persistedUsages]);
+
+  const lastHydratedFingerprintRef = useRef<string | null>(null);
+
+  // Reset fingerprint when switching sessions so the new session always re-hydrates.
+  useEffect(() => {
+    lastHydratedFingerprintRef.current = null;
   }, [sessionId]);
+
+  useEffect(() => {
+    if (currentBackend !== 'claude') {
+      resetHealthSession();
+      lastHydratedFingerprintRef.current = null;
+      return;
+    }
+    // Don't tear down live alerts mid-stream — recordTurn is authoritative then.
+    if (isStreaming) return;
+    // Skip if nothing about persisted turns has actually changed.
+    if (lastHydratedFingerprintRef.current === persistedFingerprint) return;
+
+    lastHydratedFingerprintRef.current = persistedFingerprint;
+    hydrateHistory(persistedUsages);
+  }, [
+    currentBackend,
+    hydrateHistory,
+    isStreaming,
+    persistedFingerprint,
+    persistedUsages,
+    resetHealthSession,
+  ]);
 
   const setMemoryEnabled = useCallback((enabled: boolean | null) => {
     setMemoryEnabledRaw(enabled);

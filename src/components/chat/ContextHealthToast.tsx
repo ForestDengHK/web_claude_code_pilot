@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { HealthAlert, HealthAction } from '@/lib/context-health';
 
 interface Props {
@@ -10,33 +10,19 @@ interface Props {
 }
 
 export function ContextHealthToast({ alerts, onDismiss, onAction }: Props) {
-  const [visible, setVisible] = useState(false);
+  const [hiddenAlertKeys, setHiddenAlertKeys] = useState<Set<string>>(new Set());
 
   // Only show warning/critical alerts as toast
   const toastAlerts = alerts.filter(a => a.severity !== 'info');
 
   // Show highest severity alert only
-  const alert = toastAlerts.sort((a, b) => {
+  const alert = [...toastAlerts].sort((a, b) => {
     const order = { critical: 0, warning: 1, info: 2 };
     return order[a.severity] - order[b.severity];
   })[0];
+  const alertKey = alert ? `${alert.ruleId}:${alert.message}` : null;
 
-  // Use alerts array length as a proxy for "new alerts arrived" —
-  // even if the same rule fires again with the same message, the alerts
-  // array reference changes, so this counter increments.
-  const alertsGeneration = alerts.length > 0 ? alerts.reduce((h, a) => h + a.message.length, 0) : 0;
-
-  useEffect(() => {
-    if (alert) {
-      setVisible(true);
-      const timer = setTimeout(() => setVisible(false), 15000);
-      return () => clearTimeout(timer);
-    } else {
-      setVisible(false);
-    }
-  }, [alert?.ruleId, alertsGeneration]);
-
-  if (!visible || !alert) return null;
+  if (!alert || !alertKey || hiddenAlertKeys.has(alertKey)) return null;
 
   const borderColor = alert.severity === 'critical'
     ? 'border-red-500/50'
@@ -44,28 +30,46 @@ export function ContextHealthToast({ alerts, onDismiss, onAction }: Props) {
   const icon = alert.severity === 'critical' ? '\u{1F534}' : '\u26A0\uFE0F';
 
   return (
-    <div className={`mx-2 mb-2 px-3 py-2 rounded-lg border ${borderColor} bg-popover/95 backdrop-blur-sm text-sm shadow-md animate-in fade-in slide-in-from-top-2 duration-200`}>
+    <div
+      className={`mx-2 mb-2 rounded-lg border ${borderColor} bg-popover/95 px-3 py-2 text-sm shadow-md backdrop-blur-sm`}
+      role="status"
+      aria-live="polite"
+    >
       <div className="flex items-start justify-between gap-2">
-        <span className="flex-1">
+        <span className="min-w-0 flex-1 break-words leading-5">
           <span className="mr-1">{icon}</span>
           {alert.message}
         </span>
         <button
-          onClick={() => { setVisible(false); onDismiss(alert.ruleId); }}
-          className="text-muted-foreground hover:text-foreground text-xs px-1"
+          onClick={() => {
+            setHiddenAlertKeys(prev => {
+              const next = new Set(prev);
+              next.add(alertKey);
+              return next;
+            });
+            onDismiss(alert.ruleId);
+          }}
+          className="shrink-0 px-1 text-xs text-muted-foreground hover:text-foreground"
           aria-label="Dismiss"
         >
           ✕
         </button>
       </div>
-      <div className="flex gap-2 mt-1.5">
+      <div className="mt-1.5 flex flex-wrap gap-2">
         {alert.actions
           .filter(a => a.type !== 'dismiss')
           .map(action => (
             <button
               key={action.type}
-              onClick={() => { setVisible(false); onAction(action); }}
-              className="text-xs px-2 py-0.5 rounded bg-muted hover:bg-muted/80 text-foreground transition-colors"
+              onClick={() => {
+                setHiddenAlertKeys(prev => {
+                  const next = new Set(prev);
+                  next.add(alertKey);
+                  return next;
+                });
+                onAction(action);
+              }}
+              className="rounded bg-muted px-2 py-0.5 text-xs text-foreground transition-colors hover:bg-muted/80"
             >
               {action.type === 'compact' ? 'Compact' : 'New Session'}
             </button>
