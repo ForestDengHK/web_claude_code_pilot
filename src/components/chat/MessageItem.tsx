@@ -18,12 +18,15 @@ import { FileAttachmentDisplay } from './FileAttachmentDisplay';
 import { TTSButton } from './TTSButton';
 import { useTTS } from '@/contexts/TTSContext';
 import { findTextRange, highlightRange, scrollToRange } from '@/lib/tts/highlight';
+import type { HealthAlert } from '@/lib/context-health';
+import { ContextHealthDot } from './ContextHealthDot';
 
 interface MessageItemProps {
   message: Message;
   searchQuery?: string;
   isLatestMessage?: boolean;
   viewMode?: ViewMode;
+  healthAlerts?: HealthAlert[];
 }
 
 interface ToolBlock {
@@ -294,7 +297,7 @@ function StoredThinkingBlock({ content }: { content: string }) {
 
 const COLLAPSE_HEIGHT = 300;
 
-export function MessageItem({ message, searchQuery, isLatestMessage, viewMode = 'normal' }: MessageItemProps) {
+export function MessageItem({ message, searchQuery, isLatestMessage, viewMode = 'normal', healthAlerts }: MessageItemProps) {
   const { sessionTitle, workingDirectory } = usePanel();
   const [rememberDialogOpen, setRememberDialogOpen] = useState(false);
 
@@ -538,7 +541,12 @@ export function MessageItem({ message, searchQuery, isLatestMessage, viewMode = 
         {!isUser && (
           <div className="flex min-w-0 items-center gap-2">
             <span className="text-xs text-muted-foreground/50">{timestamp}</span>
-            {tokenUsage && viewMode !== 'summary' && <TokenUsageDisplay usage={tokenUsage} />}
+            {tokenUsage && viewMode !== 'summary' && (
+              <>
+                <TokenUsageDisplay usage={tokenUsage} />
+                {healthAlerts && healthAlerts.length > 0 && <ContextHealthDot alerts={healthAlerts} />}
+              </>
+            )}
           </div>
         )}
 

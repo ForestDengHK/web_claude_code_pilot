@@ -4,6 +4,7 @@ import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import { useSearchParams } from 'next/navigation';
 import type { Message, PermissionRequestEvent, InputRequestEvent, ViewMode } from '@/types';
+import type { HealthAlert } from '@/lib/context-health';
 import {
   Conversation,
   ConversationScrollButton,
@@ -114,6 +115,7 @@ interface MessageListProps {
   activeMessageId?: string | null;
   searchQuery?: string;
   viewMode?: ViewMode;
+  messageHealthAlerts?: Map<string, HealthAlert[]>;
 }
 
 export function MessageList({
@@ -139,6 +141,7 @@ export function MessageList({
   activeMessageId,
   searchQuery,
   viewMode = 'normal',
+  messageHealthAlerts,
 }: MessageListProps) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const scrollerRef = useRef<HTMLElement | null>(null);
@@ -335,6 +338,7 @@ export function MessageList({
                   searchQuery={searchQuery}
                   isLatestMessage={isLast && !isStreaming}
                   viewMode={viewMode}
+                  healthAlerts={messageHealthAlerts?.get(message.id)}
                 />
               </div>
             </div>

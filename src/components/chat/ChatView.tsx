@@ -17,6 +17,9 @@ import { formatCodexUsageMarkdown } from '@/lib/codex-usage';
 import { getRunningCommandSummary } from '@/lib/streaming-status';
 import { formatClaudeUsageMarkdown } from '@/lib/claude-usage';
 import type { ClaudeAccountInfo } from '@/lib/claude-usage';
+import { useContextHealth } from '@/hooks/useContextHealth';
+import { ContextHealthToast } from './ContextHealthToast';
+import type { HealthAction } from '@/lib/context-health';
 
 interface ToolUseInfo {
   id: string;
@@ -112,6 +115,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [currentEffort, setCurrentEffort] = useState<string | undefined>();
   const [currentAdvisorModel, setCurrentAdvisorModelRaw] = useState<string | null>(advisorModel || null);
 
+  // Context health monitoring
+  const { alerts: healthAlerts, turnAlerts, recordTurn, recordCompact, resetSession: resetHealthSession, dismissAlert } = useContextHealth(currentBackend);
+
   // Memory system state: null = use global default, true/false = session override
   const [memoryEnabled, setMemoryEnabledRaw] = useState<boolean | null>(null);
   const [memoryGlobalDefault, setMemoryGlobalDefault] = useState(false);
@@ -201,6 +207,23 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     () => bookmarkFilterActive ? messages.filter(m => m.bookmarked === 1) : messages,
     [bookmarkFilterActive, messages],
   );
+
+  // Build mapping of message ID → health alerts via assistant turn index
+  const messageHealthAlerts = useMemo(() => {
+    const map = new Map<string, import('@/lib/context-health').HealthAlert[]>();
+    let assistantTurnCount = 0;
+    for (const msg of messages) {
+      if (msg.role === 'assistant' && msg.token_usage) {
+        const alerts = turnAlerts.get(assistantTurnCount);
+        if (alerts && alerts.length > 0) {
+          map.set(msg.id, alerts);
+        }
+        assistantTurnCount++;
+      }
+    }
+    return map;
+  }, [messages, turnAlerts]);
+
   const [highlightMessageIds, setHighlightMessageIds] = useState<Set<string>>(new Set());
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -1009,8 +1032,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
               setStatusText(text);
             }
           },
-          onResult: () => {
-            // Push notifications are now server-initiated (see push-notifications.ts)
+          onResult: (usage) => {
+            recordTurn(usage);
+          },
+          onCompact: (trigger, preTokens) => {
+            recordCompact(trigger, preTokens);
           },
           onPermissionRequest: (permData) => {
             setPendingPermission(permData);
@@ -1237,6 +1263,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       }
       case '/clear':
         setMessages([]);
+        resetHealthSession();
         // Also clear database messages and reset SDK session
         if (sessionId) {
           fetch(`/api/chat/sessions/${sessionId}`, {
@@ -1411,6 +1438,17 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           sourceSessionId={branchSourceSessionId}
         />
       )}
+      <ContextHealthToast
+        alerts={healthAlerts}
+        onDismiss={dismissAlert}
+        onAction={(action: HealthAction) => {
+          if (action.type === 'compact') {
+            sendMessageRef.current?.('/compact');
+          } else if (action.type === 'new-session') {
+            window.location.href = '/chat';
+          }
+        }}
+      />
       <MessageList
         key={bookmarkFilterActive ? 'bookmarks' : 'all'}
         messages={displayMessages}
@@ -1435,6 +1473,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         activeMessageId={activeMessageId}
         searchQuery={searchQuery}
         viewMode={viewMode}
+        messageHealthAlerts={messageHealthAlerts}
       />
       {/* Advisor Mode Bar — Claude backend only */}
       {currentBackend === 'claude' && (() => {
