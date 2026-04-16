@@ -11,10 +11,13 @@ export const dynamic = 'force-dynamic';
 
 const execFileAsync = promisify(execFile);
 
+const PLUGIN_CACHE_DIR = path.join(os.homedir(), '.claude', 'plugins', 'cache');
+
 interface PluginInfo {
   name: string;       // e.g. "superpowers@claude-plugins-official"
   version: string;
   scope: string;
+  installPath?: string;
 }
 
 interface UpdateResult {
@@ -23,6 +26,7 @@ interface UpdateResult {
   newVersion: string | null;
   status: 'updated' | 'up-to-date' | 'error';
   message: string;
+  cleaned?: number;  // number of orphaned dirs removed
 }
 
 /**
@@ -45,6 +49,7 @@ function getInstalledPlugins(): PluginInfo[] {
           name: key,
           version: (e.version as string) || 'unknown',
           scope: (e.scope as string) || 'user',
+          installPath: (e.installPath as string) || undefined,
         });
       }
     }
@@ -52,6 +57,73 @@ function getInstalledPlugins(): PluginInfo[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Clean up orphaned version directories for a plugin after a successful update.
+ *
+ * The Claude CLI marks old versions with `.orphaned_at` but never deletes them.
+ * This scans the plugin's cache directory and removes any version dirs that have
+ * the `.orphaned_at` marker, keeping only the active version(s).
+ *
+ * Returns the number of directories removed.
+ */
+function cleanOrphanedVersions(pluginKey: string): number {
+  // pluginKey is e.g. "superpowers@claude-plugins-official"
+  // installPath is e.g. ~/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.7
+  // We need to find the plugin dir: cache/<marketplace>/<plugin-name>/
+  const [pluginName, marketplace] = pluginKey.split('@');
+  if (!pluginName || !marketplace) return 0;
+
+  const pluginDir = path.join(PLUGIN_CACHE_DIR, marketplace, pluginName);
+  if (!fs.existsSync(pluginDir)) return 0;
+
+  let cleaned = 0;
+  try {
+    const entries = fs.readdirSync(pluginDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      const versionDir = path.join(pluginDir, entry.name);
+      const orphanedMarker = path.join(versionDir, '.orphaned_at');
+      if (fs.existsSync(orphanedMarker)) {
+        try {
+          fs.rmSync(versionDir, { recursive: true, force: true });
+          cleaned++;
+        } catch {
+          // Ignore removal errors — directory may be in use
+        }
+      }
+    }
+  } catch {
+    // Ignore scan errors
+  }
+  return cleaned;
+}
+
+/**
+ * Clean up temp_git_* directories left by the Claude CLI during plugin installs.
+ * These are temporary git clones that should have been cleaned up but weren't.
+ */
+function cleanTempGitDirs(): number {
+  if (!fs.existsSync(PLUGIN_CACHE_DIR)) return 0;
+
+  let cleaned = 0;
+  try {
+    const entries = fs.readdirSync(PLUGIN_CACHE_DIR, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && entry.name.startsWith('temp_git_')) {
+        try {
+          fs.rmSync(path.join(PLUGIN_CACHE_DIR, entry.name), { recursive: true, force: true });
+          cleaned++;
+        } catch {
+          // Ignore removal errors
+        }
+      }
+    }
+  } catch {
+    // Ignore scan errors
+  }
+  return cleaned;
 }
 
 /**
@@ -117,20 +189,26 @@ export async function POST(request: NextRequest) {
       if (output.includes('updated from')) {
         // Parse: Plugin "superpowers" updated from 5.0.2 to 5.0.5
         const match = output.match(/updated from (\S+) to (\S+)/);
+        // Clean up orphaned versions left by the previous install
+        const cleaned = cleanOrphanedVersions(plugin.name);
         results.push({
           name: plugin.name,
           oldVersion: plugin.version,
           newVersion: match ? match[2] : 'latest',
           status: 'updated',
           message: output.trim(),
+          cleaned,
         });
       } else if (output.includes('already') || output.includes('up to date') || output.includes('up-to-date')) {
+        // Even when up-to-date, clean any leftover orphans from previous updates
+        const cleaned = cleanOrphanedVersions(plugin.name);
         results.push({
           name: plugin.name,
           oldVersion: plugin.version,
           newVersion: null,
           status: 'up-to-date',
           message: 'Already up to date',
+          cleaned,
         });
       } else {
         results.push({
@@ -153,8 +231,12 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Clean up stale temp_git_* directories from past installs
+  const tempCleaned = cleanTempGitDirs();
+
   const updated = results.filter(r => r.status === 'updated').length;
   const errors = results.filter(r => r.status === 'error').length;
+  const orphansCleaned = results.reduce((sum, r) => sum + (r.cleaned || 0), 0) + tempCleaned;
 
   return Response.json({
     summary: {
@@ -162,6 +244,7 @@ export async function POST(request: NextRequest) {
       updated,
       upToDate: results.length - updated - errors,
       errors,
+      orphansCleaned,
     },
     results,
   });

@@ -80,17 +80,43 @@ function scanCachedPlugins(): SkillFile[] {
         if (!plugin.isDirectory() || plugin.name.startsWith(".")) continue;
         const pluginDir = path.join(mpDir, plugin.name);
 
-        // Find latest version directory (sort alphabetically, take last)
-        let versions;
+        // Find best version directory.
+        // Claude Code marks stale installs with .orphaned_at — skip those.
+        // Among remaining dirs, prefer ones that contain skills/ or commands/,
+        // then semver-looking names over git hashes (e.g. "5.0.7" > "917e5f53b16b").
+        let versionNames: string[];
         try {
-          versions = fs.readdirSync(pluginDir, { withFileTypes: true })
+          versionNames = fs.readdirSync(pluginDir, { withFileTypes: true })
             .filter(v => v.isDirectory() && !v.name.startsWith("."))
-            .map(v => v.name)
-            .sort();
+            .filter(v => !fs.existsSync(path.join(pluginDir, v.name, ".orphaned_at")))
+            .map(v => v.name);
         } catch { continue; }
-        if (versions.length === 0) continue;
+        // Fallback: if all versions are orphaned, try them anyway
+        if (versionNames.length === 0) {
+          try {
+            versionNames = fs.readdirSync(pluginDir, { withFileTypes: true })
+              .filter(v => v.isDirectory() && !v.name.startsWith("."))
+              .map(v => v.name);
+          } catch { continue; }
+        }
+        if (versionNames.length === 0) continue;
 
-        const latestVersionDir = path.join(pluginDir, versions[versions.length - 1]);
+        const isSemver = (v: string) => /^\d+\.\d+/.test(v);
+        const hasContent = (v: string) => {
+          const base = path.join(pluginDir, v);
+          return fs.existsSync(path.join(base, "skills")) || fs.existsSync(path.join(base, "commands"));
+        };
+        versionNames.sort((a, b) => {
+          const aContent = hasContent(a) ? 1 : 0;
+          const bContent = hasContent(b) ? 1 : 0;
+          if (aContent !== bContent) return aContent - bContent;
+          const aSemver = isSemver(a) ? 1 : 0;
+          const bSemver = isSemver(b) ? 1 : 0;
+          if (aSemver !== bSemver) return aSemver - bSemver;
+          return a.localeCompare(b);
+        });
+
+        const latestVersionDir = path.join(pluginDir, versionNames[versionNames.length - 1]);
 
         // Scan skills/ subdirectory (SKILL.md format)
         const skillsDir = path.join(latestVersionDir, "skills");

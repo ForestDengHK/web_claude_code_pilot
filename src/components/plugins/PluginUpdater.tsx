@@ -25,6 +25,7 @@ interface UpdateResponse {
     updated: number;
     upToDate: number;
     errors: number;
+    orphansCleaned?: number;
   };
   results: UpdateResult[];
 }
@@ -102,6 +103,7 @@ export function PluginUpdater() {
             updated: existing.filter((r) => r.status === "updated").length + data.summary.updated,
             upToDate: existing.filter((r) => r.status === "up-to-date").length + data.summary.upToDate,
             errors: existing.filter((r) => r.status === "error").length + data.summary.errors,
+            orphansCleaned: (prev.summary.orphansCleaned ?? 0) + (data.summary.orphansCleaned ?? 0),
           },
           results: [...existing, ...data.results],
         };
@@ -167,6 +169,7 @@ export function PluginUpdater() {
             ? `✓ ${updateResults.summary.updated} updated`
             : "All plugins up to date"}
           {updateResults.summary.errors > 0 && ` · ${updateResults.summary.errors} failed`}
+          {(updateResults.summary.orphansCleaned ?? 0) > 0 && ` · ${updateResults.summary.orphansCleaned} stale cache${updateResults.summary.orphansCleaned === 1 ? '' : 's'} cleaned`}
         </div>
       )}
 
