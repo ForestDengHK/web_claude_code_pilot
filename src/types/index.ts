@@ -216,6 +216,7 @@ export interface TokenUsage {
   cost_usd?: number;
   model?: string;
   effort?: string; // effort level used for this response (low/medium/high/max)
+  contextWindow?: number; // model's max context window size
 }
 
 // ==========================================

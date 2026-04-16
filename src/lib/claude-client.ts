@@ -278,14 +278,17 @@ function extractTextFromMessage(msg: SDKAssistantMessage): string {
 function extractTokenUsage(msg: SDKResultMessage): TokenUsage | null {
   if (!msg.usage) return null;
   // Extract model name from modelUsage keys (e.g. "claude-opus-4-6")
-  const model = msg.modelUsage ? Object.keys(msg.modelUsage)[0] : undefined;
+  const modelKey = msg.modelUsage ? Object.keys(msg.modelUsage)[0] : undefined;
   return {
     input_tokens: msg.usage.input_tokens,
     output_tokens: msg.usage.output_tokens,
     cache_read_input_tokens: msg.usage.cache_read_input_tokens ?? 0,
     cache_creation_input_tokens: msg.usage.cache_creation_input_tokens ?? 0,
     cost_usd: 'total_cost_usd' in msg ? msg.total_cost_usd : undefined,
-    model,
+    model: modelKey,
+    contextWindow: modelKey && msg.modelUsage
+      ? msg.modelUsage[modelKey]?.contextWindow
+      : undefined,
   };
 }
 
@@ -976,7 +979,37 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
                 default: {
                   const msgType = (message as { type: string }).type;
-                  if (!['auth_status', 'session_state_changed', 'files_persisted', 'tool_use_summary', 'hook_started', 'hook_progress', 'hook_response', 'task_notification', 'task_started', 'task_progress', 'status', 'api_retry', 'compact_boundary'].includes(msgType)) {
+
+                  // Forward compact_boundary events as status notifications
+                  if (msgType === 'compact_boundary') {
+                    const cbMsg = message as { compact_metadata?: { trigger?: string; pre_tokens?: number } };
+                    controller.enqueue(formatSSE({
+                      type: 'status',
+                      data: JSON.stringify({
+                        notification: true,
+                        title: 'Context Compacted',
+                        compact: {
+                          trigger: cbMsg.compact_metadata?.trigger ?? 'unknown',
+                          preTokens: cbMsg.compact_metadata?.pre_tokens ?? 0,
+                        },
+                      }),
+                    }));
+                  }
+                  // Forward compacting status
+                  else if (msgType === 'status') {
+                    const statusMsg = message as { status?: string };
+                    if (statusMsg.status === 'compacting') {
+                      controller.enqueue(formatSSE({
+                        type: 'status',
+                        data: JSON.stringify({
+                          notification: true,
+                          title: 'Compacting context...',
+                          compacting: true,
+                        }),
+                      }));
+                    }
+                  }
+                  else if (!['auth_status', 'session_state_changed', 'files_persisted', 'tool_use_summary', 'hook_started', 'hook_progress', 'hook_response', 'task_notification', 'task_started', 'task_progress', 'api_retry'].includes(msgType)) {
                     console.log(`[claude-client] Unhandled message type: ${msgType}`, JSON.stringify(message).slice(0, 200));
                   }
                   break;

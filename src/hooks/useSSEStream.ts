@@ -38,6 +38,7 @@ export interface SSECallbacks {
   onToolTimeout: (toolName: string, elapsedSeconds: number) => void;
   onRateLimit?: (info: RateLimitInfo) => void;
   onHeartbeat?: () => void;
+  onCompact?: (trigger: string, preTokens: number) => void;
   onError: (accumulated: string) => void;
 }
 
@@ -109,6 +110,9 @@ function handleSSEEvent(
         const statusData = JSON.parse(event.data);
         if (statusData.session_id) {
           callbacks.onStatus(`Connected (${statusData.model || 'model'})`);
+        } else if (statusData.compact) {
+          callbacks.onCompact?.(statusData.compact.trigger, statusData.compact.preTokens);
+          callbacks.onStatus(statusData.title || 'Context compacted');
         } else if (statusData.notification) {
           callbacks.onStatus(statusData.message || statusData.title || undefined);
         } else {
