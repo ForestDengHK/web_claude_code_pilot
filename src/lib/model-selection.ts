@@ -21,9 +21,25 @@ export interface ClaudeModelEffortInfo {
   supportedEffortLevels: string[];
 }
 
+/**
+ * Claude-only capability flags exposed by the SDK's `ModelInfo`
+ * (SDK ≥ 0.2.112). Surfaced to the client so UI controls (Task 2's
+ * thinking toggle, Task 5's fast-mode toggle, Task 6's auto-mode toggle)
+ * can be gated per model without pattern-matching model names.
+ *
+ * Codex models never populate this map — `inferBackendFromModel()` can be
+ * used to hide any capability-gated UI when a Codex model is selected.
+ */
+export interface ClaudeModelCapabilities {
+  supportsAdaptiveThinking: boolean;
+  supportsFastMode: boolean;
+  supportsAutoMode: boolean;
+}
+
 export interface ModelCatalog {
   models: ModelOption[];
   claudeEffortInfo: Map<string, ClaudeModelEffortInfo>;
+  claudeCapabilities: Map<string, ClaudeModelCapabilities>;
   codexModelInfo: Map<string, CodexModelInfo>;
 }
 
@@ -33,6 +49,9 @@ interface ClaudeModelsResponse {
     displayName: string;
     supportsEffort?: boolean;
     supportedEffortLevels?: string[];
+    supportsAdaptiveThinking?: boolean;
+    supportsFastMode?: boolean;
+    supportsAutoMode?: boolean;
   }>;
 }
 
@@ -64,6 +83,7 @@ export async function fetchModelCatalog(refresh = false): Promise<ModelCatalog> 
   }));
 
   const claudeEffortInfo = new Map<string, ClaudeModelEffortInfo>();
+  const claudeCapabilities = new Map<string, ClaudeModelCapabilities>();
   for (const model of claudeData.models || []) {
     if (model.supportsEffort && model.supportedEffortLevels?.length) {
       claudeEffortInfo.set(model.value, {
@@ -71,6 +91,14 @@ export async function fetchModelCatalog(refresh = false): Promise<ModelCatalog> 
         supportedEffortLevels: model.supportedEffortLevels,
       });
     }
+    // Always populate capabilities for every Claude model, even when all
+    // three flags are false/missing, so consumers can look up by model name
+    // and get back a deterministic all-false shape rather than `undefined`.
+    claudeCapabilities.set(model.value, {
+      supportsAdaptiveThinking: model.supportsAdaptiveThinking === true,
+      supportsFastMode: model.supportsFastMode === true,
+      supportsAutoMode: model.supportsAutoMode === true,
+    });
   }
 
   const codexModelInfo = new Map<string, CodexModelInfo>();
@@ -86,6 +114,7 @@ export async function fetchModelCatalog(refresh = false): Promise<ModelCatalog> 
   return {
     models: [...claudeModels, ...codexModels],
     claudeEffortInfo,
+    claudeCapabilities,
     codexModelInfo,
   };
 }

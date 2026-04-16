@@ -69,7 +69,7 @@ export function RememberDialog({
 
     Promise.all([
       fetch(`/api/chat/sessions/${sourceSessionId}`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
-      fetchModelCatalog().catch(() => ({ models: [], claudeEffortInfo: new Map(), codexModelInfo: new Map() })),
+      fetchModelCatalog().catch(() => ({ models: [], claudeEffortInfo: new Map(), claudeCapabilities: new Map(), codexModelInfo: new Map() })),
     ]).then(([sessionData, catalog]) => {
       if (cancelled) return;
 

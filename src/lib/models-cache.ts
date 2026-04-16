@@ -20,6 +20,12 @@ export interface CachedModel {
   description: string;
   supportsEffort?: boolean;
   supportedEffortLevels?: string[];
+  // Opus-4.7-era capability flags from SDK ≥ 0.2.112 ModelInfo. Optional so
+  // older cache entries (pre-bump) remain valid — consumers must treat a
+  // missing field as "unsupported".
+  supportsAdaptiveThinking?: boolean;
+  supportsFastMode?: boolean;
+  supportsAutoMode?: boolean;
 }
 
 let cachedModels: CachedModel[] | null = null;

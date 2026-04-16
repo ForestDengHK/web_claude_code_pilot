@@ -140,6 +140,12 @@ export async function GET(request: Request) {
         description: m.description,
         supportsEffort: m.supportsEffort,
         supportedEffortLevels: m.supportedEffortLevels,
+        // Opus-4.7-era capability flags (SDK ≥ 0.2.112). Surfaced so the
+        // client can gate UI (thinking toggle, fast-mode toggle, auto-mode
+        // toggle) per model without pattern-matching model names.
+        supportsAdaptiveThinking: m.supportsAdaptiveThinking,
+        supportsFastMode: m.supportsFastMode,
+        supportsAutoMode: m.supportsAutoMode,
       }));
       setCachedModels(mapped, activeProviderId);
       return Response.json({ models: mapped });
