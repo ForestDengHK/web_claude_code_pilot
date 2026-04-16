@@ -22,6 +22,7 @@ const ALLOWED_KEYS = [
   'tts_voice_mixed',
   'memory_enabled',
   'context_health_enabled',
+  'context_health_config',
 ];
 
 export async function GET() {

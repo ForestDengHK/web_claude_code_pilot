@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { evaluate, rules } from '@/lib/context-health';
-import type { TurnMetrics, SessionMetrics, HealthAlert } from '@/lib/context-health';
+import type { TurnMetrics, SessionMetrics, HealthAlert, RuleConfig } from '@/lib/context-health';
 import type { TokenUsage } from '@/types';
 
 function createEmptySession(): SessionMetrics {
@@ -17,13 +17,29 @@ function createEmptySession(): SessionMetrics {
 
 /**
  * Aggregates SSE turn data and evaluates context health rules.
- * Only active for Claude backend.
+ * Only active for Claude backend. Loads rule config from app settings.
  */
 export function useContextHealth(backend: 'claude' | 'codex') {
   const [alerts, setAlerts] = useState<HealthAlert[]>([]);
   const [turnAlerts, setTurnAlerts] = useState<Map<number, HealthAlert[]>>(new Map());
   const sessionRef = useRef<SessionMetrics>(createEmptySession());
   const firedHistoryRef = useRef<Map<string, number>>(new Map());
+  const configRef = useRef<RuleConfig>({});
+
+  // Load rule config from app settings on mount
+  useEffect(() => {
+    if (backend !== 'claude') return;
+    fetch('/api/settings/app')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.settings?.context_health_config) {
+          try {
+            configRef.current = JSON.parse(data.settings.context_health_config);
+          } catch { /* ignore malformed config */ }
+        }
+      })
+      .catch(() => { /* ignore fetch errors */ });
+  }, [backend]);
 
   const recordTurn = useCallback((usage: TokenUsage | null) => {
     if (backend !== 'claude' || !usage) return;
@@ -52,7 +68,7 @@ export function useContextHealth(backend: 'claude' | 'codex') {
     session.totalCost += turn.costUsd ?? 0;
     session.lastActivityAt = Date.now();
 
-    const newAlerts = evaluate(turn, session, rules, firedHistoryRef.current);
+    const newAlerts = evaluate(turn, session, rules, firedHistoryRef.current, configRef.current);
     for (const a of newAlerts) {
       firedHistoryRef.current.set(a.ruleId, turnIndex);
     }
@@ -72,7 +88,7 @@ export function useContextHealth(backend: 'claude' | 'codex') {
     // Evaluate compact notification rule immediately
     const turn = session.turns[session.turns.length - 1];
     if (turn) {
-      const compactAlerts = evaluate(turn, session, rules, firedHistoryRef.current);
+      const compactAlerts = evaluate(turn, session, rules, firedHistoryRef.current, configRef.current);
       const compactAlert = compactAlerts.find(a => a.ruleId === 'auto-compact-fired');
       if (compactAlert) {
         setAlerts(prev => [...prev.filter(a => a.ruleId !== 'auto-compact-fired'), compactAlert]);
@@ -91,6 +107,11 @@ export function useContextHealth(backend: 'claude' | 'codex') {
     setAlerts(prev => prev.filter(a => a.ruleId !== ruleId));
   }, []);
 
+  /** Reload config from settings (called after settings change) */
+  const reloadConfig = useCallback((config: RuleConfig) => {
+    configRef.current = config;
+  }, []);
+
   return {
     alerts,
     turnAlerts,
@@ -98,5 +119,6 @@ export function useContextHealth(backend: 'claude' | 'codex') {
     recordCompact,
     resetSession,
     dismissAlert,
+    reloadConfig,
   };
 }
