@@ -26,6 +26,7 @@ import { formatMessagesForContext } from './context-bridge';
 import { sendPushNotification } from './push-notifications';
 import { wasInterrupted } from './abort-registry';
 import { findClaudeBinary, findGitBash, getExpandedPath } from './platform';
+import { sanitizeEffortLevel } from './effort';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
@@ -507,8 +508,9 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           queryOptions.model = model;
         }
 
-        if (effort && ['low', 'medium', 'high', 'max'].includes(effort)) {
-          queryOptions.effort = effort as 'low' | 'medium' | 'high' | 'max';
+        const sanitizedEffort = sanitizeEffortLevel(effort);
+        if (sanitizedEffort) {
+          queryOptions.effort = sanitizedEffort;
         }
 
         if (advisorModel) {

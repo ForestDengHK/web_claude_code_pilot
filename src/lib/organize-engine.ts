@@ -13,6 +13,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import type { ChatSession } from '@/types';
 import { streamCodex } from '@/lib/codex-client';
+import { sanitizeEffortLevel } from '@/lib/effort';
 import { CodexProcessManager } from '@/lib/codex-process-manager';
 import type {
   OrganizeConfig,
@@ -51,7 +52,6 @@ export interface OrganizeCallbacks {
 // ---------------------------------------------------------------------------
 
 const AI_ANALYSIS_CONCURRENCY = 3;
-const CLAUDE_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max']);
 
 /**
  * Extract readable text from a message's content field.
@@ -214,8 +214,9 @@ async function analyzeSessionWithAI(
         allowDangerouslySkipPermissions: true,
       };
       if (config.model) queryOptions.model = config.model;
-      if (config.effort && CLAUDE_EFFORT_LEVELS.has(config.effort)) {
-        queryOptions.effort = config.effort as 'low' | 'medium' | 'high' | 'max';
+      const sanitizedEffort = sanitizeEffortLevel(config.effort);
+      if (sanitizedEffort) {
+        queryOptions.effort = sanitizedEffort;
       }
 
       const conversation = query({ prompt, options: queryOptions });

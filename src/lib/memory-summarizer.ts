@@ -3,6 +3,7 @@ import type { Options, SDKAssistantMessage } from '@anthropic-ai/claude-agent-sd
 import { getSetting, getActiveProvider } from './db';
 import { runCodexOneShot } from './codex-client';
 import { findClaudeBinary, getExpandedPath } from './platform';
+import { sanitizeEffortLevel } from './effort';
 import os from 'os';
 import path from 'path';
 
@@ -246,8 +247,9 @@ async function runClaudeOneShot(
     env: sdkEnv,
     settingSources: [],
   };
-  if (effort && ['low', 'medium', 'high', 'max'].includes(effort)) {
-    queryOptions.effort = effort as 'low' | 'medium' | 'high' | 'max';
+  const sanitizedEffort = sanitizeEffortLevel(effort);
+  if (sanitizedEffort) {
+    queryOptions.effort = sanitizedEffort;
   }
 
   const claudePath = findClaudeBinary();
