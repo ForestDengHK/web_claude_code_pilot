@@ -27,6 +27,12 @@ interface MessageItemProps {
   isLatestMessage?: boolean;
   viewMode?: ViewMode;
   healthAlerts?: HealthAlert[];
+  /**
+   * Optional session-level dismiss callback forwarded from ChatView's
+   * `useContextHealth` hook so the dot's ✕ suppresses the same rule the
+   * top-level toast would suppress. No-op when absent (backwards compat).
+   */
+  onDismissHealthAlert?: (ruleId: string) => void;
 }
 
 interface ToolBlock {
@@ -297,7 +303,7 @@ function StoredThinkingBlock({ content }: { content: string }) {
 
 const COLLAPSE_HEIGHT = 300;
 
-export function MessageItem({ message, searchQuery, isLatestMessage, viewMode = 'normal', healthAlerts }: MessageItemProps) {
+export function MessageItem({ message, searchQuery, isLatestMessage, viewMode = 'normal', healthAlerts, onDismissHealthAlert }: MessageItemProps) {
   const { sessionTitle, workingDirectory } = usePanel();
   const [rememberDialogOpen, setRememberDialogOpen] = useState(false);
 
@@ -544,7 +550,9 @@ export function MessageItem({ message, searchQuery, isLatestMessage, viewMode = 
             {tokenUsage && viewMode !== 'summary' && (
               <>
                 <TokenUsageDisplay usage={tokenUsage} />
-                {healthAlerts && healthAlerts.length > 0 && <ContextHealthDot alerts={healthAlerts} />}
+                {healthAlerts && healthAlerts.length > 0 && (
+                  <ContextHealthDot alerts={healthAlerts} onDismiss={onDismissHealthAlert} />
+                )}
               </>
             )}
           </div>

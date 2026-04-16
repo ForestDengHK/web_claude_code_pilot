@@ -1,28 +1,29 @@
 'use client';
 
-import { useState } from 'react';
 import type { HealthAlert, HealthAction } from '@/lib/context-health';
 
 interface Props {
   alerts: HealthAlert[];
+  /**
+   * Session-level dismiss — hook-side impl adds the rule to a dismissed Set
+   * so future turns don't re-fire the same rule, and clears it from the
+   * message-level dots too. See `useContextHealth.dismissAlert`.
+   */
   onDismiss: (ruleId: string) => void;
   onAction: (action: HealthAction) => void;
 }
 
 export function ContextHealthToast({ alerts, onDismiss, onAction }: Props) {
-  const [hiddenAlertKeys, setHiddenAlertKeys] = useState<Set<string>>(new Set());
-
-  // Only show warning/critical alerts as toast
+  // Only show warning/critical alerts as toast — info stays on the dot.
   const toastAlerts = alerts.filter(a => a.severity !== 'info');
 
-  // Show highest severity alert only
+  // Show highest severity alert only.
   const alert = [...toastAlerts].sort((a, b) => {
     const order = { critical: 0, warning: 1, info: 2 };
     return order[a.severity] - order[b.severity];
   })[0];
-  const alertKey = alert ? `${alert.ruleId}:${alert.message}` : null;
 
-  if (!alert || !alertKey || hiddenAlertKeys.has(alertKey)) return null;
+  if (!alert) return null;
 
   const borderColor = alert.severity === 'critical'
     ? 'border-red-500/50'
@@ -41,16 +42,9 @@ export function ContextHealthToast({ alerts, onDismiss, onAction }: Props) {
           {alert.message}
         </span>
         <button
-          onClick={() => {
-            setHiddenAlertKeys(prev => {
-              const next = new Set(prev);
-              next.add(alertKey);
-              return next;
-            });
-            onDismiss(alert.ruleId);
-          }}
+          onClick={() => onDismiss(alert.ruleId)}
           className="shrink-0 px-1 text-xs text-muted-foreground hover:text-foreground"
-          aria-label="Dismiss"
+          aria-label="Dismiss for this session"
         >
           ✕
         </button>
@@ -62,11 +56,10 @@ export function ContextHealthToast({ alerts, onDismiss, onAction }: Props) {
             <button
               key={action.type}
               onClick={() => {
-                setHiddenAlertKeys(prev => {
-                  const next = new Set(prev);
-                  next.add(alertKey);
-                  return next;
-                });
+                // Dismiss before taking the action so the toast disappears
+                // immediately even if the action is async (compact takes a
+                // turn to finalize). Hook's dismissAlert is idempotent.
+                onDismiss(alert.ruleId);
                 onAction(action);
               }}
               className="rounded bg-muted px-2 py-0.5 text-xs text-foreground transition-colors hover:bg-muted/80"

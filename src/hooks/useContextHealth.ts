@@ -46,6 +46,11 @@ export function useContextHealth(backend: 'claude' | 'codex') {
   const enabledRef = useRef(true);
   const settingsLoadedRef = useRef(false);
   const pendingUsagesRef = useRef<TokenUsage[]>([]);
+  // Rule ids the user explicitly dismissed this session. In-memory only:
+  // cleared on `resetSession()` and on page reload (user would have a fresh
+  // context then anyway). For permanent mute, Settings → Context Health lets
+  // the user disable a rule outright — we don't duplicate that here.
+  const dismissedRuleIdsRef = useRef<Set<string>>(new Set());
 
   const appendTurn = useCallback((usage: TokenUsage) => {
     const session = sessionRef.current;
@@ -56,10 +61,16 @@ export function useContextHealth(backend: 'claude' | 'codex') {
     session.totalCost += turn.costUsd ?? 0;
     session.lastActivityAt = Date.now();
 
-    const newAlerts = evaluate(turn, session, rules, firedHistoryRef.current, configRef.current);
-    for (const alert of newAlerts) {
+    // Evaluate rules, then filter out whatever the user has dismissed this
+    // session so the same rule can't ping again via cooldown re-fire. We still
+    // update `firedHistoryRef` for dismissed rules so the cooldown clock keeps
+    // ticking — if the user later calls `resetSession()` the cooldowns are a
+    // non-issue, and if we ever want "unmute" we have the data intact.
+    const rawAlerts = evaluate(turn, session, rules, firedHistoryRef.current, configRef.current);
+    for (const alert of rawAlerts) {
       firedHistoryRef.current.set(alert.ruleId, turnIndex);
     }
+    const newAlerts = rawAlerts.filter(a => !dismissedRuleIdsRef.current.has(a.ruleId));
 
     return { turnIndex, newAlerts };
   }, []);
@@ -171,12 +182,30 @@ export function useContextHealth(backend: 'claude' | 'codex') {
     sessionRef.current = createEmptySession();
     firedHistoryRef.current.clear();
     pendingUsagesRef.current = [];
+    dismissedRuleIdsRef.current.clear();
     setAlerts([]);
     setTurnAlerts(new Map());
   }, []);
 
+  /**
+   * "Not right now" for this session. Marks the rule as dismissed in the ref
+   * so future turns skip it (see `appendTurn`), and also clears it from both
+   * the top-level toast state and every per-turn entry so dots on historical
+   * messages disappear too — single click, all surfaces consistent.
+   */
   const dismissAlert = useCallback((ruleId: string) => {
+    dismissedRuleIdsRef.current.add(ruleId);
     setAlerts(prev => prev.filter(a => a.ruleId !== ruleId));
+    setTurnAlerts(prev => {
+      let mutated = false;
+      const next = new Map<number, HealthAlert[]>();
+      for (const [turnIndex, list] of prev) {
+        const filtered = list.filter(a => a.ruleId !== ruleId);
+        if (filtered.length !== list.length) mutated = true;
+        if (filtered.length > 0) next.set(turnIndex, filtered);
+      }
+      return mutated ? next : prev;
+    });
   }, []);
 
   /**
@@ -204,12 +233,17 @@ export function useContextHealth(backend: 'claude' | 'codex') {
       session.totalCost += turn.costUsd ?? 0;
       session.lastActivityAt = Date.now();
 
-      const newAlerts = evaluate(turn, session, rules, firedHistory, configRef.current);
-      for (const alert of newAlerts) {
+      const rawAlerts = evaluate(turn, session, rules, firedHistory, configRef.current);
+      for (const alert of rawAlerts) {
         firedHistory.set(alert.ruleId, turn.turnIndex);
       }
-      if (newAlerts.length > 0) {
-        hydratedTurnAlerts.set(turn.turnIndex, newAlerts);
+      // Respect session-level dismissals during history hydration too so a
+      // page reload doesn't re-surface alerts the user silenced for rules the
+      // user already knows about. (Dismissed ref is cleared by resetSession
+      // but survives hydrations within the same session.)
+      const visible = rawAlerts.filter(a => !dismissedRuleIdsRef.current.has(a.ruleId));
+      if (visible.length > 0) {
+        hydratedTurnAlerts.set(turn.turnIndex, visible);
       }
     }
 

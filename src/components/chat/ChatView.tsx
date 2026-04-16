@@ -1561,6 +1561,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         searchQuery={searchQuery}
         viewMode={viewMode}
         messageHealthAlerts={messageHealthAlerts}
+        onDismissHealthAlert={dismissAlert}
       />
       {/* Advisor Mode Bar — Claude backend only */}
       {currentBackend === 'claude' && (() => {
