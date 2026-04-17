@@ -16,11 +16,25 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { Loading02Icon, GlobeIcon, FolderOpenIcon } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
 
+export interface ScopeOption {
+  value: string;
+  label: string;
+  description: string;
+  /** Optional Hugeicon component; defaults to FolderOpenIcon if omitted. */
+  icon?: typeof GlobeIcon;
+}
+
 interface CreateSkillDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreate: (name: string, scope: "global" | "project", content: string) => Promise<void>;
+  onCreate: (name: string, scope: string, content: string) => Promise<void>;
   workingDirectory?: string;
+  /** Custom scopes. When omitted, defaults to Claude's Project/Global. */
+  scopeOptions?: ScopeOption[];
+  /** Dialog title. Default: "Create New Skill". */
+  title?: string;
+  /** Dialog description. Default: Claude-style message. */
+  description?: string;
 }
 
 const TEMPLATES: { label: string; content: string }[] = [
@@ -59,9 +73,32 @@ export function CreateSkillDialog({
   onOpenChange,
   onCreate,
   workingDirectory,
+  scopeOptions,
+  title,
+  description,
 }: CreateSkillDialogProps) {
+  const DEFAULT_CLAUDE_SCOPES: ScopeOption[] = [
+    {
+      value: "project",
+      label: "Project",
+      description: workingDirectory
+        ? `Saved in ${workingDirectory}/.claude/skills/ (this project only)`
+        : "Saved in ./.claude/skills/ (this project only)",
+      icon: FolderOpenIcon,
+    },
+    {
+      value: "global",
+      label: "Global",
+      description: "Saved in ~/.claude/skills/ (available everywhere)",
+      icon: GlobeIcon,
+    },
+  ];
+
+  const scopes = scopeOptions ?? DEFAULT_CLAUDE_SCOPES;
+  const initialScope = scopes[0]?.value ?? "project";
+
   const [name, setName] = useState("");
-  const [scope, setScope] = useState<"global" | "project">("project");
+  const [scope, setScope] = useState<string>(initialScope);
   const [templateIdx, setTemplateIdx] = useState(0);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
@@ -83,7 +120,7 @@ export function CreateSkillDialog({
       await onCreate(trimmed, scope, TEMPLATES[templateIdx].content);
       // Reset on success
       setName("");
-      setScope("project");
+      setScope(initialScope);
       setTemplateIdx(0);
       onOpenChange(false);
     } catch (err) {
@@ -93,13 +130,15 @@ export function CreateSkillDialog({
     }
   };
 
+  const activeScopeDescription = scopes.find((s) => s.value === scope)?.description ?? "";
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Create New Skill</DialogTitle>
+          <DialogTitle>{title ?? "Create New Skill"}</DialogTitle>
           <DialogDescription>
-            Create a new slash command skill. It will be saved as a .md file.
+            {description ?? "Create a new slash command skill. It will be saved as a .md file."}
           </DialogDescription>
         </DialogHeader>
 
@@ -128,41 +167,32 @@ export function CreateSkillDialog({
           <div className="space-y-2">
             <Label>Scope</Label>
             <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setScope("project")}
-                className={cn(
-                  "flex-1 flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors",
-                  scope === "project"
-                    ? "border-blue-500/50 bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                    : "border-border hover:bg-accent"
-                )}
-              >
-                <HugeiconsIcon icon={FolderOpenIcon} className="h-4 w-4" />
-                Project
-              </button>
-              <button
-                type="button"
-                onClick={() => setScope("global")}
-                className={cn(
-                  "flex-1 flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors",
-                  scope === "global"
-                    ? "border-green-500/50 bg-green-500/10 text-green-600 dark:text-green-400"
-                    : "border-border hover:bg-accent"
-                )}
-              >
-                <HugeiconsIcon icon={GlobeIcon} className="h-4 w-4" />
-                Global
-              </button>
+              {scopes.map((s) => {
+                const active = scope === s.value;
+                const Icon = s.icon ?? FolderOpenIcon;
+                return (
+                  <button
+                    key={s.value}
+                    type="button"
+                    onClick={() => setScope(s.value)}
+                    className={cn(
+                      "flex-1 flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors",
+                      active
+                        ? "border-blue-500/50 bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                        : "border-border hover:bg-accent"
+                    )}
+                  >
+                    <HugeiconsIcon icon={Icon} className="h-4 w-4" />
+                    {s.label}
+                  </button>
+                );
+              })}
             </div>
-            <p className="text-xs text-muted-foreground truncate" title={
-              scope === "project"
-                ? `${workingDirectory || "."}/.claude/skills/`
-                : "~/.claude/skills/"
-            }>
-              {scope === "project"
-                ? `Saved in ${workingDirectory ? workingDirectory + "/" : ""}.claude/skills/ (this project only)`
-                : "Saved in ~/.claude/skills/ (available everywhere)"}
+            <p
+              className="text-xs text-muted-foreground truncate"
+              title={activeScopeDescription}
+            >
+              {activeScopeDescription}
             </p>
           </div>
 

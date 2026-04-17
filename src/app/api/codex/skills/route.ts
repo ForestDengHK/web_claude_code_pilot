@@ -18,6 +18,7 @@ import {
   invalidateSkillsCache as invalidateSharedSkillsCache,
 } from '@/lib/codex-skills-cache';
 import type { CodexSkillEntry } from '@/lib/codex-skills-cache';
+import { createSkill } from '@/lib/codex-skill-fs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -157,4 +158,29 @@ export async function GET(request: NextRequest) {
       { status: 500 },
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// POST: create a new user-scope skill at ~/.codex/skills/<name>/SKILL.md
+// ---------------------------------------------------------------------------
+
+export async function POST(request: NextRequest) {
+  let body: { name?: unknown; content?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+  if (typeof body.name !== 'string' || !body.name.trim()) {
+    return Response.json({ error: 'name is required' }, { status: 400 });
+  }
+  if (typeof body.content !== 'string') {
+    return Response.json({ error: 'content must be a string' }, { status: 400 });
+  }
+  const result = createSkill(body.name.trim(), body.content);
+  if (!result.ok) {
+    return Response.json({ error: result.reason }, { status: result.code });
+  }
+  invalidateSkillsCache();
+  return Response.json({ ok: true, path: result.path }, { status: 201 });
 }

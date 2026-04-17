@@ -11,6 +11,7 @@ import { CodexProcessManager } from '@/lib/codex-process-manager';
 import { formatJsonRpcRequest, getLastRequestId } from '@/lib/codex-jsonrpc';
 import type { JsonRpcMessage } from '@/lib/codex-jsonrpc';
 import { invalidateSkillsCache } from '@/lib/codex-skills-cache';
+import { readSkill, writeSkill, deleteSkill } from '@/lib/codex-skill-fs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -108,4 +109,78 @@ export async function PATCH(
       { status: 500 },
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// GET: full skill details with content and symlink info
+// ---------------------------------------------------------------------------
+
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ name: string }> },
+) {
+  const { name: raw } = await params;
+  if (!raw) {
+    return Response.json({ error: 'Missing skill name' }, { status: 400 });
+  }
+  const name = decodeURIComponent(raw);
+  const skill = readSkill(name);
+  if (!skill) {
+    return Response.json({ error: 'Skill not found' }, { status: 404 });
+  }
+  return Response.json({ skill });
+}
+
+// ---------------------------------------------------------------------------
+// PUT: overwrite SKILL.md
+// ---------------------------------------------------------------------------
+
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ name: string }> },
+) {
+  const { name: raw } = await params;
+  if (!raw) {
+    return Response.json({ error: 'Missing skill name' }, { status: 400 });
+  }
+  const name = decodeURIComponent(raw);
+
+  let body: { content?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+  if (typeof body.content !== 'string') {
+    return Response.json({ error: 'content must be a string' }, { status: 400 });
+  }
+
+  const result = writeSkill(name, body.content);
+  if (!result.ok) {
+    return Response.json({ error: result.reason }, { status: result.code });
+  }
+  invalidateSkillsCache();
+  return Response.json({ ok: true });
+}
+
+// ---------------------------------------------------------------------------
+// DELETE: unlink (symlink) or rm -rf (real dir)
+// ---------------------------------------------------------------------------
+
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ name: string }> },
+) {
+  const { name: raw } = await params;
+  if (!raw) {
+    return Response.json({ error: 'Missing skill name' }, { status: 400 });
+  }
+  const name = decodeURIComponent(raw);
+
+  const result = deleteSkill(name);
+  if (!result.ok) {
+    return Response.json({ error: result.reason }, { status: result.code });
+  }
+  invalidateSkillsCache();
+  return Response.json({ ok: true, kind: result.kind });
 }

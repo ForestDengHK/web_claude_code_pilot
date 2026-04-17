@@ -14,6 +14,7 @@ import {
   FolderOpenIcon,
   Loading02Icon,
   LayoutTwoColumnIcon,
+  SparklesIcon,
 } from "@hugeicons/core-free-icons";
 import {
   Tooltip,
@@ -29,8 +30,8 @@ type ViewMode = "edit" | "preview" | "split";
 
 interface SkillEditorProps {
   skill: SkillItem;
-  onSave: (skill: SkillItem, content: string) => Promise<void>;
-  onDelete: (skill: SkillItem) => void;
+  onSave?: (skill: SkillItem, content: string) => Promise<void>;
+  onDelete?: (skill: SkillItem) => void;
 }
 
 export function SkillEditor({ skill, onSave, onDelete }: SkillEditorProps) {
@@ -51,6 +52,7 @@ export function SkillEditor({ skill, onSave, onDelete }: SkillEditorProps) {
   }, [skill.name, skill.filePath, skill.content]);
 
   const handleSave = useCallback(async () => {
+    if (!onSave) return;
     setSaving(true);
     try {
       await onSave(skill, content);
@@ -88,6 +90,7 @@ export function SkillEditor({ skill, onSave, onDelete }: SkillEditorProps) {
   );
 
   const handleDelete = () => {
+    if (!onDelete) return;
     if (confirmDelete) {
       onDelete(skill);
       setConfirmDelete(false);
@@ -125,13 +128,17 @@ export function SkillEditor({ skill, onSave, onDelete }: SkillEditorProps) {
                   ? "border-orange-500/40 text-orange-600 dark:text-orange-400"
                   : skill.source === "plugin"
                     ? "border-indigo-500/40 text-indigo-600 dark:text-indigo-400"
-                    : "border-blue-500/40 text-blue-600 dark:text-blue-400"
+                    : skill.source === "codex"
+                      ? "border-purple-500/40 text-purple-600 dark:text-purple-400"
+                      : "border-blue-500/40 text-blue-600 dark:text-blue-400"
             )}
           >
             {skill.source === "global" ? (
               <HugeiconsIcon icon={GlobeIcon} className="h-2.5 w-2.5 mr-0.5" />
             ) : skill.source === "installed" ? (
               <HugeiconsIcon icon={FolderOpenIcon} className="h-2.5 w-2.5 mr-0.5" />
+            ) : skill.source === "codex" ? (
+              <HugeiconsIcon icon={SparklesIcon} className="h-2.5 w-2.5 mr-0.5" />
             ) : (
               <HugeiconsIcon icon={FolderOpenIcon} className="h-2.5 w-2.5 mr-0.5" />
             )}
@@ -183,28 +190,32 @@ export function SkillEditor({ skill, onSave, onDelete }: SkillEditorProps) {
           <div className="w-px h-4 bg-border mx-1" />
 
           {/* Save */}
-          <Button
-            size="xs"
-            onClick={handleSave}
-            disabled={!isDirty || saving}
-            className="gap-1"
-          >
-            {saving ? (
-              <HugeiconsIcon icon={Loading02Icon} className="h-3 w-3 animate-spin" />
-            ) : (
-              <HugeiconsIcon icon={FloppyDiskIcon} className="h-3 w-3" />
-            )}
-            {saving ? "Saving" : saved ? "Saved" : "Save"}
-          </Button>
+          {onSave && (
+            <Button
+              size="xs"
+              onClick={handleSave}
+              disabled={!isDirty || saving}
+              className="gap-1"
+            >
+              {saving ? (
+                <HugeiconsIcon icon={Loading02Icon} className="h-3 w-3 animate-spin" />
+              ) : (
+                <HugeiconsIcon icon={FloppyDiskIcon} className="h-3 w-3" />
+              )}
+              {saving ? "Saving" : saved ? "Saved" : "Save"}
+            </Button>
+          )}
 
           {/* Delete */}
-          <Button
-            variant={confirmDelete ? "destructive" : "ghost"}
-            size="icon-xs"
-            onClick={handleDelete}
-          >
-            <HugeiconsIcon icon={Delete02Icon} className="h-3 w-3" />
-          </Button>
+          {onDelete && (
+            <Button
+              variant={confirmDelete ? "destructive" : "ghost"}
+              size="icon-xs"
+              onClick={handleDelete}
+            >
+              <HugeiconsIcon icon={Delete02Icon} className="h-3 w-3" />
+            </Button>
+          )}
         </div>
       </div>
 

@@ -40,8 +40,19 @@ export function SkillsManager() {
     fetchSkills();
   }, [fetchSkills]);
 
+  // Auto-select a skill when navigated here via ?skill=<name>
+  useEffect(() => {
+    if (skills.length === 0) return;
+    const params = new URLSearchParams(window.location.search);
+    const target = params.get("skill");
+    if (target && !selected) {
+      const match = skills.find((s) => s.name === target);
+      if (match) setSelected(match);
+    }
+  }, [skills, selected]);
+
   const handleCreate = useCallback(
-    async (name: string, scope: "global" | "project", content: string) => {
+    async (name: string, scope: string, content: string) => {
       const res = await fetch("/api/skills", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

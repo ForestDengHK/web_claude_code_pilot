@@ -20,8 +20,8 @@ export const codexSkillProvider: SkillProvider = {
   capabilities: {
     read: true,
     enableToggle: true,
-    edit: false,         // Phase 3
-    create: false,       // Phase 3
+    edit: true,
+    create: true,
   },
   isAvailable: probeCodex,
   ListComponent: CodexSkillsList,
