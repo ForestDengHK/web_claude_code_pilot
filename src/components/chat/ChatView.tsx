@@ -17,7 +17,7 @@ import { formatCodexUsageMarkdown } from '@/lib/codex-usage';
 import { getRunningCommandSummary } from '@/lib/streaming-status';
 import { formatClaudeUsageMarkdown } from '@/lib/claude-usage';
 import type { ClaudeAccountInfo } from '@/lib/claude-usage';
-import { normalizeClaudeMode } from '@/lib/permission-modes';
+import { normalizeModeForBackend } from '@/lib/permission-modes';
 import { useContextHealth } from '@/hooks/useContextHealth';
 import { ContextHealthToast } from './ContextHealthToast';
 import type { HealthAction } from '@/lib/context-health';
@@ -110,7 +110,12 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [toolUses, setToolUses] = useState<ToolUseInfo[]>([]);
   const [toolResults, setToolResults] = useState<ToolResultInfo[]>([]);
   const [statusText, setStatusText] = useState<string | undefined>();
-  const [mode, setMode] = useState(normalizeClaudeMode(initialMode));
+  // Mode vocabulary depends on backend (Claude PermissionMode vs Codex
+  // AskForApproval). Initialize with backend-aware normalization so stale
+  // values from a prior backend aren't silently reused.
+  const [mode, setMode] = useState(() =>
+    normalizeModeForBackend(initialMode, backend || 'claude'),
+  );
   const [currentBackend, setCurrentBackendRaw] = useState<'claude' | 'codex'>(backend || 'claude');
   const [currentModel, setCurrentModelRaw] = useState(modelName || '');
   const [currentEffort, setCurrentEffort] = useState<string | undefined>();
@@ -345,14 +350,35 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
 
   const setCurrentBackend = useCallback((newBackend: 'claude' | 'codex') => {
     setCurrentBackendRaw(newBackend);
+    // Renormalize mode for the new backend's vocabulary. Values that don't
+    // belong (e.g. Claude 'acceptEdits' when switching to Codex) fall back to
+    // the new backend's default; user-chosen values in the right vocabulary
+    // pass through untouched.
+    //
+    // We intentionally do NOT semantically map across backends — hard-coded
+    // translation tables rot as either SDK evolves. The user re-picks if the
+    // fallback isn't what they want.
+    const normalizedMode = normalizeModeForBackend(mode, newBackend);
+    const modeChanged = normalizedMode !== mode;
+    if (modeChanged) {
+      setMode(normalizedMode);
+    }
     if (sessionId) {
       fetch(`/api/chat/sessions/${sessionId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ backend: newBackend }),
+        body: JSON.stringify({
+          backend: newBackend,
+          // Only send mode if it actually changed, to avoid gratuitous writes.
+          ...(modeChanged ? { mode: normalizedMode } : {}),
+        }),
+      }).then(() => {
+        if (modeChanged) {
+          window.dispatchEvent(new CustomEvent('session-updated'));
+        }
       }).catch(() => { /* silent */ });
     }
-  }, [sessionId]);
+  }, [sessionId, mode]);
 
   const setCurrentAdvisorModel = useCallback((newAdvisorModel: string | null) => {
     setCurrentAdvisorModelRaw(newAdvisorModel);
@@ -366,7 +392,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   }, [sessionId]);
 
   const handleModeChange = useCallback((newMode: string) => {
-    const normalized = normalizeClaudeMode(newMode);
+    const normalized = normalizeModeForBackend(newMode, currentBackend);
     setMode(normalized);
     // Persist mode to database and notify chat list
     if (sessionId) {
@@ -378,7 +404,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         window.dispatchEvent(new CustomEvent('session-updated'));
       }).catch(() => { /* silent */ });
     }
-  }, [sessionId]);
+  }, [sessionId, currentBackend]);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // Generation counter: incremented each time sendMessage starts.
@@ -763,12 +789,13 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     }
   }, [initialMessages]);
 
-  // Sync mode when session data loads
+  // Sync mode when session data loads. Use backend-aware normalization so
+  // a Codex session loaded from DB doesn't get forced into Claude vocabulary.
   useEffect(() => {
     if (initialMode) {
-      setMode(normalizeClaudeMode(initialMode));
+      setMode(normalizeModeForBackend(initialMode, currentBackend));
     }
-  }, [initialMode]);
+  }, [initialMode, currentBackend]);
 
   // Sync hasMore when initial data loads
   useEffect(() => {

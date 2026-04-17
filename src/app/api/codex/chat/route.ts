@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { streamCodex, type CodexSkillRef } from '@/lib/codex-client';
 import { detectBackendSwitch, buildIncrementalBridge } from '@/lib/context-bridge';
 import { addMessage, getSession, updateSessionTitle, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected } from '@/lib/db';
+import { normalizeCodexMode } from '@/lib/permission-modes';
 import { sendPushNotification } from '@/lib/push-notifications';
 import { registerAbort, unregisterAbort } from '@/lib/abort-registry';
 import {
@@ -22,9 +23,9 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: NextRequest) {
   try {
     const body: SendMessageRequest & { files?: FileAttachment[]; toolTimeout?: number; effort?: string; codexSkills?: CodexSkillRef[] } = await request.json();
-    const { session_id, content, prompt, model, files, effort, codexSkills } = body;
+    const { session_id, content, prompt, model, mode, files, effort, codexSkills } = body;
 
-    console.log('[codex/chat] Received effort:', JSON.stringify(effort), 'model:', model);
+    console.log('[codex/chat] Received effort:', JSON.stringify(effort), 'model:', model, 'mode:', mode);
 
     if (!session_id || !content) {
       return new Response(JSON.stringify({ error: 'session_id and content are required' }), {
@@ -162,6 +163,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Working mode maps to Codex's approval_policy. Shield (skip_permissions)
+    // still wins and overrides to 'never' inside codex-client. We normalize
+    // here so any stale Claude-vocabulary value (e.g. leftover 'acceptEdits'
+    // after a backend switch) falls back to the Codex default rather than
+    // silently reaching the SDK.
+    const approvalPolicy = normalizeCodexMode(mode || session.mode);
+
     const stream = streamCodex({
       prompt: effectivePrompt,
       sessionId: session_id,
@@ -174,6 +182,7 @@ export async function POST(request: NextRequest) {
       effort: effort || undefined,
       skills: codexSkills,
       skipPermissions: session.skip_permissions === 1,
+      approvalPolicy,
     });
 
     // Tee the stream: one for client, one for collecting the response

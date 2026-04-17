@@ -135,17 +135,33 @@ const BUILT_IN_COMMANDS: PopoverItem[] = [
 interface ModeOption {
   value: string;
   label: string;
+  /** Shorter label shown on narrow viewports to prevent toolbar overflow. */
+  shortLabel?: string;
   icon: typeof Wrench01Icon;
   description: string;
 }
 
 // SDK-native permission modes. See `src/lib/permission-modes.ts` for the
-// canonical type + normalization. `bypassPermissions` is intentionally absent
-// — the shield toggle next to this dropdown owns that danger override.
-const MODE_OPTIONS: ModeOption[] = [
+// canonical types + normalization. Each backend has its own "working mode"
+// vocabulary — Claude's is `PermissionMode`, Codex's is `AskForApproval`.
+// We show the right set based on `backend`.
+//
+// `bypassPermissions` / Codex `never` are intentionally absent from both
+// lists — the shield toggle next to this dropdown owns that danger override
+// (for Codex it's the composite `approval=never + sandbox=danger-full-access`).
+const CLAUDE_MODE_OPTIONS: ModeOption[] = [
   { value: 'plan', label: 'Plan', icon: ClipboardIcon, description: 'Plan first, no tool execution' },
-  { value: 'acceptEdits', label: 'Accept Edits', icon: Wrench01Icon, description: 'Read, write files & run commands' },
+  { value: 'acceptEdits', label: 'Accept Edits', shortLabel: 'Edit', icon: Wrench01Icon, description: 'Read, write files & run commands' },
   { value: 'auto', label: 'Auto', icon: AiMagicIcon, description: 'Model classifier approves safe tools automatically' },
+];
+
+// Codex approval_policy subset. Semantic parallels to Claude: `untrusted` ≈
+// cautious (Plan-ish), `on-failure` ≈ Accept Edits (do work, interrupt on
+// trouble), `on-request` ≈ Auto (model decides when to ask).
+const CODEX_MODE_OPTIONS: ModeOption[] = [
+  { value: 'untrusted', label: 'Ask', icon: HelpCircleIcon, description: 'Confirm every shell command (safest)' },
+  { value: 'on-failure', label: 'On Failure', shortLabel: 'Fail', icon: Wrench01Icon, description: 'Only ask when a command fails' },
+  { value: 'on-request', label: 'On Request', shortLabel: 'Req', icon: AiMagicIcon, description: 'Let Codex decide when to ask' },
 ];
 
 // Fallback model options used when the API is unavailable
@@ -1048,7 +1064,12 @@ export function MessageInput({
   const currentModelValue = modelName || MODEL_OPTIONS[0]?.value || 'sonnet';
   const currentModelOption = MODEL_OPTIONS.find((m) => m.value === currentModelValue)
     || { value: currentModelValue, label: currentModelValue };
-  const currentMode = MODE_OPTIONS.find((m) => m.value === mode) || MODE_OPTIONS[0];
+  // Backend-aware mode options. When the user switches backend, `mode` may
+  // briefly hold a value from the other backend's vocabulary — we fall back
+  // to the first option (which is the respective default) without rewriting
+  // state here. ChatView is responsible for normalizing on backend change.
+  const modeOptions = backend === 'codex' ? CODEX_MODE_OPTIONS : CLAUDE_MODE_OPTIONS;
+  const currentMode = modeOptions.find((m) => m.value === mode) || modeOptions[0];
 
   // Reasoning effort — unified for both Claude and Codex models
   const currentModelEfforts = getEffortOptionsForModel(
@@ -1230,7 +1251,11 @@ export function MessageInput({
               onChange={(e) => handleInputChange(e.currentTarget.value)}
               onKeyDown={handleKeyDown}
               disabled={disabled}
-              className="min-h-10"
+              // On mobile, cap the textarea growth so long input doesn't push
+              // the footer (submit button) under the fixed BottomNav (h-14).
+              // twMerge replaces the base `max-h-48`; `sm:max-h-48` restores it
+              // on larger screens.
+              className="min-h-10 max-h-28 sm:max-h-48"
             />
             {backend === 'codex' && sessionId && (
               <div className="flex justify-end px-1 pb-1 sm:hidden">
@@ -1261,20 +1286,28 @@ export function MessageInput({
                   }}
                 />
 
-                {/* Mode selector */}
+                {/* Mode selector — backend-aware. Claude shows PermissionMode
+                    options; Codex shows approval_policy options (never/YOLO
+                    is owned by the shield toggle, not this dropdown). */}
                 <div className="relative" ref={modeMenuRef}>
                   <PromptInputButton
                     onClick={() => setModeMenuOpen((prev) => !prev)}
                   >
-                    <span className="text-xs">{currentMode.label}</span>
-                    <HugeiconsIcon icon={ArrowDown01Icon} className={cn("h-2.5 w-2.5 transition-transform duration-200", modeMenuOpen && "rotate-180")} />
+                    {/* Mobile: short label (e.g. "Edit") with fixed max width so the
+                        button can't push the model selector into the shield. Desktop:
+                        full label (e.g. "Accept Edits"). */}
+                    <span className="text-xs max-w-[6ch] truncate sm:max-w-none sm:hidden">
+                      {currentMode.shortLabel ?? currentMode.label}
+                    </span>
+                    <span className="text-xs hidden sm:inline">{currentMode.label}</span>
+                    <HugeiconsIcon icon={ArrowDown01Icon} className={cn("h-2.5 w-2.5 shrink-0 transition-transform duration-200", modeMenuOpen && "rotate-180")} />
                   </PromptInputButton>
 
                   {/* Mode dropdown */}
                   {modeMenuOpen && (
                     <div className="absolute bottom-full left-0 mb-1.5 w-56 rounded-lg border bg-popover shadow-lg overflow-hidden z-50">
                       <div className="py-1">
-                        {MODE_OPTIONS.map((opt) => {
+                        {modeOptions.map((opt) => {
                           const isActive = opt.value === mode;
                           return (
                             <button
@@ -1466,9 +1499,13 @@ export function MessageInput({
                     </PromptInputButton>
                   </TooltipTrigger>
                   <TooltipContent side="top">
-                    {skipPermissions
-                      ? 'Bypass permissions ON — all tools auto-approved (click to disable)'
-                      : 'Bypass permissions OFF — follows Mode setting (click for YOLO)'}
+                    {backend === 'codex'
+                      ? skipPermissions
+                        ? 'YOLO ON — Codex: approval=never, sandbox=danger-full-access (click to disable)'
+                        : 'YOLO OFF — Codex uses its configured approval_policy / sandbox_mode (click for YOLO)'
+                      : skipPermissions
+                        ? 'Bypass permissions ON — all tools auto-approved (click to disable)'
+                        : 'Bypass permissions OFF — follows Mode setting (click for YOLO)'}
                   </TooltipContent>
                 </Tooltip>
               </PromptInputTools>

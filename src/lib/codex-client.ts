@@ -55,6 +55,12 @@ export interface CodexStreamOptions {
   skills?: CodexSkillRef[];
   /** Mirrors the existing shield toggle UI; true maps to approvalPolicy "never". */
   skipPermissions?: boolean;
+  /**
+   * Explicit approval_policy from the UI's working-mode dropdown. Wins over
+   * the configured / thread-level values (unless shield is on, which forces
+   * 'never'). Omit to preserve the legacy "inherit from Codex config" path.
+   */
+  approvalPolicy?: AskForApproval;
 }
 
 export interface CodexReviewResult {
@@ -152,9 +158,21 @@ export function resolveDesiredApprovalPolicy(
   skipPermissions: boolean,
   configuredApprovalPolicy: AskForApproval | null,
   currentThreadApprovalPolicy?: AskForApproval | null,
+  /**
+   * Explicit UI selection from the Codex mode dropdown. Wins over config/
+   * thread values so the user's active choice isn't silently overridden by a
+   * `~/.codex/config.toml` setting. Shield still takes precedence over this.
+   */
+  explicitApprovalPolicy?: AskForApproval,
 ): AskForApproval | undefined {
   if (skipPermissions) {
     return 'never';
+  }
+
+  // Honor the UI's active selection first. We still guard against 'never'
+  // leaking through here — `never` is the shield's exclusive territory.
+  if (explicitApprovalPolicy && explicitApprovalPolicy !== 'never') {
+    return explicitApprovalPolicy;
   }
 
   if (configuredApprovalPolicy && configuredApprovalPolicy !== 'never') {
@@ -496,6 +514,7 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
     summary,
     skills,
     skipPermissions = false,
+    approvalPolicy: explicitApprovalPolicy,
   } = options;
   const requestedEffort = effort || 'high';
   const isMiniModel = model ? /mini/i.test(model) : false;
@@ -550,6 +569,8 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
           const desiredApprovalPolicy = resolveDesiredApprovalPolicy(
             skipPermissions,
             configuredApprovalPolicy,
+            undefined,
+            explicitApprovalPolicy,
           );
           const desiredSandboxMode = resolveDesiredSandboxMode(
             skipPermissions,
@@ -572,6 +593,8 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
           const desiredApprovalPolicy = resolveDesiredApprovalPolicy(
             skipPermissions,
             configuredApprovalPolicy,
+            undefined,
+            explicitApprovalPolicy,
           );
           const desiredSandboxMode = resolveDesiredSandboxMode(
             skipPermissions,
@@ -598,6 +621,7 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
           skipPermissions,
           configuredApprovalPolicy,
           currentApprovalPolicy,
+          explicitApprovalPolicy,
         );
         const desiredSandboxMode = resolveDesiredSandboxMode(
           skipPermissions,
