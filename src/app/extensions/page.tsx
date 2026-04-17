@@ -8,8 +8,9 @@ import { Loading02Icon } from "@hugeicons/core-free-icons";
 import { ProviderSkillsTabs } from "@/components/skills/ProviderSkillsTabs";
 import { McpManager } from "@/components/plugins/McpManager";
 import { PluginUpdater } from "@/components/plugins/PluginUpdater";
+import { ClaudeMdSection } from "@/components/claude-md/ClaudeMdSection";
 
-type ExtTab = "skills" | "mcp" | "plugins";
+type ExtTab = "skills" | "claude-md" | "mcp" | "plugins";
 
 export default function ExtensionsPage() {
   return (
@@ -37,6 +38,7 @@ function ExtensionsPageInner() {
         <Tabs value={tab} onValueChange={(v) => setTab(v as ExtTab)}>
           <TabsList>
             <TabsTrigger value="skills">Skills</TabsTrigger>
+            <TabsTrigger value="claude-md">CLAUDE.md</TabsTrigger>
             <TabsTrigger value="mcp">MCP Servers</TabsTrigger>
             <TabsTrigger value="plugins">Plugins</TabsTrigger>
           </TabsList>
@@ -44,6 +46,7 @@ function ExtensionsPageInner() {
       </div>
       <div className="flex-1 overflow-hidden p-4 md:p-6 flex flex-col min-h-0">
         {tab === "skills" && <ProviderSkillsTabs />}
+        {tab === "claude-md" && <ClaudeMdSection />}
         {tab === "mcp" && <McpManager />}
         {tab === "plugins" && <PluginUpdater />}
       </div>
