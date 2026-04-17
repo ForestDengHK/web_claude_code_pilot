@@ -23,17 +23,20 @@ let cachedModels: CachedModel[] | null = null;
 let cachedAt = 0;
 import { MODELS_CACHE_TTL as CACHE_TTL } from '@/lib/config';
 
-const TEMP_SESSION_ID = '__codex_models__';
-
 export async function GET() {
   // Return cached models if fresh
   if (cachedModels && Date.now() - cachedAt < CACHE_TTL) {
     return Response.json({ models: cachedModels });
   }
 
+  // Per-request UUID so concurrent requests don't share a temp Codex process
+  // (shared ID caused `model/list timed out after 15s` when one request's
+  // kill() tore down the proc before a peer's response arrived).
+  const tempSessionId = `__codex_models__:${crypto.randomUUID()}`;
+
   try {
     // Spawn a temporary Codex process to query models
-    const codexProcess = await CodexProcessManager.getOrCreate(TEMP_SESSION_ID);
+    const codexProcess = await CodexProcessManager.getOrCreate(tempSessionId);
 
     try {
       const models = await new Promise<CachedModel[]>((resolve, reject) => {
@@ -98,7 +101,7 @@ export async function GET() {
       return Response.json({ models: cachedModels });
     } finally {
       // Kill the temporary process after getting models
-      await CodexProcessManager.kill(TEMP_SESSION_ID);
+      await CodexProcessManager.kill(tempSessionId);
     }
   } catch (error) {
     console.error('[/api/codex/models] Failed to fetch models:', error);

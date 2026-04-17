@@ -115,8 +115,23 @@ export class CodexProcessManager {
       initialized: false,
 
       send(message: string) {
-        if (proc.stdin && !proc.stdin.destroyed) {
+        // Guard against three distinct EPIPE scenarios:
+        //  1. No stdin stream (spawn failed upstream)
+        //  2. Process exited but stdin.destroyed is still false
+        //     (race window between exit event and pipe teardown)
+        //  3. Write throws synchronously (broken pipe discovered mid-write)
+        // Any of these should be a silent no-op — the exit handler already
+        // removes the process from the map, so the next getOrCreate() spawns
+        // fresh. Letting EPIPE bubble up turns into an unhandled exception
+        // that can crash the whole dev server.
+        if (!proc.stdin || proc.stdin.destroyed) return;
+        if (proc.exitCode !== null || proc.signalCode !== null) return;
+        try {
           proc.stdin.write(message);
+        } catch (err) {
+          console.log(
+            `[codex:send] write failed (process likely exited): ${(err as Error).message}`,
+          );
         }
       },
 

@@ -35,8 +35,6 @@ import { SKILLS_CACHE_TTL as CACHE_TTL } from '@/lib/config';
 // import path is fine; the underlying state lives in `codex-skills-cache.ts`.
 export const invalidateSkillsCache = invalidateSharedSkillsCache;
 
-const TEMP_SESSION_ID = '__codex_skills__';
-
 // In-flight mutex: prevents concurrent requests from racing over the same
 // Codex process (first request would kill it while second is still waiting).
 let inflightFetch: Promise<CodexSkillEntry[]> | null = null;
@@ -46,7 +44,12 @@ let inflightFetch: Promise<CodexSkillEntry[]> | null = null;
 // ---------------------------------------------------------------------------
 
 async function doFetchSkills(cwd?: string): Promise<CodexSkillEntry[]> {
-  const codexProcess = await CodexProcessManager.getOrCreate(TEMP_SESSION_ID);
+  // Per-request UUID so we never accidentally share a Codex process with
+  // another in-flight call (e.g. the GET and a PATCH to skills/[name]). The
+  // inflightFetch mutex covers same-handler concurrency; UUID covers the
+  // cross-handler case.
+  const tempSessionId = `__codex_skills__:${crypto.randomUUID()}`;
+  const codexProcess = await CodexProcessManager.getOrCreate(tempSessionId);
 
   try {
     const skills = await new Promise<CodexSkillEntry[]>((resolve, reject) => {
@@ -120,7 +123,7 @@ async function doFetchSkills(cwd?: string): Promise<CodexSkillEntry[]> {
     setCachedSkills(skills);
     return skills;
   } finally {
-    await CodexProcessManager.kill(TEMP_SESSION_ID);
+    await CodexProcessManager.kill(tempSessionId);
   }
 }
 

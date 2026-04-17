@@ -1405,7 +1405,19 @@ export function closeDb(): void {
 
 // Register shutdown handlers to close the database when the process exits.
 // This prevents WAL file accumulation and potential data loss.
+//
+// Idempotent via a globalThis flag: Next.js dev-mode HMR re-imports this module
+// across reloads, which would otherwise re-register listeners on the Node.js
+// `process` global and trip MaxListenersExceededWarning (default limit 10) at
+// ~11 reloads. That warning cascades into unpredictable EventEmitter behaviour
+// in downstream code, so we hard-guard here.
+const SHUTDOWN_HANDLERS_FLAG = '__codepilot_db_shutdown_handlers_registered__' as const;
+
 function registerShutdownHandlers(): void {
+  const g = globalThis as Record<string, unknown>;
+  if (g[SHUTDOWN_HANDLERS_FLAG]) return;
+  g[SHUTDOWN_HANDLERS_FLAG] = true;
+
   let shuttingDown = false;
 
   const shutdown = (signal: string) => {

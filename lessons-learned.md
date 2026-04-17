@@ -4,6 +4,36 @@ Debugging notes and post-mortems. Chronological, newest first.
 
 ---
 
+## 2026-04-17 — Three bugs masquerading as one feature gap
+
+**Severity**: Medium. Wasted a full design round.
+**Detection**: Live browser test to validate whether Task C ("Codex realtime background progress") was worth building. Result surprised us: sidebar showed no running indicator for Codex sessions even though `/api/chat/sessions/:id/status` correctly reported `isProcessing:true`.
+
+**Initial (wrong) diagnosis**: "`streamingSessions` isn't derived from server state — we need a new `/api/chat/sessions/active` endpoint + AppShell global poll." Spent a round proposing that architecture.
+
+**Actual root cause — three unrelated bugs that stacked into the same symptom**:
+
+1. **B1** (`src/lib/db.ts`): `registerShutdownHandlers()` was module-level and non-idempotent. Next.js HMR re-imports the module on every dev reload; after ~11 reloads the Node global `process` hit `MaxListenersExceededWarning`. Once tripped, EventEmitter behaviour elsewhere in the same process degrades unpredictably (some listeners start getting dropped or double-fired, depending on timing).
+
+2. **B2** (`src/app/api/codex/{models,skills,skills/[name]}/route.ts`): All three routes used hardcoded `TEMP_SESSION_ID = '__codex_xxx__'` strings shared across concurrent requests. Request A's `finally { await kill(TEMP) }` would tear down a process that Request B was still waiting on → 15s timeout, sometimes EPIPE on a mid-flight write.
+
+3. **B3** (`src/lib/codex-process-manager.ts:119`): `proc.stdin.write(message)` only guarded on `!proc.stdin.destroyed`, not on `proc.exitCode`. When B2's kill killed the proc, there was a window where `exitCode` was set but `stdin.destroyed` was still `false` → unhandled EPIPE.
+
+**The trap**: each bug's failure surface was generic ("something wrong with Codex"), and they compounded. B1 + B2 + B3 together caused the Codex SSE to drop partway through a turn; the drop triggered ChatView's `finally` block which calls `removeStreamingSession(sessionId)`; the sidebar lost its entry. **The sidebar code itself was correct.** It just had no entry to render.
+
+**Proof that the three were interlocked**: after fixing all three, sidebar running indicators for Codex sessions Just Worked with zero UI-layer changes. No new endpoint, no AppShell refactor, no derived-from-server sync — none of it was needed.
+
+**Lessons**:
+1. **When the "architectural gap" fix feels too big for the symptom, look harder for smaller bugs underneath.** We were about to add ~150 LOC of infrastructure (active-sessions endpoint, global polling, state reconciliation) when the real fix was ~40 LOC across three pinpoint bugs.
+2. **`MaxListenersExceededWarning` is not cosmetic in dev-mode long-running processes.** Treat it as blocking — the cascading effects on EventEmitter-heavy code (child_process, readline, fetch streams) are real and weird.
+3. **Any `TEMP_SESSION_ID = 'constant'` in a Next.js route is suspect.** Request handlers run concurrently; any shared mutable resource keyed by a constant string needs per-request keying or a proper mutex. The grep `TEMP_SESSION_ID.*=.*'__` is a useful audit.
+4. **`proc.stdin.write` guards need both `!destroyed` AND `exitCode === null` AND `signalCode === null`.** The three are not redundant — they cover different race windows. Also wrap the write in try/catch because even with guards, the kernel can report EPIPE synchronously.
+5. **Live-test before spec-writing.** The test agent found the real behaviour in 10 minutes; the design spec would have built the wrong thing.
+
+**Verification**: end-to-end Codex tests (basic message, sleep 15, sleep 20 with session switch) all passed after the three fixes, with zero new occurrences of `MaxListenersExceededWarning`, `write EPIPE`, or `model/list timed out` in `~/.codepilot/service.error.log`.
+
+---
+
 ## 2026-04-17 — Near-miss: pdf skill overwritten during Phase 3a testing
 
 **Severity**: High. User-visible data loss.

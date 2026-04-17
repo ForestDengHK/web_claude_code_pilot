@@ -16,8 +16,6 @@ import { readSkill, writeSkill, deleteSkill } from '@/lib/codex-skill-fs';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const TEMP_SESSION_ID = '__codex_skills_config__';
-
 // In-flight mutex: prevents concurrent PATCHes from racing over the same
 // Codex process.
 let inflightWrite: Promise<{ effectiveEnabled: boolean }> | null = null;
@@ -26,7 +24,11 @@ async function doWriteSkillConfig(
   name: string,
   enabled: boolean,
 ): Promise<{ effectiveEnabled: boolean }> {
-  const codexProcess = await CodexProcessManager.getOrCreate(TEMP_SESSION_ID);
+  // Per-request UUID so we never share a Codex process with another in-flight
+  // call (e.g. a skills-list GET or a model/list). inflightWrite covers
+  // same-handler concurrency; UUID covers the cross-handler case.
+  const tempSessionId = `__codex_skills_config__:${crypto.randomUUID()}`;
+  const codexProcess = await CodexProcessManager.getOrCreate(tempSessionId);
 
   try {
     return await new Promise<{ effectiveEnabled: boolean }>((resolve, reject) => {
@@ -62,7 +64,7 @@ async function doWriteSkillConfig(
       codexProcess.send(req);
     });
   } finally {
-    await CodexProcessManager.kill(TEMP_SESSION_ID);
+    await CodexProcessManager.kill(tempSessionId);
   }
 }
 
