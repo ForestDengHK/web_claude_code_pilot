@@ -11,6 +11,7 @@ import { NextRequest } from 'next/server';
 import { CodexProcessManager } from '@/lib/codex-process-manager';
 import { formatJsonRpcRequest, getLastRequestId } from '@/lib/codex-jsonrpc';
 import type { JsonRpcMessage } from '@/lib/codex-jsonrpc';
+import { isCodexAvailable } from '@/lib/codex-availability';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -135,6 +136,12 @@ async function doFetchSkills(cwd?: string): Promise<CodexSkillEntry[]> {
 // ---------------------------------------------------------------------------
 
 export async function GET(request: NextRequest) {
+  // Fast path: availability probe for the extensions UI. Does not spawn
+  // a Codex process and does not touch the skills cache.
+  if (request.nextUrl.searchParams.get('probe') === '1') {
+    return Response.json({ available: isCodexAvailable() });
+  }
+
   const cwd = request.nextUrl.searchParams.get('cwd') || undefined;
 
   // Return cached skills if fresh

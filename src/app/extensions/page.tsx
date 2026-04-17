@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Loading02Icon } from "@hugeicons/core-free-icons";
-import { SkillsManager } from "@/components/skills/SkillsManager";
+import { ProviderSkillsTabs } from "@/components/skills/ProviderSkillsTabs";
 import { McpManager } from "@/components/plugins/McpManager";
 import { PluginUpdater } from "@/components/plugins/PluginUpdater";
 
@@ -43,7 +43,7 @@ function ExtensionsPageInner() {
         </Tabs>
       </div>
       <div className="flex-1 overflow-hidden p-4 md:p-6 flex flex-col min-h-0">
-        {tab === "skills" && <SkillsManager />}
+        {tab === "skills" && <ProviderSkillsTabs />}
         {tab === "mcp" && <McpManager />}
         {tab === "plugins" && <PluginUpdater />}
       </div>
