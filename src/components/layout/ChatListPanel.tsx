@@ -266,11 +266,13 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
 
   const handleDeleteSession = async (
     e: React.MouseEvent,
-    sessionId: string
+    sessionId: string,
+    sessionTitle?: string
   ) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!confirm("Delete this conversation?")) return;
+    const title = sessionTitle?.trim() || "Untitled";
+    if (!confirm(`Delete this conversation?\n\n"${title}"`)) return;
     setDeletingSession(sessionId);
     try {
       const res = await fetch(`/api/chat/sessions/${sessionId}`, {
@@ -849,7 +851,7 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                                         isDeleting && "opacity-100"
                                       )}
                                       onClick={(e) =>
-                                        handleDeleteSession(e, session.id)
+                                        handleDeleteSession(e, session.id, session.title)
                                       }
                                       disabled={isDeleting}
                                     >
