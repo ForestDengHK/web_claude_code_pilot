@@ -124,7 +124,7 @@ const BUILT_IN_COMMANDS: PopoverItem[] = [
   { label: 'cost', value: '/cost', description: 'Show session token usage guidance', builtIn: true, immediate: true, icon: Coins01Icon },
   { label: 'usage', value: '/usage', description: 'Show account quota and rate limits', builtIn: true, immediate: true, icon: GlobalIcon },
   { label: 'compact', value: '/compact', description: 'Compress conversation context', builtIn: true, icon: FileZipIcon },
-  { label: 'branch', value: '/branch', description: 'Start new chat with summary', builtIn: true, icon: GitBranchIcon },
+  { label: 'branch', value: '/branch', description: 'Start new chat with summary', builtIn: true, immediate: true, icon: GitBranchIcon },
   { label: 'doctor', value: '/doctor', description: 'Diagnose project health', builtIn: true, icon: Stethoscope02Icon },
   { label: 'init', value: '/init', description: 'Initialize CLAUDE.md for project', builtIn: true, icon: FileEditIcon },
   { label: 'review', value: '/review', description: 'Review code quality', builtIn: true, icon: SearchList01Icon },
@@ -716,8 +716,10 @@ export function MessageInput({
     const uniqueSkills = apiSkills.filter(s => !builtInNames.has(s.label));
 
     // When Codex is active, only show CodePilot-native commands (help, clear, cost, usage)
-    // and hide Claude-specific ones (compact, doctor, init, review, etc.)
-    const CODEX_SAFE_COMMANDS = new Set(['help', 'clear', 'cost', 'usage']);
+    // and hide Claude-specific ones (compact, doctor, init, review, etc.).
+    // `branch` is allowed because ChatView routes summary generation through the
+    // active backend's chat endpoint using the user's current model.
+    const CODEX_SAFE_COMMANDS = new Set(['help', 'clear', 'cost', 'usage', 'branch']);
     const commands = backend === 'codex'
       ? BUILT_IN_COMMANDS.filter(c => CODEX_SAFE_COMMANDS.has(c.label))
       : BUILT_IN_COMMANDS;

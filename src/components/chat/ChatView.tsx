@@ -973,26 +973,21 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         apiContent = `<command-name>${skillInfo.name}</command-name>\n\n${skillInfo.content}\n\nUser request: ${content}`;
       }
 
-      // Detect /branch command and transform into summary request
+      // Detect /branch command and transform into summary request.
+      // Both backends use the user's current model — keeps the workflow
+      // consistent and avoids the awkwardness of forcing a Claude model on a
+      // Codex session (or vice versa). An explicit `/branch <model>` argument
+      // still wins for power users.
       let branchMode = false;
       let branchModelOverride: string | null = null;
       if (content.startsWith('/branch')) {
         branchMode = true;
         pendingBranchRef.current = true;
-        // Parse optional model parameter from "User context: haiku" appended by MessageInput
-        const userContext = content.match(/User context:\s*([\s\S]+)/)?.[1]?.trim().toLowerCase();
-        if (userContext === 'haiku') {
-          branchModelOverride = 'claude-haiku-4-5';
-        } else if (userContext === 'sonnet' || !userContext) {
-          branchModelOverride = 'claude-sonnet-4-5';
-        } else {
-          // User typed a full model name or something else — use as-is
-          branchModelOverride = userContext;
-        }
+        const userContext = content.match(/User context:\s*([\s\S]+)/)?.[1]?.trim();
+        branchModelOverride = userContext || currentModel;
         // API gets the actual summary prompt; display stays clean
         apiContent = BRANCH_SUMMARY_PROMPT;
-        // Clean up display content for the user message
-        content = branchModelOverride === 'claude-haiku-4-5' ? '/branch haiku' : '/branch';
+        content = '/branch';
       }
 
       // Build display content: embed file metadata as HTML comment for MessageItem to parse
@@ -1054,7 +1049,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             ...(files && files.length > 0 ? { files } : {}),
             ...(currentEffort ? { effort: currentEffort } : {}),
             ...(codexSkills && codexSkills.length > 0 ? { codexSkills } : {}),
-            ...(branchMode ? { disable_tools: true, max_turns: 1 } : {}),
+            // disable_tools/max_turns are Claude-only knobs. Codex's app-server
+            // doesn't accept them — for Codex /branch we rely on the prompt
+            // itself ("Summarize this conversation…") to keep the response
+            // single-shot text without tool calls.
+            ...(branchMode && currentBackend !== 'codex' ? { disable_tools: true, max_turns: 1 } : {}),
           }),
           signal: controller.signal,
         });
