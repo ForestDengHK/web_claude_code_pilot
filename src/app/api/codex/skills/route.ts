@@ -12,33 +12,27 @@ import { CodexProcessManager } from '@/lib/codex-process-manager';
 import { formatJsonRpcRequest, getLastRequestId } from '@/lib/codex-jsonrpc';
 import type { JsonRpcMessage } from '@/lib/codex-jsonrpc';
 import { isCodexAvailable } from '@/lib/codex-availability';
+import {
+  getCachedSkills,
+  setCachedSkills,
+  invalidateSkillsCache as invalidateSharedSkillsCache,
+} from '@/lib/codex-skills-cache';
+import type { CodexSkillEntry } from '@/lib/codex-skills-cache';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 // ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface CodexSkillEntry {
-  name: string;
-  description: string;
-  path: string;
-  scope: 'user' | 'repo' | 'system' | 'admin';
-  enabled: boolean;
-  shortDescription?: string;
-  displayName?: string;
-  brandColor?: string;
-  iconSmall?: string;
-}
-
-// ---------------------------------------------------------------------------
 // Cache
 // ---------------------------------------------------------------------------
 
-let cachedSkills: CodexSkillEntry[] | null = null;
-let cachedAt = 0;
 import { SKILLS_CACHE_TTL as CACHE_TTL } from '@/lib/config';
+
+// Re-export the shared cache invalidator. The list and PATCH routes can
+// otherwise end up in separate module instances under Next.js / Turbopack,
+// which would silently break invalidation. Keeping a re-export at the old
+// import path is fine; the underlying state lives in `codex-skills-cache.ts`.
+export const invalidateSkillsCache = invalidateSharedSkillsCache;
 
 const TEMP_SESSION_ID = '__codex_skills__';
 
@@ -101,7 +95,6 @@ async function doFetchSkills(cwd?: string): Promise<CodexSkillEntry[]> {
           const entries: CodexSkillEntry[] = [];
           for (const group of result?.data || []) {
             for (const s of group.skills) {
-              if (!s.enabled) continue;
               entries.push({
                 name: s.name,
                 description: s.interface?.shortDescription || s.shortDescription || s.description || '',
@@ -123,8 +116,7 @@ async function doFetchSkills(cwd?: string): Promise<CodexSkillEntry[]> {
       codexProcess.send(req);
     });
 
-    cachedSkills = skills;
-    cachedAt = Date.now();
+    setCachedSkills(skills);
     return skills;
   } finally {
     await CodexProcessManager.kill(TEMP_SESSION_ID);
@@ -145,8 +137,9 @@ export async function GET(request: NextRequest) {
   const cwd = request.nextUrl.searchParams.get('cwd') || undefined;
 
   // Return cached skills if fresh
-  if (cachedSkills && Date.now() - cachedAt < CACHE_TTL) {
-    return Response.json({ skills: cachedSkills });
+  const cached = getCachedSkills();
+  if (cached.skills && Date.now() - cached.at < CACHE_TTL) {
+    return Response.json({ skills: cached.skills });
   }
 
   try {

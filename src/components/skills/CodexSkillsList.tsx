@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Loading02Icon } from '@hugeicons/core-free-icons';
 
@@ -27,6 +28,7 @@ type LoadState =
 export function CodexSkillsList() {
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const [selected, setSelected] = useState<CodexSkill | null>(null);
+  const [pendingToggle, setPendingToggle] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setState({ kind: 'loading' });
@@ -54,6 +56,61 @@ export function CodexSkillsList() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
   }, [load]);
+
+  const handleToggle = useCallback(async (skill: CodexSkill, next: boolean) => {
+    const key = skill.path;
+    setPendingToggle((prev) => new Set(prev).add(key));
+
+    // Optimistic update
+    setState((prev) => {
+      if (prev.kind !== 'ok') return prev;
+      return {
+        kind: 'ok',
+        skills: prev.skills.map((s) =>
+          s.path === skill.path ? { ...s, enabled: next } : s,
+        ),
+      };
+    });
+
+    try {
+      const res = await fetch(`/api/codex/skills/${encodeURIComponent(skill.name)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { effectiveEnabled: boolean };
+      // Reconcile with server truth (normally same as `next`)
+      if (data.effectiveEnabled !== next) {
+        setState((prev) => {
+          if (prev.kind !== 'ok') return prev;
+          return {
+            kind: 'ok',
+            skills: prev.skills.map((s) =>
+              s.path === skill.path ? { ...s, enabled: data.effectiveEnabled } : s,
+            ),
+          };
+        });
+      }
+    } catch {
+      // Rollback
+      setState((prev) => {
+        if (prev.kind !== 'ok') return prev;
+        return {
+          kind: 'ok',
+          skills: prev.skills.map((s) =>
+            s.path === skill.path ? { ...s, enabled: !next } : s,
+          ),
+        };
+      });
+    } finally {
+      setPendingToggle((prev) => {
+        const nextSet = new Set(prev);
+        nextSet.delete(key);
+        return nextSet;
+      });
+    }
+  }, []);
 
   if (state.kind === 'loading') {
     return (
@@ -99,27 +156,39 @@ export function CodexSkillsList() {
   return (
     <>
       <ul className="flex h-full flex-col gap-1 overflow-y-auto">
-        {state.skills.map((s) => (
-          <li key={s.path}>
-            <button
-              type="button"
-              onClick={() => setSelected(s)}
-              className="flex w-full flex-col items-start gap-1 rounded-md border border-transparent px-3 py-2 text-left hover:border-border hover:bg-muted/50"
-            >
-              <div className="flex w-full items-center gap-2">
-                <span className="font-medium">{s.displayName || s.name}</span>
-                <Badge variant="secondary" className="text-xs">
-                  {s.scope}
-                </Badge>
+        {state.skills.map((s) => {
+          const readOnly = s.scope === 'system' || s.scope === 'admin';
+          const rowMuted = !s.enabled;
+          return (
+            <li key={s.path} className="flex items-start gap-2 px-3 py-2 rounded-md border border-transparent hover:border-border hover:bg-muted/50">
+              <button
+                type="button"
+                onClick={() => setSelected(s)}
+                className={`flex flex-1 flex-col items-start gap-1 text-left min-w-0 ${rowMuted ? 'opacity-50' : ''}`}
+              >
+                <div className="flex w-full items-center gap-2">
+                  <span className="font-medium truncate">{s.displayName || s.name}</span>
+                  <Badge variant="secondary" className="text-xs shrink-0">
+                    {s.scope}
+                  </Badge>
+                </div>
+                {s.description && (
+                  <span className="text-xs text-muted-foreground line-clamp-2">
+                    {s.description}
+                  </span>
+                )}
+              </button>
+              <div className="flex items-center pt-1 shrink-0" title={readOnly ? 'Codex system skills are read-only' : undefined}>
+                <Switch
+                  checked={s.enabled}
+                  disabled={readOnly || pendingToggle.has(s.path)}
+                  onCheckedChange={(next) => handleToggle(s, next)}
+                  aria-label={`${s.enabled ? 'Disable' : 'Enable'} ${s.name}`}
+                />
               </div>
-              {s.description && (
-                <span className="text-xs text-muted-foreground line-clamp-2">
-                  {s.description}
-                </span>
-              )}
-            </button>
-          </li>
-        ))}
+            </li>
+          );
+        })}
       </ul>
 
       <Sheet open={selected !== null} onOpenChange={(open) => !open && setSelected(null)}>
@@ -132,7 +201,10 @@ export function CodexSkillsList() {
               <div className="mt-4 flex flex-col gap-3 px-4 text-sm">
                 <div className="flex items-center gap-2">
                   <Badge variant="secondary">{selected.scope}</Badge>
-                  <span className="text-xs text-muted-foreground">read-only</span>
+                  <span className="text-xs text-muted-foreground">
+                    {selected.enabled ? 'enabled' : 'disabled'}
+                    {(selected.scope === 'system' || selected.scope === 'admin') ? ' · read-only' : ''}
+                  </span>
                 </div>
                 {selected.description && (
                   <p className="text-muted-foreground">{selected.description}</p>

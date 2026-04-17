@@ -19,7 +19,7 @@ export const codexSkillProvider: SkillProvider = {
   label: 'Codex',
   capabilities: {
     read: true,
-    enableToggle: false, // Phase 2
+    enableToggle: true,
     edit: false,         // Phase 3
     create: false,       // Phase 3
   },
