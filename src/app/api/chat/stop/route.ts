@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { abortSession, interruptSession } from '@/lib/abort-registry';
+import { CodexProcessManager } from '@/lib/codex-process-manager';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,7 +13,9 @@ export const dynamic = 'force-dynamic';
  * - Default (force=false): calls interrupt() — graceful stop, lets current tool finish.
  * - Force (force=true): calls abort() — hard kill, immediately terminates subprocess.
  *
- * Codex sessions don't have a Query object, so they always fall back to abort().
+ * Codex sessions use a two-tier strategy too:
+ * - Default (force=false): send `turn/interrupt` to the active turn.
+ * - Force (force=true): kill the `codex app-server` subprocess for the session.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -22,9 +25,20 @@ export async function POST(request: NextRequest) {
     }
 
     if (force) {
+      // Prefer Codex hard-stop when a Codex process exists for this session.
+      if (CodexProcessManager.interrupt(session_id)) {
+        await CodexProcessManager.kill(session_id);
+        return Response.json({ stopped: true, method: 'kill' });
+      }
+
       // Hard kill — Force Stop button
       const stopped = abortSession(session_id);
       return Response.json({ stopped, method: 'abort' });
+    }
+
+    // Prefer Codex graceful stop when a Codex turn is active.
+    if (CodexProcessManager.interrupt(session_id)) {
+      return Response.json({ stopped: true, method: 'interrupt' });
     }
 
     // Graceful interrupt — normal Stop button

@@ -322,6 +322,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+function extractTurnId(value: unknown): string | null {
+  if (!isRecord(value)) return null;
+
+  const nestedTurn = isRecord(value.turn) ? value.turn : null;
+  if (nestedTurn && typeof nestedTurn.id === 'string') {
+    return nestedTurn.id;
+  }
+
+  if (typeof value.turnId === 'string') {
+    return value.turnId;
+  }
+
+  return typeof value.id === 'string' ? value.id : null;
+}
+
 function normalizeReviewFinding(value: unknown): CodexReviewFinding | null {
   if (!isRecord(value)) return null;
 
@@ -526,6 +541,8 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
     async start(controller) {
       let codexProcess: CodexProcess | null = null;
       let messageHandler: ((msg: JsonRpcMessage) => void) | null = null;
+      let exitHandler: ((error?: Error) => void) | null = null;
+      let abortListener: (() => void) | null = null;
 
       // Heartbeat: send periodic keepalive so the client can detect dead connections
       heartbeatInterval = setInterval(() => {
@@ -641,14 +658,15 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
 
         // 4. Set up abort handling
         if (abortController) {
-          const onAbort = () => {
-            if (codexProcess && threadId) {
-              codexProcess.send(
-                formatJsonRpcRequest('turn/interrupt', { threadId }),
-              );
-            }
+          abortListener = () => {
+            CodexProcessManager.interrupt(sessionId);
           };
-          abortController.signal.addEventListener('abort', onAbort, { once: true });
+
+          if (abortController.signal.aborted) {
+            abortListener();
+          } else {
+            abortController.signal.addEventListener('abort', abortListener, { once: true });
+          }
         }
 
         // 5. Send turn/start and listen for events
@@ -676,18 +694,49 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
             turnStartParams.summary = isMini ? 'detailed' : (summary || 'concise');
           }
 
-          codexProcess.send(
-            formatJsonRpcRequest('turn/start', turnStartParams),
-          );
+          const turnStartRequest = formatJsonRpcRequest('turn/start', turnStartParams);
+          const turnStartRequestId = getLastRequestId();
 
           // Track whether the new codex/event/* protocol is active for this turn.
           // When active, skip old item/reasoning/summaryTextDelta to avoid duplicate thinking.
           // Per-turn flag (not module-level) so switching models works correctly.
           const turnCtx = { useNewReasoningProtocol: false };
+          let activeTurnId: string | null = null;
+
+          const rememberTurnId = (nextTurnId: string | null) => {
+            if (!nextTurnId || !codexProcess) return;
+            activeTurnId = nextTurnId;
+            codexProcess.currentTurnId = nextTurnId;
+            CodexProcessManager.flushPendingInterrupt(codexProcess);
+          };
+
+          const clearActiveTurn = () => {
+            if (!codexProcess) return;
+            if (!activeTurnId || codexProcess.currentTurnId === activeTurnId) {
+              codexProcess.currentTurnId = null;
+            }
+            codexProcess.interruptRequested = false;
+            activeTurnId = null;
+          };
+
+          exitHandler = (error?: Error) => {
+            clearActiveTurn();
+            reject(new Error(error?.message || 'Codex app-server exited during an active turn'));
+          };
 
           // Message handler for all events during this turn
           messageHandler = (msg: JsonRpcMessage) => {
             try {
+              if (msg.type === 'response' && msg.id === turnStartRequestId) {
+                if (msg.error) {
+                  clearActiveTurn();
+                  reject(new Error(msg.error.message || 'turn/start failed'));
+                  return;
+                }
+                rememberTurnId(extractTurnId(msg.result));
+                return;
+              }
+
               handleCodexMessage(
                 msg,
                 controller,
@@ -700,13 +749,22 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
                 resolvedEffort,
                 abortController?.signal,
                 turnCtx,
+                {
+                  onTurnStarted: rememberTurnId,
+                  onTurnFinished: clearActiveTurn,
+                },
               );
             } catch (err) {
+              clearActiveTurn();
               reject(err);
             }
           };
 
+          if (exitHandler) {
+            codexProcess.onExit(exitHandler);
+          }
           codexProcess.onMessage(messageHandler);
+          codexProcess.send(turnStartRequest);
         });
 
         // Turn completed successfully
@@ -723,6 +781,12 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
         // Clean up message handler
         if (codexProcess && messageHandler) {
           codexProcess.offMessage(messageHandler);
+        }
+        if (codexProcess && exitHandler) {
+          codexProcess.offExit(exitHandler);
+        }
+        if (abortController && abortListener) {
+          abortController.signal.removeEventListener('abort', abortListener);
         }
       }
     },
@@ -1277,10 +1341,19 @@ function handleCodexMessage(
   effort?: string,
   abortSignal?: AbortSignal,
   turnCtx: { useNewReasoningProtocol: boolean } = { useNewReasoningProtocol: false },
+  turnLifecycle: {
+    onTurnStarted?: (turnId: string | null) => void;
+    onTurnFinished?: () => void;
+  } = {},
 ): void {
   // --- Notifications (server push) ---
   if (msg.type === 'notification') {
     switch (msg.method) {
+      case 'turn/started': {
+        turnLifecycle.onTurnStarted?.(extractTurnId(msg.params));
+        break;
+      }
+
       // Text delta from agent message
       case 'item/agentMessage/delta': {
         const delta = msg.params.delta as string;
@@ -1414,14 +1487,17 @@ function handleCodexMessage(
       // Turn completed — extract usage and signal done
       case 'turn/completed': {
         const turn = msg.params.turn as Record<string, unknown> | undefined;
+        const turnStatus = typeof turn?.status === 'string' ? turn.status : null;
         const turnError = turn?.error as { message?: string } | null;
+        const turnFailed = turnStatus === 'failed';
+        const turnInterrupted = turnStatus === 'interrupted';
         const resultPayload: Record<string, unknown> = {
-          subtype: turnError ? 'error' : 'success',
+          subtype: turnInterrupted ? 'interrupted' : (turnError || turnFailed ? 'error' : 'success'),
         };
 
-        if (turnError) {
+        if (turnError || turnFailed) {
           resultPayload.is_error = true;
-          resultPayload.errors = [turnError.message || 'Unknown turn error'];
+          resultPayload.errors = [turnError?.message || 'Codex turn failed'];
         }
 
         if (turn) {
@@ -1445,10 +1521,12 @@ function handleCodexMessage(
           data: JSON.stringify(resultPayload),
         }));
 
+        turnLifecycle.onTurnFinished?.();
+
         // If the turn had an error, route to the error path so the outer
         // catch block handles cleanup correctly (no false-success 'done').
-        if (turnError) {
-          onError(new Error(turnError.message || 'Turn completed with error'));
+        if (turnError || turnFailed) {
+          onError(new Error(turnError?.message || 'Turn completed with error'));
         } else {
           onTurnComplete();
         }
@@ -1462,6 +1540,7 @@ function handleCodexMessage(
         const errorMsg = error?.message || 'Unknown Codex error';
 
         if (!willRetry) {
+          turnLifecycle.onTurnFinished?.();
           controller.enqueue(formatSSE({
             type: 'error',
             data: errorMsg,

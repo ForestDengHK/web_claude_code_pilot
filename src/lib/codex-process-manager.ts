@@ -30,7 +30,11 @@ export interface CodexProcess {
   send(message: string): void;
   onMessage(handler: (msg: JsonRpcMessage) => void): void;
   offMessage(handler: (msg: JsonRpcMessage) => void): void;
+  onExit(handler: (error?: Error) => void): void;
+  offExit(handler: (error?: Error) => void): void;
   threadId: string | null;
+  currentTurnId: string | null;
+  interruptRequested: boolean;
   initialized: boolean;
 }
 
@@ -80,7 +84,41 @@ export class CodexProcessManager {
     if (!entry) return;
 
     map.delete(sessionId);
+    entry.currentTurnId = null;
+    entry.interruptRequested = false;
     await CodexProcessManager.gracefulKill(entry.proc);
+  }
+
+  /**
+   * Gracefully interrupt the active turn for a session.
+   *
+   * If the turn ID is not known yet, we keep the request pending and flush it
+   * as soon as `turn/started` arrives.
+   */
+  static interrupt(sessionId: string): boolean {
+    const entry = getProcessMap().get(sessionId);
+    if (!entry || entry.proc.exitCode !== null) {
+      return false;
+    }
+
+    entry.interruptRequested = true;
+    CodexProcessManager.flushPendingInterrupt(entry);
+    return true;
+  }
+
+  /**
+   * Send a pending interrupt once both thread and turn IDs are known.
+   */
+  static flushPendingInterrupt(entry: CodexProcess): void {
+    if (!entry.interruptRequested || !entry.threadId || !entry.currentTurnId) {
+      return;
+    }
+
+    entry.interruptRequested = false;
+    entry.send(formatJsonRpcRequest('turn/interrupt', {
+      threadId: entry.threadId,
+      turnId: entry.currentTurnId,
+    }));
   }
 
   /**
@@ -108,10 +146,13 @@ export class CodexProcessManager {
     });
 
     const messageHandlers = new Set<(msg: JsonRpcMessage) => void>();
+    const exitHandlers = new Set<(error?: Error) => void>();
 
     const codexProcess: CodexProcess = {
       proc,
       threadId: null,
+      currentTurnId: null,
+      interruptRequested: false,
       initialized: false,
 
       send(message: string) {
@@ -142,6 +183,14 @@ export class CodexProcessManager {
       offMessage(handler: (msg: JsonRpcMessage) => void) {
         messageHandlers.delete(handler);
       },
+
+      onExit(handler: (error?: Error) => void) {
+        exitHandlers.add(handler);
+      },
+
+      offExit(handler: (error?: Error) => void) {
+        exitHandlers.delete(handler);
+      },
     };
 
     // Parse stdout line-by-line as JSON-RPC
@@ -170,11 +219,21 @@ export class CodexProcessManager {
       console.log(
         `[codex:${sessionId}] process exited (code=${code}, signal=${signal})`,
       );
+      codexProcess.currentTurnId = null;
+      codexProcess.interruptRequested = false;
+      for (const handler of exitHandlers) {
+        handler();
+      }
       getProcessMap().delete(sessionId);
     });
 
     proc.on('error', (err) => {
       console.log(`[codex:${sessionId}] process error: ${err.message}`);
+      codexProcess.currentTurnId = null;
+      codexProcess.interruptRequested = false;
+      for (const handler of exitHandlers) {
+        handler(err);
+      }
       getProcessMap().delete(sessionId);
     });
 
