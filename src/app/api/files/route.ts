@@ -9,6 +9,7 @@ export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
   const dir = searchParams.get('dir');
   const depth = parseInt(searchParams.get('depth') || '3', 10);
+  const showHidden = searchParams.get('hidden') === '1';
 
   if (!dir) {
     return NextResponse.json<ErrorResponse>(
@@ -54,7 +55,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const [tree, statusMap, gitBranch] = await Promise.all([
-      scanDirectory(resolvedDir, Math.min(depth, 5)),
+      scanDirectory(resolvedDir, Math.min(depth, 5), showHidden),
       getGitStatusMap(resolvedDir),
       getGitBranch(resolvedDir),
     ]);

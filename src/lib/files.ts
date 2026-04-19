@@ -18,6 +18,17 @@ const IGNORED_DIRS = new Set([
   '.output',
 ]);
 
+/**
+ * True for dot-prefixed entries that are considered "hidden" and thus filtered
+ * out of the file tree by default. `.env*` and `.codepilot-uploads` are
+ * intentionally exempt — they're either useful config or app-managed content
+ * the user expects to see. Heavy build/tool dirs like `.git` and `.next` are
+ * handled separately via IGNORED_DIRS (always hidden regardless of showHidden).
+ */
+export function isDotfileHidden(name: string): boolean {
+  return name.startsWith('.') && !name.startsWith('.env') && name !== '.codepilot-uploads';
+}
+
 const LANGUAGE_MAP: Record<string, string> = {
   ts: 'typescript',
   tsx: 'typescript',
@@ -86,7 +97,11 @@ export function isRootPath(p: string): boolean {
   return resolved === path.parse(resolved).root;
 }
 
-export async function scanDirectory(dir: string, depth: number = 3): Promise<FileTreeNode[]> {
+export async function scanDirectory(
+  dir: string,
+  depth: number = 3,
+  showHidden: boolean = false,
+): Promise<FileTreeNode[]> {
   const resolvedDir = path.resolve(dir);
 
   try {
@@ -95,10 +110,14 @@ export async function scanDirectory(dir: string, depth: number = 3): Promise<Fil
     return [];
   }
 
-  return scanDirectoryRecursive(resolvedDir, depth);
+  return scanDirectoryRecursive(resolvedDir, depth, showHidden);
 }
 
-async function scanDirectoryRecursive(dir: string, depth: number): Promise<FileTreeNode[]> {
+async function scanDirectoryRecursive(
+  dir: string,
+  depth: number,
+  showHidden: boolean,
+): Promise<FileTreeNode[]> {
   if (depth <= 0) return [];
 
   let entries: import('fs').Dirent[];
@@ -118,8 +137,10 @@ async function scanDirectoryRecursive(dir: string, depth: number): Promise<FileT
   });
 
   for (const entry of sorted) {
-    // Skip hidden files/dirs (except common config files and uploads)
-    if (entry.name.startsWith('.') && !entry.name.startsWith('.env') && entry.name !== '.codepilot-uploads') {
+    // Hidden dotfiles are filtered unless the user opts in.
+    // IGNORED_DIRS (node_modules, .git, .next, …) stay hidden either way —
+    // they're too heavy/noisy to ever browse usefully.
+    if (!showHidden && isDotfileHidden(entry.name)) {
       continue;
     }
 
@@ -128,7 +149,7 @@ async function scanDirectoryRecursive(dir: string, depth: number): Promise<FileT
     if (entry.isDirectory()) {
       if (IGNORED_DIRS.has(entry.name)) continue;
 
-      const children = await scanDirectoryRecursive(fullPath, depth - 1);
+      const children = await scanDirectoryRecursive(fullPath, depth - 1, showHidden);
       nodes.push({
         name: entry.name,
         path: fullPath,

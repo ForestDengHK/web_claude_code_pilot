@@ -18,8 +18,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
@@ -32,6 +34,17 @@ import {
 import { EllipsisIcon, UploadIcon, FolderPlusIcon } from "lucide-react";
 import { BranchSelector } from "@/components/project/BranchSelector";
 import type { ReactNode } from "react";
+
+const SHOW_HIDDEN_STORAGE_KEY = "codepilot:fileTree:showHidden";
+
+/**
+ * Matches the server-side `isDotfileHidden` in `src/lib/files.ts`. Inlined here
+ * because `@/lib/files` imports `fs` and can't be bundled client-side. If you
+ * change this rule, update the other copy too.
+ */
+function isDotfileHidden(name: string): boolean {
+  return name.startsWith(".") && !name.startsWith(".env") && name !== ".codepilot-uploads";
+}
 
 const PREVIEWABLE_EXTENSIONS = new Set([
   // Markup & data
@@ -146,9 +159,17 @@ function RenderTreeNodes({ nodes, searchQuery }: { nodes: FileTreeNode[]; search
   return (
     <>
       {filtered.map((node) => {
+        // Dim entries that are normally hidden so the user can tell them apart
+        // from regular files even when "Show hidden files" is enabled.
+        const mutedClass = isDotfileHidden(node.name) ? "opacity-60" : undefined;
         if (node.type === "directory") {
           return (
-            <FileTreeFolder key={node.path} path={node.path} name={node.name}>
+            <FileTreeFolder
+              key={node.path}
+              path={node.path}
+              name={node.name}
+              className={mutedClass}
+            >
               {node.children && (
                 <RenderTreeNodes nodes={node.children} searchQuery={searchQuery} />
               )}
@@ -161,6 +182,7 @@ function RenderTreeNodes({ nodes, searchQuery }: { nodes: FileTreeNode[]; search
             path={node.path}
             name={node.name}
             icon={getFileIcon(node.extension)}
+            className={mutedClass}
           />
         );
       })}
@@ -182,6 +204,28 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false);
+
+  // Show/hide dotfiles (persisted per-browser, global across projects)
+  const [showHidden, setShowHidden] = useState<boolean>(() => {
+    try {
+      return typeof window !== "undefined"
+        && window.localStorage.getItem(SHOW_HIDDEN_STORAGE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleShowHidden = useCallback(() => {
+    setShowHidden((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(SHOW_HIDDEN_STORAGE_KEY, next ? "1" : "0");
+      } catch {
+        // localStorage may be disabled (private mode, etc.) — silently ignore
+      }
+      return next;
+    });
+  }, []);
 
   // Folder operations — upload
   const [uploading, setUploading] = useState(false);
@@ -212,8 +256,9 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
     if (lazyLoadingRef.current.has(dirPath)) return; // already loading
     lazyLoadingRef.current.add(dirPath);
     try {
+      const hiddenParam = showHidden ? "&hidden=1" : "";
       const res = await fetch(
-        `/api/files?dir=${encodeURIComponent(dirPath)}&baseDir=${encodeURIComponent(workingDirectory)}&depth=3`
+        `/api/files?dir=${encodeURIComponent(dirPath)}&baseDir=${encodeURIComponent(workingDirectory)}&depth=3${hiddenParam}`
       );
       if (!res.ok) return;
       const data = await res.json();
@@ -250,7 +295,7 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
     } finally {
       lazyLoadingRef.current.delete(dirPath);
     }
-  }, [workingDirectory]);
+  }, [workingDirectory, showHidden]);
 
   // Find empty directories in expanded set and lazy-load them
   const lazyLoadEmptyDirs = useCallback((newExpanded: Set<string>, currentTree: FileTreeNode[]) => {
@@ -297,8 +342,9 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
 
     setLoading(true);
     try {
+      const hiddenParam = showHidden ? "&hidden=1" : "";
       const res = await fetch(
-        `/api/files?dir=${encodeURIComponent(workingDirectory)}&baseDir=${encodeURIComponent(workingDirectory)}&depth=4`,
+        `/api/files?dir=${encodeURIComponent(workingDirectory)}&baseDir=${encodeURIComponent(workingDirectory)}&depth=4${hiddenParam}`,
         { signal: controller.signal }
       );
       if (res.ok) {
@@ -325,7 +371,7 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
         setLoading(false);
       }
     }
-  }, [workingDirectory]);
+  }, [workingDirectory, showHidden]);
 
   useEffect(() => {
     fetchTree();
@@ -652,7 +698,7 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
                 <span className="sr-only">More actions</span>
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-[140px]">
+            <DropdownMenuContent align="end" className="min-w-[180px]">
               <DropdownMenuItem onClick={() => handleUpload(workingDirectory)}>
                 <UploadIcon className="size-4" />
                 Upload files here
@@ -661,6 +707,16 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
                 <FolderPlusIcon className="size-4" />
                 New folder here
               </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuCheckboxItem
+                checked={showHidden}
+                onCheckedChange={toggleShowHidden}
+                // Prevent the menu from closing so a mobile user can flip the
+                // toggle and immediately see it take effect behind the menu.
+                onSelect={(e) => e.preventDefault()}
+              >
+                Show hidden files
+              </DropdownMenuCheckboxItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}
