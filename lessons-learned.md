@@ -4,6 +4,56 @@ Debugging notes and post-mortems. Chronological, newest first.
 
 ---
 
+## 2026-04-25 — Terminal unreachable over HTTPS reverse proxies
+
+**Severity**: Medium. Terminal feature broken for the two production access paths (Tailscale-HTTPS and `ccpilot.swifttools.eu`); the LAN/Tailscale-direct path still worked, which masked it during local dev.
+
+**Symptom**: Opening the Terminal page over either HTTPS front showed `Connection failed`. Direct Tailscale on port 4000/4001 worked fine.
+
+**Root cause (architectural)**: The terminal uses a *separate* WebSocket server bound to its own TCP port (4002 prod, 4003 dev) — not mounted on Next.js. `/api/terminal/config` returned `wss://<host>:<wsPort>` whenever `x-forwarded-proto: https` was set. But:
+- Local Caddy had TLS only on `:443` and only proxied `:443 → :4000`. Port 4002/4003 had no TLS listener → `wss://...:4002` failed the TLS handshake.
+- Public `ccpilot.swifttools.eu` is reached via `Azure Caddy → SSH reverse tunnel → Mac:4001`. Only port 8080 was tunnelled (`-R 8080:localhost:4001`); Mac:4002 was not exposed at all.
+
+The route's own comment even acknowledged this — but neither Caddyfile nor the tunnel plist had been wired for it.
+
+**Fix**:
+1. `route.ts`: when `x-forwarded-proto === 'https'`, return `wss://<host>/terminal-ws` (path-based) instead of port-based. HTTP path unchanged.
+2. Local Caddyfile: `handle_path /terminal-ws/* { reverse_proxy localhost:4003 }` (dev WS port).
+3. Tunnel plist: add a second forward `-R 8081:localhost:4002`. (`launchctl bootout` + `bootstrap` — `kickstart` doesn't reload changed plist arguments.)
+4. Azure Caddyfile: `handle_path /terminal-ws/* { reverse_proxy localhost:8081 }` — see the gotcha below.
+
+**The gotcha that ate ~15 min**: After steps 1–4, scenario B (Tailscale-HTTPS) returned `101 Switching Protocols` immediately. Scenario C (`ccpilot.swifttools.eu`) returned `426 Upgrade Required` even though direct probes confirmed the SSH tunnel + Mac:4002 happily handshook 101 from inside Azure (`localhost:8081 → tunnel → Mac:4002`).
+
+The difference between the two Caddyfiles was:
+```caddyfile
+# Local (works) — minimal:
+handle_path /terminal-ws/* {
+    reverse_proxy localhost:4003
+}
+
+# Azure (initially broken) — copied old v1-style directives:
+handle_path /terminal-ws/* {
+    reverse_proxy localhost:8081 {
+        flush_interval -1
+        header_up Connection {>Connection}
+        header_up Upgrade {>Upgrade}
+    }
+}
+```
+
+**`header_up Connection {>Connection}` / `header_up Upgrade {>Upgrade}` break the WS handshake on Caddy v2.11.x.** Removing those two lines made it work instantly. Caddy v2 forwards WS upgrade headers automatically; the explicit pass-through (necessary in v1 / early v2) now interferes.
+
+**Lessons**:
+1. **WebSockets over HTTPS = the WS port also needs to be reachable through the same TLS terminator/tunnel.** Don't expose them on a second `wss://host:port` form unless that port has its own TLS listener and is tunnelled out. Path-based proxying (`wss://host/some-path`) at the existing `:443` is far more robust.
+2. **In Caddy v2, drop the v1-era `header_up Connection`/`header_up Upgrade` for WS proxying.** They are not needed and they actively break the upgrade in current versions. The same legacy-style block is also still present on the main `:8080` proxy of the Azure Caddyfile — leave it alone for now since it doesn't matter for non-WS traffic, but consider cleaning up.
+3. **`launchctl kickstart -k` does not reload plist changes.** When the `ProgramArguments` array changes (e.g. adding a second `-R`), use `bootout` + `bootstrap`. We've been bitten by this before; recurring trap.
+4. **When two reverse-proxy paths through the same Caddy behave differently, diff the directives line-by-line, not just the upstreams.** The temptation is to assume "WS works on `:8080` so it'll work on `:8081` with the same template" — but the template itself was the bug.
+5. **`Via: 1.1 Caddy` in a 4xx response indicates the response came back through `reverse_proxy`** (so the upstream replied). Useful signal for narrowing whether the failure is at Caddy or beyond.
+
+**Verification**: All four scenarios end with `101 Switching Protocols` and a live `{"type":"ready",…}` JSON frame: HTTP-direct dev (4003), HTTP-direct prod (4002), HTTPS Tailscale, HTTPS public.
+
+---
+
 ## 2026-04-17 — Three bugs masquerading as one feature gap
 
 **Severity**: Medium. Wasted a full design round.
