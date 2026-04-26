@@ -18,6 +18,7 @@ import {
   Globe02Icon,
   CheckListIcon,
   MessageQuestionIcon,
+  GitBranchIcon,
 } from "@hugeicons/core-free-icons";
 import { ChevronRightIcon, CopyIcon, CheckIcon, XIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -80,6 +81,7 @@ function getToolIcon(category: ToolCategory): IconSvgElement {
     case 'search': return Search01Icon;
     case 'skill':  return Wrench01Icon;
     case 'agent':  return UserMultipleIcon;
+    case 'subagents': return GitBranchIcon;
     case 'web':    return Globe02Icon;
     case 'todo':   return CheckListIcon;
     case 'ask':    return MessageQuestionIcon;
@@ -181,16 +183,16 @@ function ToolActionRow({ tool, isStreaming }: { tool: ToolAction; isStreaming: b
 
   return (
     <div className="flex items-center gap-2 px-2 py-1 min-h-[28px] text-xs hover:bg-muted/30 rounded-sm transition-colors">
-      <HugeiconsIcon icon={icon} className={cn("h-3.5 w-3.5 shrink-0", category === 'skill' ? "text-blue-500" : category === 'agent' ? "text-violet-500" : "text-muted-foreground")} />
+      <HugeiconsIcon icon={icon} className={cn("h-3.5 w-3.5 shrink-0", category === 'skill' ? "text-blue-500" : category === 'agent' ? "text-violet-500" : category === 'subagents' ? "text-fuchsia-500" : "text-muted-foreground")} />
 
       {label && (
-        <span className={cn("font-medium shrink-0", category === 'skill' ? "text-blue-500" : category === 'agent' ? "text-violet-500" : "text-muted-foreground")}>{label}</span>
+        <span className={cn("font-medium shrink-0", category === 'skill' ? "text-blue-500" : category === 'agent' ? "text-violet-500" : category === 'subagents' ? "text-fuchsia-500" : "text-muted-foreground")}>{label}</span>
       )}
 
       <Tooltip open={longPress.tooltipOpen}>
         <TooltipTrigger asChild>
           <span
-            className={cn("font-mono truncate flex-1 select-none", category === 'skill' ? "text-blue-500/70" : category === 'agent' ? "text-violet-500/70" : "text-muted-foreground/60")}
+            className={cn("font-mono truncate flex-1 select-none", category === 'skill' ? "text-blue-500/70" : category === 'agent' ? "text-violet-500/70" : category === 'subagents' ? "text-fuchsia-500/70" : "text-muted-foreground/60")}
             title={fullText}
             {...longPress.handlers}
           >

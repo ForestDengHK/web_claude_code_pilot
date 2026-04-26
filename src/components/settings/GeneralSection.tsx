@@ -203,6 +203,13 @@ export function GeneralSection() {
   const [showThinking, setShowThinking] = useState(false);
   const [showThinkingSaving, setShowThinkingSaving] = useState(false);
 
+  // Claude-only: parallel context-inheriting subagents via the
+  // `mcp__codepilot-subagents__spawn_subagents` in-process MCP tool.
+  // Default ON. Disabling removes the tool from the SDK and strips its
+  // mention from the system prompt.
+  const [spawnSubagents, setSpawnSubagents] = useState(true);
+  const [spawnSubagentsSaving, setSpawnSubagentsSaving] = useState(false);
+
   // Git clone settings
   const [cloneBaseDir, setCloneBaseDir] = useState('');
   const [defaultGitHost, setDefaultGitHost] = useState('');
@@ -217,6 +224,8 @@ export function GeneralSection() {
         const appSettings = data.settings || {};
         setSkipPermissions(appSettings.dangerously_skip_permissions === "true");
         setShowThinking(appSettings.show_thinking_text === "true");
+        // Default ON: only treat the explicit string "false" as disabled.
+        setSpawnSubagents(appSettings.enable_spawn_subagents !== "false");
         setCloneBaseDir(appSettings.clone_base_directory || '');
         setDefaultGitHost(appSettings.default_git_host || '');
       }
@@ -275,6 +284,28 @@ export function GeneralSection() {
       // ignore
     } finally {
       setShowThinkingSaving(false);
+    }
+  };
+
+  const handleSpawnSubagentsToggle = async (enabled: boolean) => {
+    setSpawnSubagentsSaving(true);
+    try {
+      // Default ON: persist "false" only when explicitly disabled, clear
+      // otherwise so the absence of the key reads as enabled on the server.
+      const res = await fetch("/api/settings/app", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          settings: { enable_spawn_subagents: enabled ? "" : "false" },
+        }),
+      });
+      if (res.ok) {
+        setSpawnSubagents(enabled);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setSpawnSubagentsSaving(false);
     }
   };
 
@@ -346,6 +377,38 @@ export function GeneralSection() {
             checked={showThinking}
             onCheckedChange={handleShowThinkingToggle}
             disabled={showThinkingSaving}
+          />
+        </div>
+      </div>
+
+      {/* Parallel context-inheriting subagents toggle (Claude only) */}
+      <div className="rounded-lg border border-border/50 p-4 transition-shadow hover:shadow-sm">
+        <div className="flex items-center justify-between">
+          <div className="pr-4">
+            <h2 className="text-sm font-medium">Parallel Context-Inheriting Subagents</h2>
+            <p className="text-xs text-muted-foreground">
+              Exposes a <code className="rounded bg-muted px-1 py-0.5 text-[11px]">spawn_subagents</code> tool to Claude.
+              When invoked, it spawns multiple forks of the current session in parallel; each fork
+              inherits the full conversation context (read files, prior decisions) and runs read-only
+              (Read/Glob/Grep/Web). Doesn&apos;t affect Codex.
+            </p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              <span className="font-medium">How to trigger:</span> the most reliable way is to say
+              {' '}
+              <span className="font-mono">&ldquo;in parallel&rdquo;</span>,
+              {' '}
+              <span className="font-mono">&ldquo;并行&rdquo;</span>,
+              {' '}or
+              {' '}
+              <span className="font-mono">&ldquo;use spawn_subagents&rdquo;</span>
+              {' '}in your message. Natural fan-out phrasing also works some of the time but isn&apos;t
+              guaranteed — Claude may decide to do the work serially instead.
+            </p>
+          </div>
+          <Switch
+            checked={spawnSubagents}
+            onCheckedChange={handleSpawnSubagentsToggle}
+            disabled={spawnSubagentsSaving}
           />
         </div>
       </div>

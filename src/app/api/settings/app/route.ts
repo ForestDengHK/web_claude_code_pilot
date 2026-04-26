@@ -28,6 +28,9 @@ const ALLOWED_KEYS = [
   // own thinking unconditionally) and by Claude models without adaptive
   // thinking support (SDK silently drops the option).
   'show_thinking_text',
+  // Default-ON gate for the spawn_subagents in-process MCP tool.
+  // Stored as 'false' when the user explicitly disables it; absence reads as enabled.
+  'enable_spawn_subagents',
 ];
 
 export async function GET() {

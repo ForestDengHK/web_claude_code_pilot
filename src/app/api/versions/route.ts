@@ -38,6 +38,15 @@ async function getLatestNpmVersion(pkg: string): Promise<string | null> {
 async function getLatestBrewCaskVersion(cask: string): Promise<string | null> {
   if (!isMac) return null;
   try {
+    // Refresh brew metadata first — `brew info --cask` reads from a local cache
+    // that can lag the upstream cask repo by days. Without this, we'd happily
+    // tell the user "you're on the latest" when there's actually a newer version.
+    // Failure is non-fatal: fall through to `brew info` with whatever cache exists.
+    try {
+      await execFileAsync("brew", ["update", "--quiet"], { timeout: 30000 });
+    } catch {
+      // network down, brew misconfigured, etc. — keep going with stale cache.
+    }
     const { stdout } = await execFileAsync("brew", ["info", "--cask", "--json=v2", cask], {
       timeout: 15000,
     });

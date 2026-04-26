@@ -27,6 +27,7 @@ import { sendPushNotification } from './push-notifications';
 import { wasInterrupted } from './abort-registry';
 import { findClaudeBinary, findGitBash, getExpandedPath } from './platform';
 import { sanitizeEffortLevel } from './effort';
+import { createSpawnSubagentsMcp, SPAWN_SUBAGENTS_PROMPT_FRAGMENT } from './spawn-subagents-mcp';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
@@ -537,13 +538,18 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           queryOptions.maxTurns = maxTurns;
         }
 
-        if (systemPrompt) {
-          // Use preset append mode to keep Claude Code's default system prompt
-          // (which includes skills, working directory awareness, etc.)
+        // Append the spawn_subagents fragment if the tool is enabled (default).
+        // The fragment teaches the main agent when to use the tool; if the
+        // tool is disabled, omit the fragment so the agent doesn't reference
+        // a tool it can't call.
+        const wantSpawnSubagents = getSetting('enable_spawn_subagents') !== 'false';
+        const appendedSystemPrompt =
+          (systemPrompt ?? '') + (wantSpawnSubagents ? SPAWN_SUBAGENTS_PROMPT_FRAGMENT : '');
+        if (appendedSystemPrompt) {
           queryOptions.systemPrompt = {
             type: 'preset',
             preset: 'claude_code',
-            append: systemPrompt,
+            append: appendedSystemPrompt,
           };
         }
 
@@ -601,6 +607,41 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         const installedPlugins = getInstalledPlugins();
         if (installedPlugins.length > 0) {
           queryOptions.plugins = installedPlugins;
+        }
+
+        // Inject the in-process `spawn_subagents` MCP server unless the user
+        // has explicitly disabled it in Settings. Forks inherit
+        // cwd/model/env/plugins/settingSources from the parent so they run in
+        // the same workspace and against the same provider. The sessionRef is
+        // populated below when the SDK init message arrives.
+        const spawnSubagentsEnabled = getSetting('enable_spawn_subagents') !== 'false';
+        let spawnSubagentsSessionRef: { current: string | null } | null = null;
+        if (spawnSubagentsEnabled) {
+          const { mcpServer: spawnSubagentsMcp, sessionRef } = createSpawnSubagentsMcp({
+            baseOptions: {
+              cwd: queryOptions.cwd,
+              model: queryOptions.model,
+              env: queryOptions.env,
+              pathToClaudeCodeExecutable: queryOptions.pathToClaudeCodeExecutable,
+              settingSources: queryOptions.settingSources,
+              plugins: queryOptions.plugins,
+            },
+            abortController,
+            defaultMaxTurns: 15,
+          });
+          spawnSubagentsSessionRef = sessionRef;
+          queryOptions.mcpServers = {
+            ...(queryOptions.mcpServers ?? {}),
+            'codepilot-subagents': spawnSubagentsMcp,
+          };
+          // Auto-allow the spawn_subagents tool itself: it's an in-process tool
+          // we own and trust. Each individual fork still runs in its own
+          // permission sandbox (forks use a read-only tool whitelist and
+          // bypass permission prompts so they don't deadlock without a UI).
+          queryOptions.allowedTools = [
+            ...(queryOptions.allowedTools ?? []),
+            'mcp__codepilot-subagents__spawn_subagents',
+          ];
         }
 
         // Resume session if we have an SDK session ID from a previous conversation turn
@@ -923,6 +964,12 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
                   const sysMsg = message as SDKSystemMessage;
                   if ('subtype' in sysMsg) {
                     if (sysMsg.subtype === 'init') {
+                      // Hand the parent SDK session_id to the spawn_subagents
+                      // MCP tool so it knows which session to fork from.
+                      // Null when the feature is disabled in Settings.
+                      if (spawnSubagentsSessionRef) {
+                        spawnSubagentsSessionRef.current = sysMsg.session_id;
+                      }
                       controller.enqueue(formatSSE({
                         type: 'status',
                         data: JSON.stringify({

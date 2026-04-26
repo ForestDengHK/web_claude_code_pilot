@@ -8,6 +8,7 @@ import { PlusSignIcon, ListViewIcon, CodeIcon, Loading02Icon } from "@hugeicons/
 import { McpServerList } from "@/components/plugins/McpServerList";
 import { McpServerEditor } from "@/components/plugins/McpServerEditor";
 import { ConfigEditor } from "@/components/plugins/ConfigEditor";
+import { BuiltinMcpServers } from "@/components/plugins/BuiltinMcpServers";
 import type { MCPServer } from "@/types";
 
 export function McpManager({ workingDir }: { workingDir?: string } = {}) {
@@ -180,6 +181,7 @@ export function McpManager({ workingDir }: { workingDir?: string } = {}) {
         </TabsList>
 
         <TabsContent value="list" className="mt-4">
+          <BuiltinMcpServers />
           {loading ? (
             <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground">
               <HugeiconsIcon icon={Loading02Icon} className="h-4 w-4 animate-spin" />

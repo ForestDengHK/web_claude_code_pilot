@@ -5,6 +5,7 @@ export type ToolCategory =
   | 'search'
   | 'skill'
   | 'agent'
+  | 'subagents' // CodePilot's spawn_subagents fan-out tool
   | 'web'
   | 'todo'
   | 'ask'
@@ -108,6 +109,12 @@ export function isImagePath(path: string): boolean {
 export function getToolCategory(name: string): ToolCategory {
   const lower = normalizeToolName(name);
   if (lower === 'skill') return 'skill';
+  // CodePilot's in-process spawn_subagents tool. Detect via the full FQN
+  // because normalizeToolName collapses 'mcp__codepilot-subagents__spawn_subagents'
+  // to 'spawn_subagents' which we also accept.
+  if (lower === 'spawn_subagents' || name === 'mcp__codepilot-subagents__spawn_subagents') {
+    return 'subagents';
+  }
   if (lower === 'agent' || lower === 'task' || lower === 'spawn_agent' || lower === 'send_input') return 'agent';
   if (lower === 'read' || lower === 'readfile' || lower === 'read_file' || lower === 'notebookread' || lower === 'notebook_read' || lower === 'open') return 'read';
   if (
@@ -137,6 +144,7 @@ export function getToolLabel(name: string, category: ToolCategory): string {
     case 'write': return 'File Edit';
     case 'skill': return 'Skill';
     case 'agent': return 'Agent';
+    case 'subagents': return 'Subagents';
     case 'web': return 'Fetch';
     case 'todo': return 'Todo';
     case 'ask': return 'Ask';
@@ -181,6 +189,14 @@ export function getToolSummary(name: string, input: unknown, category: ToolCateg
       if (agentType) return agentType;
       if (desc) return desc.length > 50 ? desc.slice(0, 47) + '...' : desc;
       return name;
+    }
+    case 'subagents': {
+      const prompts = Array.isArray(inp.prompts) ? inp.prompts : [];
+      const n = prompts.length;
+      if (n === 0) return 'subagents';
+      const first = typeof prompts[0] === 'string' ? prompts[0] : '';
+      const preview = first.length > 40 ? first.slice(0, 37) + '...' : first;
+      return n === 1 ? `1 fork · ${preview}` : `${n} parallel forks · ${preview}`;
     }
     case 'web': {
       const url = getStringValue(inp.url);
@@ -241,6 +257,18 @@ export function getToolFullText(name: string, input: unknown, category: ToolCate
       if (desc) parts.push(desc);
       if (prompt) parts.push(`\n${prompt.length > 200 ? `${prompt.slice(0, 197)}...` : prompt}`);
       return parts.length > 0 ? parts.join(' ') : name;
+    }
+    case 'subagents': {
+      const prompts = Array.isArray(inp.prompts) ? inp.prompts : [];
+      if (prompts.length === 0) return name;
+      // Show each fork's prompt on its own numbered line.
+      return prompts
+        .map((p, i) => {
+          const text = typeof p === 'string' ? p : '';
+          const trimmed = text.length > 240 ? `${text.slice(0, 237)}...` : text;
+          return `${i + 1}. ${trimmed}`;
+        })
+        .join('\n');
     }
     case 'web':
       return getStringValue(inp.url) || name;

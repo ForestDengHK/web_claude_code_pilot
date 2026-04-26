@@ -43,7 +43,7 @@ export function ContextHealthToast({ alerts, onDismiss, onAction }: Props) {
         </span>
         <button
           onClick={() => onDismiss(alert.ruleId)}
-          className="shrink-0 px-1 text-xs text-muted-foreground hover:text-foreground"
+          className="shrink-0 -mr-1 -mt-1 flex h-7 w-7 items-center justify-center rounded-md border border-border/60 bg-background/60 text-base leading-none text-muted-foreground hover:bg-muted hover:text-foreground"
           aria-label="Dismiss for this session"
         >
           ✕
