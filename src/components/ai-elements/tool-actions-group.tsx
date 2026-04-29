@@ -37,6 +37,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useLongPress } from '@/hooks/useLongPress';
 import { useCallback } from 'react';
 import { ImageLightbox } from '@/components/chat/ImageLightbox';
+import { LoadingImage } from '@/components/chat/LoadingImage';
 
 function CopyTextButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -106,8 +107,7 @@ function ImagePreview({ filePath }: { filePath: string }) {
           onClick={() => setLightboxOpen(true)}
           className="rounded-lg overflow-hidden hover:opacity-80 transition"
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={src} alt={extractFilename(filePath)} className="max-h-32 rounded-lg" />
+          <LoadingImage src={src} alt={extractFilename(filePath)} className="max-h-32 rounded-lg" />
         </button>
       </div>
       <ImageLightbox

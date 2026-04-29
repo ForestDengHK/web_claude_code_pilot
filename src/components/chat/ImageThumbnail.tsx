@@ -1,5 +1,7 @@
 'use client';
 
+import { LoadingImage } from './LoadingImage';
+
 interface ImageThumbnailProps {
   src: string;
   alt: string;
@@ -13,8 +15,7 @@ export function ImageThumbnail({ src, alt, onClick }: ImageThumbnailProps) {
       onClick={onClick}
       className="rounded-lg overflow-hidden cursor-pointer hover:opacity-80 transition"
     >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
+      <LoadingImage
         src={src}
         alt={alt}
         className="max-h-32 w-full object-cover rounded-lg"

@@ -4,6 +4,7 @@ import fsp from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { isPathSafe } from '@/lib/files';
+import { getSession } from '@/lib/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -148,14 +149,45 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const resolved = path.resolve(filePath);
   const homeDir = os.homedir();
 
-  // Scope restriction: only allow files within the user's home directory
-  // or within an explicitly provided baseDir (the session's working directory)
+  // Scope restriction: by default allow files within the user's home directory
+  // and the system temp dirs (/tmp, /private/tmp, /var/folders/...). Skills and
+  // ad-hoc commands often dump generated images into /tmp; allowing them here
+  // makes the chat-image rendering "just work" for the typical self-hosted use
+  // case. Sensitive system paths (/etc, /usr, /System, etc.) remain blocked.
+  // Optional `baseDir` and `session_id` parameters further extend allowed roots.
   const baseDir = request.nextUrl.searchParams.get('baseDir');
-  const allowedRoot = baseDir ? path.resolve(baseDir) : homeDir;
-  if (!isPathSafe(allowedRoot, resolved)) {
+  const sessionId = request.nextUrl.searchParams.get('session_id');
+  const allowedRoots: string[] = [homeDir, '/tmp', '/private/tmp', os.tmpdir()];
+  if (baseDir) allowedRoots.push(path.resolve(baseDir));
+  let sessionWorkingDir: string | undefined;
+  if (sessionId) {
+    const session = getSession(sessionId);
+    if (session?.working_directory) {
+      sessionWorkingDir = path.resolve(session.working_directory);
+      allowedRoots.push(sessionWorkingDir);
+    }
+  }
+
+  // Expand a leading `~` (typed by users in /img commands) before resolving.
+  const expanded = filePath === '~'
+    ? homeDir
+    : filePath.startsWith('~/')
+      ? path.join(homeDir, filePath.slice(2))
+      : filePath;
+
+  // Relative paths are resolved against session.working_directory when available,
+  // otherwise against process cwd (which is what path.resolve does by default).
+  // This lets markdown like `![](foo.png)` from a skill running in cwd just work.
+  const resolved = path.isAbsolute(expanded)
+    ? path.resolve(expanded)
+    : sessionWorkingDir
+      ? path.resolve(sessionWorkingDir, expanded)
+      : path.resolve(expanded);
+
+  const isAllowed = allowedRoots.some((root) => isPathSafe(root, resolved));
+  if (!isAllowed) {
     return new Response(JSON.stringify({ error: 'File is outside the allowed scope' }), {
       status: 403,
       headers: { 'Content-Type': 'application/json' },

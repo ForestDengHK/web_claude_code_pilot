@@ -1424,8 +1424,24 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     await sendMessage(newContent);
   }, [currentBackend, isStreaming, sendMessage, sessionId]);
 
-  const handleCommand = useCallback(async (command: string) => {
+  const handleCommand = useCallback(async (command: string, arg?: string) => {
     switch (command) {
+      case '/img': {
+        const path = arg?.trim();
+        const content = path
+          ? `![](${path})`
+          : '**Usage:** `/img <path>` — display a local image inline.\n\nExample: `/img /tmp/cat.webp` or `/img ~/Downloads/photo.png`';
+        const imgMessage: Message = {
+          id: 'cmd-' + Date.now(),
+          session_id: sessionId,
+          role: 'assistant',
+          content,
+          created_at: new Date().toISOString(),
+          token_usage: null,
+        };
+        setMessages(prev => [...prev, imgMessage]);
+        break;
+      }
       case '/help': {
         const helpMessage: Message = {
           id: 'cmd-' + Date.now(),

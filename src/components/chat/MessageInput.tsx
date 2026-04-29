@@ -25,6 +25,7 @@ import {
   Shield01Icon,
   Mic01Icon,
   Loading02Icon,
+  Image01Icon,
 } from "@hugeicons/core-free-icons";
 import { cn } from '@/lib/utils';
 import {
@@ -77,7 +78,7 @@ interface CodexSkillRef {
 
 interface MessageInputProps {
   onSend: (content: string, files?: FileAttachment[], skillInfo?: { name: string; content: string }, codexSkills?: CodexSkillRef[]) => void;
-  onCommand?: (command: string) => void;
+  onCommand?: (command: string, arg?: string) => void;
   onStop?: () => void;
   /** Whether a graceful stop has been requested (next click will force stop) */
   stopRequested?: boolean;
@@ -101,6 +102,9 @@ interface PopoverItem {
   description?: string;
   builtIn?: boolean;
   immediate?: boolean;
+  /** When true, an immediate command keeps the typed argument and forwards it
+   *  to onCommand as the second parameter (e.g. `/img /tmp/cat.webp`). */
+  acceptsArg?: boolean;
   installedSource?: "agents" | "claude";
   icon?: typeof CommandLineIcon;
   /** Codex skill metadata — present only for items from /api/codex/skills */
@@ -131,6 +135,7 @@ const BUILT_IN_COMMANDS: PopoverItem[] = [
   { label: 'review', value: '/review', description: 'Review code quality', builtIn: true, icon: SearchList01Icon },
   { label: 'terminal-setup', value: '/terminal-setup', description: 'Configure terminal settings', builtIn: true, icon: CommandLineIcon },
   { label: 'memory', value: '/memory', description: 'Edit project memory file', builtIn: true, icon: BrainIcon },
+  { label: 'img', value: '/img', description: 'Display an image inline (e.g. /img /tmp/cat.webp)', builtIn: true, immediate: true, acceptsArg: true, icon: Image01Icon },
 ];
 
 interface ModeOption {
@@ -930,9 +935,11 @@ export function MessageInput({
         // Check built-in commands
         const cmd = BUILT_IN_COMMANDS.find(c => c.label === commandName);
         if (cmd) {
-          if (cmd.immediate && onCommand && !userInput && !hasFiles) {
+          // Immediate command: handle locally without dispatching to LLM.
+          // `acceptsArg` lets the command consume the trailing text (e.g. /img <path>).
+          if (cmd.immediate && onCommand && !hasFiles && (cmd.acceptsArg || !userInput)) {
             setInputValue('');
-            onCommand(cmd.value);
+            onCommand(cmd.value, cmd.acceptsArg ? userInput : undefined);
             return;
           }
           // Non-immediate built-in: expand with COMMAND_PROMPTS

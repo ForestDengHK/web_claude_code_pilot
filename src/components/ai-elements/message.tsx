@@ -33,6 +33,7 @@ import {
   useState,
 } from "react";
 import { Streamdown } from "streamdown";
+import { LoadingImage } from "@/components/chat/LoadingImage";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
@@ -323,7 +324,12 @@ export const MessageBranchPage = ({
   );
 };
 
-export type MessageResponseProps = ComponentProps<typeof Streamdown>;
+export type MessageResponseProps = ComponentProps<typeof Streamdown> & {
+  /** When provided, absolute filesystem paths in markdown images are
+   *  rewritten through `/api/files/raw?path=…&session_id=…`, allowing
+   *  paths within the session's working directory to be served. */
+  sessionId?: string;
+};
 
 const streamdownPlugins = { cjk, code, math, mermaid };
 
@@ -523,22 +529,70 @@ const CustomParagraph = memo(({ node, className, children, ...props }: any) => {
 });
 CustomParagraph.displayName = "CustomParagraph";
 
+// ---------------------------------------------------------------------------
+// Custom image — Streamdown's default Image component wraps <img> in a <div>,
+// which causes hydration errors when markdown places the image inside a <p>
+// (markdown image syntax `![alt](url)` always parents into a paragraph).
+// We override with an inline-block <span> wrapper, plus rewrite filesystem
+// paths through /api/files/raw so chat-rendered absolute paths actually load.
+// ---------------------------------------------------------------------------
+
+const MessageSessionContext = createContext<string | null>(null);
+
+function rewriteImageSrc(rawSrc: string | undefined, sessionId: string | null): string {
+  if (!rawSrc) return '';
+  // Pass through web URLs, data/blob URIs, and same-app API URLs unchanged
+  if (/^(https?:|data:|blob:|\/api\/)/i.test(rawSrc)) return rawSrc;
+  // Pass through Next.js asset URLs (e.g. /_next/...) and root-relative web routes
+  if (rawSrc.startsWith('/_next/')) return rawSrc;
+  // Strip a leading `./` from relative filesystem-style paths
+  const cleaned = rawSrc.startsWith('./') ? rawSrc.slice(2) : rawSrc;
+  // Route both absolute filesystem paths and skill-output relative paths through
+  // /api/files/raw — the API resolves relative paths against the session's
+  // working directory when session_id is provided.
+  const params = new URLSearchParams({ path: cleaned });
+  if (sessionId) params.set('session_id', sessionId);
+  return `/api/files/raw?${params.toString()}`;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const streamdownComponents = { table: CustomTable as any, p: CustomParagraph as any };
+const MarkdownImage = ({ src, alt, node: _node, className, ...rest }: any) => {
+  const sessionId = useContext(MessageSessionContext);
+  const finalSrc = rewriteImageSrc(typeof src === 'string' ? src : undefined, sessionId);
+  return (
+    <LoadingImage
+      src={finalSrc}
+      alt={typeof alt === 'string' ? alt : ''}
+      inline
+      className={cn('max-w-full rounded-md', className)}
+      {...rest}
+    />
+  );
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const streamdownComponents = {
+  table: CustomTable as any,
+  p: CustomParagraph as any,
+  img: MarkdownImage as any,
+};
 
 export const MessageResponse = memo(
-  ({ className, ...props }: MessageResponseProps) => (
-    <Streamdown
-      className={cn(
-        "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
-        className
-      )}
-      components={streamdownComponents}
-      plugins={streamdownPlugins}
-      {...props}
-    />
+  ({ className, sessionId, ...props }: MessageResponseProps) => (
+    <MessageSessionContext.Provider value={sessionId ?? null}>
+      <Streamdown
+        className={cn(
+          "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+          className
+        )}
+        components={streamdownComponents}
+        plugins={streamdownPlugins}
+        {...props}
+      />
+    </MessageSessionContext.Provider>
   ),
-  (prevProps, nextProps) => prevProps.children === nextProps.children
+  (prevProps, nextProps) =>
+    prevProps.children === nextProps.children && prevProps.sessionId === nextProps.sessionId
 );
 
 MessageResponse.displayName = "MessageResponse";

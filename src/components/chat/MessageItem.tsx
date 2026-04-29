@@ -20,6 +20,7 @@ import { useTTS } from '@/contexts/TTSContext';
 import { findTextRange, highlightRange, scrollToRange } from '@/lib/tts/highlight';
 import type { HealthAlert } from '@/lib/context-health';
 import { ContextHealthDot } from './ContextHealthDot';
+import { LoadingImage } from './LoadingImage';
 
 interface MessageItemProps {
   message: Message;
@@ -142,12 +143,10 @@ function GeneratedImage({ path, alt, sessionId }: { path: string; alt?: string; 
   const filename = path.split('/').pop() || 'image';
   return (
     <a href={src} target="_blank" rel="noreferrer" className="block my-2">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
+      <LoadingImage
         src={src}
         alt={alt || filename}
         className="max-w-full rounded-md border border-border/40"
-        loading="lazy"
       />
     </a>
   );
@@ -650,7 +649,7 @@ export function MessageItem({ message, searchQuery, isLatestMessage, viewMode = 
             )
           ) : (
             <div ref={responseRef} onClick={handleSeekClick} style={isThisMessageActive ? { cursor: 'pointer' } : undefined}>
-              <MessageResponse>{displayText}</MessageResponse>
+              <MessageResponse sessionId={message.session_id}>{displayText}</MessageResponse>
             </div>
           )
         )}

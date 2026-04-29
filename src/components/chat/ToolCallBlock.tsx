@@ -26,6 +26,7 @@ import {
 } from '@/lib/tool-display';
 import { CodeBlock } from './CodeBlock';
 import { ImageLightbox } from './ImageLightbox';
+import { LoadingImage } from './LoadingImage';
 
 type ToolStatus = 'running' | 'success' | 'error';
 
@@ -65,8 +66,7 @@ function ImageThumbnail({ filePath }: { filePath: string }) {
           onClick={() => setLightboxOpen(true)}
           className="rounded-lg overflow-hidden hover:opacity-80 transition"
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={src} alt={extractFilename(filePath)} className="max-h-40 rounded-lg" />
+          <LoadingImage src={src} alt={extractFilename(filePath)} className="max-h-40 rounded-lg" />
         </button>
       </div>
       <ImageLightbox
