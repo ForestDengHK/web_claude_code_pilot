@@ -19,6 +19,9 @@ import {
   getLastRequestId,
   type JsonRpcMessage,
 } from '@/lib/codex-jsonrpc';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 import { CodexProcessManager, type CodexProcess } from '@/lib/codex-process-manager';
 import { registerPendingCodexApproval } from '@/lib/codex-approval-registry';
 import { updateCodexThreadId, getSession } from '@/lib/db';
@@ -76,7 +79,19 @@ export interface CodexReviewResult {
 // Codex app-server UserInput union (v2 protocol)
 type CodexUserInput =
   | { type: 'text'; text: string; text_elements?: unknown[] }
-  | { type: 'skill'; name: string; path: string };
+  | { type: 'skill'; name: string; path: string }
+  | { type: 'localImage'; path: string };
+
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg|heic|heif|avif)$/i;
+
+function isImageAttachment(file: FileAttachment): boolean {
+  if (file.type?.startsWith('image/')) return true;
+  // Path refs carry the original filename; sniff by extension.
+  if (file.type === 'text/x-file-ref' && file.name && IMAGE_EXT_RE.test(file.name)) {
+    return true;
+  }
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -292,6 +307,13 @@ function buildUserInputs(
     const references: string[] = [];
 
     for (const file of files) {
+      // Images go in as native localImage inputs so the model actually
+      // perceives them as images (not just a path string in a prompt).
+      if (isImageAttachment(file) && file.filePath) {
+        inputs.push({ type: 'localImage', path: file.filePath });
+        continue;
+      }
+
       if (PATH_REF_TYPES.has(file.type)) {
         const originalPath = file.filePath || '';
         if (file.type === 'text/x-directory-ref') {
@@ -320,6 +342,17 @@ function buildUserInputs(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function readTokenSnapshot(raw: Record<string, unknown>): CodexTokenSnapshot {
+  const num = (v: unknown) => (typeof v === 'number' ? v : 0);
+  return {
+    inputTokens: num(raw.inputTokens),
+    outputTokens: num(raw.outputTokens),
+    cachedInputTokens: num(raw.cachedInputTokens),
+    reasoningOutputTokens: num(raw.reasoningOutputTokens),
+    totalTokens: num(raw.totalTokens),
+  };
 }
 
 function extractTurnId(value: unknown): string | null {
@@ -700,7 +733,14 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
           // Track whether the new codex/event/* protocol is active for this turn.
           // When active, skip old item/reasoning/summaryTextDelta to avoid duplicate thinking.
           // Per-turn flag (not module-level) so switching models works correctly.
-          const turnCtx = { useNewReasoningProtocol: false };
+          // tokenUsage tracks per-turn delta: Codex 0.125 emits cumulative totals via
+          // `thread/tokenUsage/updated`; baseline captures pre-turn snapshot from
+          // (firstEvent.total - firstEvent.last) and we diff at turn/completed.
+          const turnCtx: CodexTurnCtx = {
+            useNewReasoningProtocol: false,
+            tokenUsage: { baseline: null, latest: null, contextWindow: null },
+            turnStartedAt: Date.now(),
+          };
           let activeTurnId: string | null = null;
 
           const rememberTurnId = (nextTurnId: string | null) => {
@@ -1325,6 +1365,71 @@ export async function runCodexOneShot({
 // Event handling
 // ---------------------------------------------------------------------------
 
+interface CodexTokenSnapshot {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  reasoningOutputTokens: number;
+  totalTokens: number;
+}
+
+interface CodexTurnTokenUsage {
+  baseline: CodexTokenSnapshot | null;
+  latest: CodexTokenSnapshot | null;
+  contextWindow: number | null;
+}
+
+interface CodexTurnCtx {
+  useNewReasoningProtocol: boolean;
+  tokenUsage: CodexTurnTokenUsage;
+  /** Timestamp captured at turn/started; used to detect images written during this turn. */
+  turnStartedAt: number;
+}
+
+function defaultCodexTurnCtx(): CodexTurnCtx {
+  return {
+    useNewReasoningProtocol: false,
+    tokenUsage: { baseline: null, latest: null, contextWindow: null },
+    turnStartedAt: 0,
+  };
+}
+
+/**
+ * Scan Codex's `generated_images/<threadId>/` directory for files written
+ * during this turn. The built-in `image_gen` tool writes here but does not
+ * surface generated paths through the JSON-RPC stream — only via the
+ * session rollout file. Polling at turn end is the simplest reliable way
+ * to relay them to the chat UI.
+ */
+function findGeneratedImagesForTurn(threadId: string, turnStartedAt: number): string[] {
+  if (!threadId || !turnStartedAt) return [];
+  const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+  const dir = path.join(codexHome, 'generated_images', threadId);
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const out: Array<{ path: string; mtime: number }> = [];
+  for (const name of entries) {
+    if (!/\.(png|jpe?g|webp|gif)$/i.test(name)) continue;
+    const full = path.join(dir, name);
+    try {
+      const stat = fs.statSync(full);
+      // Allow a 2s grace window to catch files whose mtime is slightly
+      // before turn/started due to clock jitter or batched writes.
+      if (stat.mtimeMs >= turnStartedAt - 2000) {
+        out.push({ path: full, mtime: stat.mtimeMs });
+      }
+    } catch {
+      // ignore
+    }
+  }
+  out.sort((a, b) => a.mtime - b.mtime);
+  return out.map((x) => x.path);
+}
+
 /**
  * Handle a single JSON-RPC message from the Codex app-server.
  * Translates to SSE events and enqueues them on the controller.
@@ -1340,7 +1445,7 @@ function handleCodexMessage(
   model?: string,
   effort?: string,
   abortSignal?: AbortSignal,
-  turnCtx: { useNewReasoningProtocol: boolean } = { useNewReasoningProtocol: false },
+  turnCtx: CodexTurnCtx = defaultCodexTurnCtx(),
   turnLifecycle: {
     onTurnStarted?: (turnId: string | null) => void;
     onTurnFinished?: () => void;
@@ -1351,6 +1456,35 @@ function handleCodexMessage(
     switch (msg.method) {
       case 'turn/started': {
         turnLifecycle.onTurnStarted?.(extractTurnId(msg.params));
+        break;
+      }
+
+      // Codex 0.125 reports token usage via this notification (cumulative
+      // totals + per-event delta). We snapshot baseline on the first event of
+      // the turn so turn/completed can compute the per-turn delta.
+      case 'thread/tokenUsage/updated': {
+        const params = msg.params as Record<string, unknown> | undefined;
+        const tokenUsage = isRecord(params?.tokenUsage) ? params!.tokenUsage : null;
+        const total = isRecord(tokenUsage?.total) ? tokenUsage!.total : null;
+        const last = isRecord(tokenUsage?.last) ? tokenUsage!.last : null;
+        if (!total) break;
+
+        const totalSnap = readTokenSnapshot(total);
+        const ctx = turnCtx.tokenUsage;
+        if (ctx.baseline === null && last) {
+          const lastSnap = readTokenSnapshot(last);
+          ctx.baseline = {
+            inputTokens: totalSnap.inputTokens - lastSnap.inputTokens,
+            outputTokens: totalSnap.outputTokens - lastSnap.outputTokens,
+            cachedInputTokens: totalSnap.cachedInputTokens - lastSnap.cachedInputTokens,
+            reasoningOutputTokens: totalSnap.reasoningOutputTokens - lastSnap.reasoningOutputTokens,
+            totalTokens: totalSnap.totalTokens - lastSnap.totalTokens,
+          };
+        }
+        ctx.latest = totalSnap;
+        if (typeof tokenUsage?.modelContextWindow === 'number') {
+          ctx.contextWindow = tokenUsage.modelContextWindow;
+        }
         break;
       }
 
@@ -1480,6 +1614,11 @@ function handleCodexMessage(
               is_error: item.status === 'failed',
             }),
           }));
+        } else if (item.type === 'imageView' && typeof item.path === 'string') {
+          controller.enqueue(formatSSE({
+            type: 'image',
+            data: JSON.stringify({ path: item.path }),
+          }));
         }
         break;
       }
@@ -1500,19 +1639,39 @@ function handleCodexMessage(
           resultPayload.errors = [turnError?.message || 'Codex turn failed'];
         }
 
-        if (turn) {
-          // Codex sometimes omits usage entirely on turn/completed.
-          // Still persist model/effort so the footer can show them.
-          const usage = turn.usage as Record<string, unknown> | undefined;
-          if (usage || model || effort) {
-            resultPayload.usage = {
-              input_tokens: usage?.input_tokens ?? 0,
-              output_tokens: usage?.output_tokens ?? 0,
-              cache_read_input_tokens: usage?.cached_input_tokens ?? 0,
-              cache_creation_input_tokens: 0,
-              ...(model ? { model } : {}),
-              ...(effort ? { effort } : {}),
-            };
+        // Codex 0.125+ reports usage via thread/tokenUsage/updated; older
+        // versions populated turn.usage. Fall back gracefully.
+        const usage = turn?.usage as Record<string, unknown> | undefined;
+        const ctx = turnCtx.tokenUsage;
+        const computedDelta = ctx.baseline && ctx.latest ? {
+          input_tokens: Math.max(0, ctx.latest.inputTokens - ctx.baseline.inputTokens),
+          output_tokens: Math.max(0, ctx.latest.outputTokens - ctx.baseline.outputTokens),
+          cache_read_input_tokens: Math.max(0, ctx.latest.cachedInputTokens - ctx.baseline.cachedInputTokens),
+          reasoning_output_tokens: Math.max(0, ctx.latest.reasoningOutputTokens - ctx.baseline.reasoningOutputTokens),
+        } : null;
+
+        if (computedDelta || usage || model || effort) {
+          resultPayload.usage = {
+            input_tokens: computedDelta?.input_tokens ?? usage?.input_tokens ?? 0,
+            output_tokens: computedDelta?.output_tokens ?? usage?.output_tokens ?? 0,
+            cache_read_input_tokens: computedDelta?.cache_read_input_tokens ?? usage?.cached_input_tokens ?? 0,
+            cache_creation_input_tokens: 0,
+            reasoning_output_tokens: computedDelta?.reasoning_output_tokens ?? usage?.reasoning_output_tokens ?? 0,
+            ...(model ? { model } : {}),
+            ...(effort ? { effort } : {}),
+            ...(ctx.contextWindow ? { contextWindow: ctx.contextWindow } : {}),
+          };
+        }
+
+        // Detect any images Codex's built-in image_gen tool produced this turn.
+        // Emit them before `result` so the frontend appends them as content blocks.
+        if (turnCtx.turnStartedAt && !turnFailed && !turnInterrupted) {
+          const generated = findGeneratedImagesForTurn(threadId, turnCtx.turnStartedAt);
+          for (const imgPath of generated) {
+            controller.enqueue(formatSSE({
+              type: 'image',
+              data: JSON.stringify({ path: imgPath }),
+            }));
           }
         }
 
@@ -1651,6 +1810,11 @@ function handleCodexMessage(
               content: JSON.stringify(item.changes || []),
               is_error: item.status === 'failed',
             }),
+          }));
+        } else if ((item.type === 'ImageView' || item.type === 'imageView') && typeof item.path === 'string') {
+          controller.enqueue(formatSSE({
+            type: 'image',
+            data: JSON.stringify({ path: item.path }),
           }));
         }
         // WebSearch completion — no specific tool_result needed

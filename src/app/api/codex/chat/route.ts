@@ -315,6 +315,20 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
               } catch {
                 // skip malformed status data
               }
+            } else if (event.type === 'image') {
+              try {
+                const imgData = JSON.parse(event.data);
+                if (typeof imgData.path === 'string') {
+                  // Flush accumulated text first so the image renders after it.
+                  if (currentText.trim()) {
+                    contentBlocks.push({ type: 'text', text: currentText });
+                    currentText = '';
+                  }
+                  contentBlocks.push({ type: 'image', path: imgData.path, ...(imgData.alt ? { alt: imgData.alt } : {}) });
+                }
+              } catch {
+                // skip malformed image data
+              }
             } else if (event.type === 'result') {
               try {
                 const resultData = JSON.parse(event.data);
@@ -347,7 +361,7 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
       // for backward compatibility with existing message rendering.
       // If it contains tool calls, store as structured JSON.
       const hasStructuredBlocks = contentBlocks.some(
-        (b) => b.type === 'tool_use' || b.type === 'tool_result' || b.type === 'thinking'
+        (b) => b.type === 'tool_use' || b.type === 'tool_result' || b.type === 'thinking' || b.type === 'image'
       );
 
       const content = hasStructuredBlocks
@@ -396,7 +410,7 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
     }
     if (contentBlocks.length > 0) {
       const hasStructuredBlocks = contentBlocks.some(
-        (b) => b.type === 'tool_use' || b.type === 'tool_result' || b.type === 'thinking'
+        (b) => b.type === 'tool_use' || b.type === 'tool_result' || b.type === 'thinking' || b.type === 'image'
       );
       const content = hasStructuredBlocks
         ? JSON.stringify(contentBlocks)

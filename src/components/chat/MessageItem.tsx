@@ -8,7 +8,7 @@ import {
   MessageResponse,
 } from '@/components/ai-elements/message';
 import { ToolActionsGroup } from '@/components/ai-elements/tool-actions-group';
-import { CopyIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon } from 'lucide-react';
+import { CopyIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, PencilIcon } from 'lucide-react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Bookmark02Icon, BrainIcon } from '@hugeicons/core-free-icons';
 import { usePanel } from '@/hooks/usePanel';
@@ -33,6 +33,13 @@ interface MessageItemProps {
    * top-level toast would suppress. No-op when absent (backwards compat).
    */
   onDismissHealthAlert?: (ruleId: string) => void;
+  /**
+   * When provided, user messages get an edit affordance that — on save —
+   * rolls the Codex thread back to before this turn and resends the new
+   * prompt. Currently only wired for Codex-backend sessions.
+   */
+  onEditMessage?: (messageId: string, newContent: string) => Promise<void>;
+  isStreaming?: boolean;
 }
 
 interface ToolBlock {
@@ -44,8 +51,14 @@ interface ToolBlock {
   is_error?: boolean;
 }
 
-function parseToolBlocks(content: string): { text: string; tools: ToolBlock[]; thinking: string } {
+interface ImageBlockInfo {
+  path: string;
+  alt?: string;
+}
+
+function parseToolBlocks(content: string): { text: string; tools: ToolBlock[]; thinking: string; images: ImageBlockInfo[] } {
   const tools: ToolBlock[] = [];
+  const images: ImageBlockInfo[] = [];
   let text = '';
   let thinking = '';
 
@@ -61,6 +74,8 @@ function parseToolBlocks(content: string): { text: string; tools: ToolBlock[]; t
         tool_use_id?: string;
         content?: string;
         is_error?: boolean;
+        path?: string;
+        alt?: string;
       }>;
 
       for (const block of blocks) {
@@ -83,10 +98,12 @@ function parseToolBlocks(content: string): { text: string; tools: ToolBlock[]; t
             content: block.content,
             is_error: block.is_error,
           });
+        } else if (block.type === 'image' && block.path) {
+          images.push({ path: block.path, alt: block.alt });
         }
       }
-      
-      return { text: text.trim(), tools, thinking };
+
+      return { text: text.trim(), tools, thinking, images };
     } catch {
       // Not valid JSON, fall through to legacy parsing
     }
@@ -117,7 +134,23 @@ function parseToolBlocks(content: string): { text: string; tools: ToolBlock[]; t
     text = text.replace(match[0], '');
   }
 
-  return { text: text.trim(), tools, thinking: '' };
+  return { text: text.trim(), tools, thinking: '', images: [] };
+}
+
+function GeneratedImage({ path, alt, sessionId }: { path: string; alt?: string; sessionId: string }) {
+  const src = `/api/codex/image?session_id=${encodeURIComponent(sessionId)}&path=${encodeURIComponent(path)}`;
+  const filename = path.split('/').pop() || 'image';
+  return (
+    <a href={src} target="_blank" rel="noreferrer" className="block my-2">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt={alt || filename}
+        className="max-w-full rounded-md border border-border/40"
+        loading="lazy"
+      />
+    </a>
+  );
 }
 
 function pairTools(tools: ToolBlock[]): Array<{
@@ -224,6 +257,7 @@ function CopyButton({ text }: { text: string }) {
 
 function TokenUsageDisplay({ usage }: { usage: TokenUsage }) {
   const totalTokens = usage.input_tokens + usage.output_tokens;
+  const reasoningTokens = usage.reasoning_output_tokens ?? 0;
   const hasTokenMetrics = totalTokens > 0
     || (usage.cache_read_input_tokens ?? 0) > 0
     || (usage.cache_creation_input_tokens ?? 0) > 0
@@ -241,6 +275,7 @@ function TokenUsageDisplay({ usage }: { usage: TokenUsage }) {
       {effortLabel && <span className="ml-1 px-1 rounded bg-muted/60 font-mono">{effortLabel}</span>}
       {hasTokenMetrics && (usage.model || effortLabel) && <> · </>}
       {hasTokenMetrics && <>{totalTokens.toLocaleString()} tokens{costStr}</>}
+      {reasoningTokens > 0 && <> · {reasoningTokens.toLocaleString()} reasoning</>}
     </span>
   );
 }
@@ -303,7 +338,7 @@ function StoredThinkingBlock({ content }: { content: string }) {
 
 const COLLAPSE_HEIGHT = 300;
 
-export function MessageItem({ message, searchQuery, isLatestMessage, viewMode = 'normal', healthAlerts, onDismissHealthAlert }: MessageItemProps) {
+export function MessageItem({ message, searchQuery, isLatestMessage, viewMode = 'normal', healthAlerts, onDismissHealthAlert, onEditMessage, isStreaming }: MessageItemProps) {
   const { sessionTitle, workingDirectory } = usePanel();
   const [rememberDialogOpen, setRememberDialogOpen] = useState(false);
 
@@ -325,7 +360,7 @@ export function MessageItem({ message, searchQuery, isLatestMessage, viewMode = 
   })();
 
   const isUser = message.role === 'user';
-  const { text, tools, thinking } = parseToolBlocks(message.content);
+  const { text, tools, thinking, images } = parseToolBlocks(message.content);
   const pairedTools = pairTools(tools);
 
   // Parse file attachments from user messages
@@ -375,6 +410,39 @@ export function MessageItem({ message, searchQuery, isLatestMessage, viewMode = 
       setIsOverflowing(contentRef.current.scrollHeight > COLLAPSE_HEIGHT);
     }
   }, [isUser, displayText]);
+
+  // Edit-and-resend (Codex rollback flow). Only enabled when ChatView wires
+  // onEditMessage — for now that's Codex-backend sessions only.
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const canEdit = isUser && !!onEditMessage && !isStreaming;
+  const startEdit = useCallback(() => {
+    setEditText(displayText);
+    setEditError(null);
+    setIsEditing(true);
+  }, [displayText]);
+  const cancelEdit = useCallback(() => {
+    setIsEditing(false);
+    setEditText('');
+    setEditError(null);
+  }, []);
+  const saveEdit = useCallback(async () => {
+    if (!onEditMessage) return;
+    const trimmed = editText.trim();
+    if (!trimmed) return;
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      await onEditMessage(message.id, trimmed);
+      // On success this message is removed from the list, so we don't bother
+      // resetting isEditing — the component unmounts.
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : String(err));
+      setEditSaving(false);
+    }
+  }, [editText, message.id, onEditMessage]);
 
   let tokenUsage: TokenUsage | null = null;
   if (message.token_usage) {
@@ -499,6 +567,51 @@ export function MessageItem({ message, searchQuery, isLatestMessage, viewMode = 
         {/* Text content */}
         {displayText && (
           isUser ? (
+            isEditing ? (
+              <div className="space-y-2">
+                <textarea
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  disabled={editSaving}
+                  autoFocus
+                  rows={Math.min(12, Math.max(3, editText.split('\n').length + 1))}
+                  className="w-full text-sm rounded-md border border-border/60 bg-background px-2 py-1.5 font-mono resize-y disabled:opacity-50"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      e.preventDefault();
+                      cancelEdit();
+                    } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                      e.preventDefault();
+                      saveEdit();
+                    }
+                  }}
+                />
+                {editError && (
+                  <div className="text-xs text-red-500">{editError}</div>
+                )}
+                <div className="flex items-center justify-end gap-2">
+                  <span className="text-xs text-muted-foreground/70">
+                    Saving will roll the Codex thread back and resend
+                  </span>
+                  <button
+                    type="button"
+                    onClick={cancelEdit}
+                    disabled={editSaving}
+                    className="text-xs px-2 py-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveEdit}
+                    disabled={editSaving || !editText.trim() || editText.trim() === displayText.trim()}
+                    className="text-xs px-2 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                  >
+                    {editSaving ? 'Saving…' : 'Save & resend'}
+                  </button>
+                </div>
+              </div>
+            ) : (
             <div className="relative">
               <div
                 ref={contentRef}
@@ -534,11 +647,21 @@ export function MessageItem({ message, searchQuery, isLatestMessage, viewMode = 
                 </button>
               )}
             </div>
+            )
           ) : (
             <div ref={responseRef} onClick={handleSeekClick} style={isThisMessageActive ? { cursor: 'pointer' } : undefined}>
               <MessageResponse>{displayText}</MessageResponse>
             </div>
           )
+        )}
+
+        {/* Generated images (e.g. gpt-image-2 outputs from Codex) */}
+        {!isUser && images.length > 0 && (
+          <div className="mt-2 space-y-2">
+            {images.map((img, i) => (
+              <GeneratedImage key={`${img.path}-${i}`} path={img.path} alt={img.alt} sessionId={message.session_id} />
+            ))}
+          </div>
         )}
       </MessageContent>
 
@@ -589,6 +712,16 @@ export function MessageItem({ message, searchQuery, isLatestMessage, viewMode = 
             <TTSButton messageId={`msg-${message.id}`} text={displayText} />
           )}
           {displayText && <CopyButton text={displayText} />}
+          {canEdit && !isEditing && (
+            <button
+              type="button"
+              onClick={startEdit}
+              className="inline-flex items-center justify-center rounded-md min-w-[32px] min-h-[32px] px-1.5 py-1 text-xs text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted active:bg-muted/80 transition-colors"
+              title="Edit and resend (rolls Codex thread back)"
+            >
+              <PencilIcon className="h-3.5 w-3.5" />
+            </button>
+          )}
           {!isUser && displayText && (
             <DownloadMenu markdown={displayText} filenameBase={filenameBase} />
           )}
@@ -600,7 +733,7 @@ export function MessageItem({ message, searchQuery, isLatestMessage, viewMode = 
         <RememberDialog
           open={rememberDialogOpen}
           onClose={() => setRememberDialogOpen(false)}
-          defaultContent={displayText?.slice(0, 500) || ''}
+          defaultContent={displayText?.slice(0, 8000) || ''}
           sourceSessionId={message.session_id}
           workingDirectory={workingDirectory}
         />

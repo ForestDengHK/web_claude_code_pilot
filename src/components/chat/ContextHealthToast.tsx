@@ -32,7 +32,7 @@ export function ContextHealthToast({ alerts, onDismiss, onAction }: Props) {
 
   return (
     <div
-      className={`mx-2 mb-2 rounded-lg border ${borderColor} bg-popover/95 px-3 py-2 text-sm shadow-md backdrop-blur-sm`}
+      className={`ml-2 mr-12 mb-2 rounded-lg border ${borderColor} bg-popover/95 px-3 py-2 text-sm shadow-md backdrop-blur-sm`}
       role="status"
       aria-live="polite"
     >

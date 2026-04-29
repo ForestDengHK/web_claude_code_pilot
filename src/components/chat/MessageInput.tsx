@@ -125,6 +125,7 @@ const BUILT_IN_COMMANDS: PopoverItem[] = [
   { label: 'usage', value: '/usage', description: 'Show account quota and rate limits', builtIn: true, immediate: true, icon: GlobalIcon },
   { label: 'compact', value: '/compact', description: 'Compress conversation context', builtIn: true, icon: FileZipIcon },
   { label: 'branch', value: '/branch', description: 'Start new chat with summary', builtIn: true, immediate: true, icon: GitBranchIcon },
+  { label: 'fork', value: '/fork', description: 'Clone Codex thread into a new chat (exact, no summary)', builtIn: true, immediate: true, icon: GitBranchIcon },
   { label: 'doctor', value: '/doctor', description: 'Diagnose project health', builtIn: true, icon: Stethoscope02Icon },
   { label: 'init', value: '/init', description: 'Initialize CLAUDE.md for project', builtIn: true, icon: FileEditIcon },
   { label: 'review', value: '/review', description: 'Review code quality', builtIn: true, icon: SearchList01Icon },

@@ -34,14 +34,21 @@ interface ToolResultInfo {
   is_error?: boolean;
 }
 
+interface ImageBlockInfo {
+  path: string;
+  alt?: string;
+}
+
 /** Build message content string: plain text if no tools, structured JSON if tools exist */
 function buildMessageContent(
   text: string,
   toolUses: ToolUseInfo[],
   toolResults: ToolResultInfo[],
   thinking?: string,
+  images?: ImageBlockInfo[],
 ): string {
-  if (toolUses.length === 0 && !thinking) return text;
+  const hasImages = !!(images && images.length > 0);
+  if (toolUses.length === 0 && !thinking && !hasImages) return text;
 
   const blocks: Array<Record<string, unknown>> = [];
   // Thinking block first (matches backend save order)
@@ -50,7 +57,7 @@ function buildMessageContent(
   }
   if (text) {
     blocks.push({ type: 'text', text });
-  } else {
+  } else if (!hasImages) {
     blocks.push({ type: 'text', text: '*(Task completed with tool activity but no text response)*' });
   }
   for (const tool of toolUses) {
@@ -63,6 +70,11 @@ function buildMessageContent(
         content: toolResult.content,
         is_error: toolResult.is_error || false,
       });
+    }
+  }
+  if (images) {
+    for (const img of images) {
+      blocks.push({ type: 'image', path: img.path, ...(img.alt ? { alt: img.alt } : {}) });
     }
   }
   return JSON.stringify(blocks);
@@ -109,6 +121,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [stopRequested, setStopRequested] = useState(false);
   const [toolUses, setToolUses] = useState<ToolUseInfo[]>([]);
   const [toolResults, setToolResults] = useState<ToolResultInfo[]>([]);
+  const [streamingImages, setStreamingImages] = useState<ImageBlockInfo[]>([]);
+  const streamingImagesRef = useRef<ImageBlockInfo[]>([]);
   const [statusText, setStatusText] = useState<string | undefined>();
   // Mode vocabulary depends on backend (Claude PermissionMode vs Codex
   // AskForApproval). Initialize with backend-aware normalization so stale
@@ -479,6 +493,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     accumulatedThinkingRef.current = '';
     setToolUses([]);
     setToolResults([]);
+    setStreamingImages([]);
+    streamingImagesRef.current = [];
     toolUsesRef.current = [];
     toolResultsRef.current = [];
     setStreamingToolOutput('');
@@ -1021,6 +1037,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       accumulatedRef.current = '';
       setToolUses([]);
       setToolResults([]);
+      setStreamingImages([]);
+      streamingImagesRef.current = [];
       toolUsesRef.current = [];
       toolResultsRef.current = [];
       setStatusText(undefined);
@@ -1135,6 +1153,15 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
               return next.length > 5000 ? next.slice(-5000) : next;
             });
           },
+          onImage: (img) => {
+            lastSseDataRef.current = Date.now();
+            setStreamingImages((prev) => {
+              if (prev.some((p) => p.path === img.path)) return prev;
+              const next = [...prev, img];
+              streamingImagesRef.current = next;
+              return next;
+            });
+          },
           onToolProgress: (toolName, elapsed) => {
             lastSseDataRef.current = Date.now();
             setStatusText(`Running ${toolName}... (${elapsed}s)`);
@@ -1188,7 +1215,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         // Build optimistic assistant message with tool blocks (matching DB JSON format)
         // so that MessageItem.parseToolBlocks() can render tools after streaming ends
         const finalText = accumulated.trim();
-        const finalContent = buildMessageContent(finalText, toolUsesRef.current, toolResultsRef.current, accumulatedThinkingRef.current.trim() || undefined)
+        const finalContent = buildMessageContent(finalText, toolUsesRef.current, toolResultsRef.current, accumulatedThinkingRef.current.trim() || undefined, streamingImagesRef.current)
           || (toolCount > 0 ? '*(Task completed with tool activity but no text response)*' : '');
         if (finalContent) {
           const assistantMessage: Message = {
@@ -1271,6 +1298,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             accumulatedRef.current = '';
             setToolUses([]);
             setToolResults([]);
+            setStreamingImages([]);
+            streamingImagesRef.current = [];
             setStreamingToolOutput('');
             setStatusText(undefined);
             setPendingPermission(null);
@@ -1338,6 +1367,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           accumulatedRef.current = '';
           setToolUses([]);
           setToolResults([]);
+          setStreamingImages([]);
+          streamingImagesRef.current = [];
           toolUsesRef.current = [];
           toolResultsRef.current = [];
           setStreamingToolOutput('');
@@ -1362,6 +1393,37 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   // Keep sendMessageRef in sync so timeout auto-retry can call it
   sendMessageRef.current = sendMessage;
 
+  // Edit-and-resend (Codex only): roll the Codex thread back to before the
+  // edited user message, drop those messages locally, then re-send the new
+  // text via the normal sendMessage flow.
+  const editAndResendCodex = useCallback(async (messageId: string, newContent: string) => {
+    if (currentBackend !== 'codex') {
+      throw new Error('Edit is only supported on Codex sessions');
+    }
+    if (isStreaming) {
+      throw new Error('Cannot edit while streaming');
+    }
+
+    const res = await fetch('/api/codex/rollback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId, message_id: messageId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Rollback failed (${res.status})`);
+    }
+
+    // Drop the doomed messages locally so the optimistic UI matches the DB
+    // before the resend kicks off.
+    setMessages((prev) => {
+      const idx = prev.findIndex((m) => m.id === messageId);
+      return idx < 0 ? prev : prev.slice(0, idx);
+    });
+
+    await sendMessage(newContent);
+  }, [currentBackend, isStreaming, sendMessage, sessionId]);
+
   const handleCommand = useCallback(async (command: string) => {
     switch (command) {
       case '/help': {
@@ -1369,7 +1431,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           id: 'cmd-' + Date.now(),
           session_id: sessionId,
           role: 'assistant',
-          content: `## Available Commands\n\n### Instant Commands\n- **/help** — Show this help message\n- **/clear** — Clear conversation history\n- **/cost** — Show token usage statistics for this session\n- **/usage** — Show account info and usage\n\n### Prompt Commands (shown as badge, add context then send)\n- **/compact** — Compress conversation context\n- **/doctor** — Diagnose project health\n- **/init** — Initialize CLAUDE.md for project\n- **/review** — Review code quality\n- **/terminal-setup** — Configure terminal settings\n- **/memory** — Edit project memory file\n\n### Custom Skills\nSkills from \`~/.claude/commands/\` and project \`.claude/commands/\` are also available via \`/\`.\n\n**Tips:**\n- Type \`/\` to browse commands and skills\n- Type \`@\` to mention files\n- Use Shift+Enter for new line\n- Select a project folder to enable file operations`,
+          content: `## Available Commands\n\n### Instant Commands\n- **/help** — Show this help message\n- **/clear** — Clear conversation history\n- **/cost** — Show token usage statistics for this session\n- **/usage** — Show account info and usage\n- **/fork** — (Codex only) Clone the Codex thread into a new chat exactly\n\n### Prompt Commands (shown as badge, add context then send)\n- **/compact** — Compress conversation context\n- **/branch** — Summarize and start a new chat\n- **/doctor** — Diagnose project health\n- **/init** — Initialize CLAUDE.md for project\n- **/review** — Review code quality\n- **/terminal-setup** — Configure terminal settings\n- **/memory** — Edit project memory file\n\n### Custom Skills\nSkills from \`~/.claude/commands/\` and project \`.claude/commands/\` are also available via \`/\`.\n\n**Tips:**\n- Type \`/\` to browse commands and skills\n- Type \`@\` to mention files\n- Use Shift+Enter for new line\n- Select a project folder to enable file operations`,
           created_at: new Date().toISOString(),
           token_usage: null,
         };
@@ -1485,11 +1547,61 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         setMessages(prev => [...prev, usageMessage]);
         break;
       }
+      case '/fork': {
+        if (currentBackend !== 'codex') {
+          const msg: Message = {
+            id: 'cmd-' + Date.now(),
+            session_id: sessionId,
+            role: 'assistant',
+            content: '`/fork` is only available on Codex sessions. Use `/branch` for Claude.',
+            created_at: new Date().toISOString(),
+            token_usage: null,
+          };
+          setMessages(prev => [...prev, msg]);
+          break;
+        }
+        if (isStreaming) {
+          const msg: Message = {
+            id: 'cmd-' + Date.now(),
+            session_id: sessionId,
+            role: 'assistant',
+            content: 'Cannot fork while streaming — wait for the current turn to finish.',
+            created_at: new Date().toISOString(),
+            token_usage: null,
+          };
+          setMessages(prev => [...prev, msg]);
+          break;
+        }
+        try {
+          const res = await fetch('/api/codex/fork', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.error || `Fork failed (${res.status})`);
+          }
+          window.dispatchEvent(new CustomEvent('session-created'));
+          window.location.href = `/chat/${data.session.id}`;
+        } catch (err) {
+          const msg: Message = {
+            id: 'cmd-' + Date.now(),
+            session_id: sessionId,
+            role: 'assistant',
+            content: `Fork failed: ${err instanceof Error ? err.message : String(err)}`,
+            created_at: new Date().toISOString(),
+            token_usage: null,
+          };
+          setMessages(prev => [...prev, msg]);
+        }
+        break;
+      }
       default:
         // This shouldn't be reached since non-immediate commands are handled via badge
         sendMessage(command);
     }
-  }, [sessionId, sendMessage, messages, currentBackend]);
+  }, [sessionId, sendMessage, messages, currentBackend, isStreaming]);
 
   return (
     <div className="flex h-full min-h-0 flex-col relative">
@@ -1590,6 +1702,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         viewMode={viewMode}
         messageHealthAlerts={messageHealthAlerts}
         onDismissHealthAlert={dismissAlert}
+        onEditMessage={currentBackend === 'codex' ? editAndResendCodex : undefined}
       />
       {/* Advisor Mode Bar — Claude backend only */}
       {currentBackend === 'claude' && (() => {

@@ -664,6 +664,73 @@ export function finalizeDraftMessage(
   );
 }
 
+/**
+ * Copy every message from one session into another, preserving role,
+ * content, token_usage, backend, status, and chronological order. Used by
+ * the Codex fork flow so the new session shows the full prior history.
+ *
+ * Each copied message gets a fresh ID; FTS index is rebuilt for the copy.
+ */
+export function copyMessagesToSession(sourceSessionId: string, destSessionId: string): number {
+  const db = getDb();
+  const rows = db.prepare(
+    'SELECT role, content, token_usage, backend, status FROM messages WHERE session_id = ? ORDER BY rowid ASC'
+  ).all(sourceSessionId) as Array<{ role: string; content: string; token_usage: string | null; backend: string | null; status: string | null }>;
+
+  if (rows.length === 0) return 0;
+
+  const insertMsg = db.prepare(
+    'INSERT INTO messages (id, session_id, role, content, created_at, token_usage, backend, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  );
+  const insertFts = db.prepare('INSERT INTO messages_fts(message_id, text_content) VALUES (?, ?)');
+
+  const tx = db.transaction((items: typeof rows) => {
+    const baseTime = Date.now();
+    items.forEach((m, i) => {
+      const id = crypto.randomBytes(16).toString('hex');
+      // Stagger timestamps by 1ms so created_at order matches source order.
+      const ts = new Date(baseTime + i).toISOString().replace('T', ' ').split('.')[0];
+      insertMsg.run(id, destSessionId, m.role, m.content, ts, m.token_usage, m.backend, m.status || 'complete');
+      insertFts.run(id, extractTextContent(m.content));
+    });
+  });
+  tx(rows);
+  return rows.length;
+}
+
+/**
+ * Delete the message identified by `messageId` and every message after it
+ * (by rowid) within the same session. Used by Codex rollback / edit flows.
+ *
+ * Returns the number of user messages dropped — callers can pass this to
+ * Codex's `thread/rollback` as `numTurns` (one turn = one user message + the
+ * agent reply that follows it).
+ */
+export function deleteMessagesFromMessageInclusive(sessionId: string, messageId: string): number {
+  const db = getDb();
+  const marker = db.prepare(
+    'SELECT rowid FROM messages WHERE id = ? AND session_id = ?'
+  ).get(messageId, sessionId) as { rowid: number } | undefined;
+  if (!marker) return 0;
+
+  const doomed = db.prepare(
+    'SELECT id, role FROM messages WHERE session_id = ? AND rowid >= ? ORDER BY rowid ASC'
+  ).all(sessionId, marker.rowid) as { id: string; role: string }[];
+
+  const deleteFts = db.prepare('DELETE FROM messages_fts WHERE message_id = ?');
+  const deleteMsg = db.prepare('DELETE FROM messages WHERE id = ?');
+  let userCount = 0;
+  const tx = db.transaction((rows: typeof doomed) => {
+    for (const m of rows) {
+      deleteFts.run(m.id);
+      deleteMsg.run(m.id);
+      if (m.role === 'user') userCount += 1;
+    }
+  });
+  tx(doomed);
+  return userCount;
+}
+
 export function getLastMessageInfo(sessionId: string): { role: string; created_at: string } | null {
   const db = getDb();
   const row = db.prepare(

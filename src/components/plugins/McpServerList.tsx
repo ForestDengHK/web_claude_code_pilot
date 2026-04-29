@@ -47,8 +47,8 @@ export function McpServerList({ servers, onEdit, onDelete }: McpServerListProps)
         const typeInfo = getServerTypeInfo(server);
         return (
           <Card key={name}>
-            <CardHeader className="space-y-0 pb-2">
-              <div className="flex items-center justify-between gap-2">
+            <CardHeader className="space-y-0 pb-2 min-w-0">
+              <div className="flex min-w-0 items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <HugeiconsIcon icon={typeInfo.icon} className={`h-4 w-4 shrink-0 ${typeInfo.color}`} />
                   <CardTitle className="text-sm font-medium truncate">{name}</CardTitle>
@@ -75,7 +75,7 @@ export function McpServerList({ servers, onEdit, onDelete }: McpServerListProps)
                   </Button>
                 </div>
               </div>
-              <CardDescription className="text-xs mt-1.5 font-mono truncate">
+              <CardDescription className="text-xs mt-1.5 font-mono truncate min-w-0">
                 {server.url
                   ? server.url
                   : `${server.command} ${server.args?.join(' ') || ''}`}
@@ -89,7 +89,7 @@ export function McpServerList({ servers, onEdit, onDelete }: McpServerListProps)
                     <p className="text-xs text-muted-foreground mb-1">Arguments:</p>
                     <div className="flex gap-1 flex-wrap">
                       {server.args.map((arg, i) => (
-                        <Badge key={i} variant="outline" className="text-xs font-mono">
+                        <Badge key={i} variant="outline" className="text-xs font-mono max-w-full truncate">
                           {arg}
                         </Badge>
                       ))}

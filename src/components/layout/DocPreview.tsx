@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef, useCallback, type ComponentPropsWithoutRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useTheme } from "next-themes";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Cancel01Icon, Copy01Icon, Tick01Icon, Loading02Icon, ArrowExpandIcon, ArrowShrinkIcon, PencilEdit02Icon } from "@hugeicons/core-free-icons";
@@ -19,11 +19,12 @@ import {
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { Streamdown } from "streamdown";
+import { Streamdown, defaultRemarkPlugins } from "streamdown";
 import { cjk } from "@streamdown/cjk";
 import { code } from "@streamdown/code";
 import { math } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
+import { visit } from "unist-util-visit";
 import { usePanel } from "@/hooks/usePanel";
 import { useTTS } from "@/contexts/TTSContext";
 import { TTSButton } from "@/components/chat/TTSButton";
@@ -32,17 +33,208 @@ import type { FilePreview as FilePreviewType } from "@/types";
 
 const streamdownPlugins = { cjk, code, math, mermaid };
 
+// Streamdown's `remarkPlugins` prop replaces (not extends) the default set,
+// which would drop remark-gfm and break tables/strikethrough/etc. Compose
+// our capture plugin onto the defaults so we keep GFM behavior.
+const markdownRemarkPlugins = [...Object.values(defaultRemarkPlugins), remarkCaptureImageSrc];
+
 /**
- * Custom paragraph component for DocPreview.
- * Streamdown wraps images in <div> (for download button / hover overlay),
- * but MarkdownParagraph only unwraps the <p> when the sole child is <img>.
- * README files often have badges like [![img](url)](link) where the direct
- * child is <a>, not <img>, so the <div> ends up inside <p> → hydration error.
- * Using <div> instead of <p> avoids the invalid nesting entirely.
+ * Replace each image URL with an absolute sentinel path that encodes the
+ * original markdown URL. The mdast→hast→DOM pipeline normalizes relative
+ * `../foo` URLs against the page URL, destroying the writer's intent.
+ * Encoding as `/__md_asset__/<encoded>` keeps the URL absolute (no further
+ * normalization) and lets the img component recover the original to
+ * resolve against the markdown file's directory.
  */
-const docPreviewComponents = {
-  p: (props: ComponentPropsWithoutRef<"p">) => <div {...props} />,
-};
+const MD_ASSET_SENTINEL = "__md_asset__";
+
+function remarkCaptureImageSrc() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (tree: any) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    visit(tree, "image", (node: any) => {
+      if (typeof node.url !== "string") return;
+      // External URLs and data/blob/mailto/fragment refs: leave alone.
+      if (
+        /^[a-z][a-z0-9+.-]*:/i.test(node.url) ||
+        node.url.startsWith("//") ||
+        node.url.startsWith("#")
+      ) {
+        return;
+      }
+      node.url = `/${MD_ASSET_SENTINEL}/${encodeURIComponent(node.url)}`;
+    });
+  };
+}
+
+function decodeMdAssetSrc(src: string): string | null {
+  const prefix = `/${MD_ASSET_SENTINEL}/`;
+  if (!src.startsWith(prefix)) return null;
+  try {
+    return decodeURIComponent(src.slice(prefix.length));
+  } catch {
+    return null;
+  }
+}
+
+function rawUrlFor(absPath: string, baseDir: string | null): string {
+  const params = new URLSearchParams({ path: absPath });
+  if (baseDir) params.set("baseDir", baseDir);
+  return `/api/files/raw?${params.toString()}`;
+}
+
+function normalizePosix(p: string): string {
+  const parts = p.split("/");
+  const stack: string[] = [];
+  for (const part of parts) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") stack.pop();
+    else stack.push(part);
+  }
+  return "/" + stack.join("/");
+}
+
+/**
+ * Build a list of candidate URLs to try for a markdown asset src, in order.
+ * - External URLs (http(s):, data:, blob:, mailto:, protocol-relative,
+ *   fragment) pass through unchanged as a single candidate.
+ * - Relative paths resolve against the markdown file's directory.
+ * - Absolute web-style paths (e.g. `/images/foo.png`) are ambiguous: blogs
+ *   built with Next.js / Docusaurus map these to `public/` or `static/`
+ *   under the project root. Try those conventions first, then the literal
+ *   path under the working directory, so the previewer "just works" without
+ *   knowing the framework.
+ */
+function buildAssetCandidates(
+  src: string,
+  mdFilePath: string,
+  baseDir: string | null,
+): string[] {
+  if (!src) return [src];
+  if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith("//") || src.startsWith("#")) {
+    return [src];
+  }
+
+  let decoded = src;
+  try {
+    decoded = decodeURI(src);
+  } catch {
+    // leave as-is on malformed encoding
+  }
+
+  const fsCandidates: string[] = [];
+  const pushUnique = (p: string) => {
+    if (!fsCandidates.includes(p)) fsCandidates.push(p);
+  };
+
+  if (decoded.startsWith("/")) {
+    if (baseDir) {
+      pushUnique(normalizePosix(`${baseDir}/public${decoded}`));
+      pushUnique(normalizePosix(`${baseDir}/static${decoded}`));
+      pushUnique(normalizePosix(`${baseDir}${decoded}`));
+    } else {
+      pushUnique(normalizePosix(decoded));
+    }
+  } else {
+    const lastSlash = mdFilePath.lastIndexOf("/");
+    const mdDir = lastSlash >= 0 ? mdFilePath.slice(0, lastSlash) : "";
+    pushUnique(normalizePosix(`${mdDir}/${decoded}`));
+
+    // Auto-generated docs commonly have relative paths with the wrong
+    // number of `../` segments (e.g. `../../images/x.png` when the actual
+    // file is at `../images/x.png`). Walk up ancestors of the markdown
+    // file's directory and try `<ancestor>/<tail>` where tail is the path
+    // with leading `./` and `../` segments stripped. Stops at baseDir.
+    const tail = decoded.replace(/^(?:\.\.?\/)+/, "");
+    if (tail && tail !== decoded) {
+      const stopAt = baseDir ? normalizePosix(baseDir) : "";
+      let ancestor = mdDir;
+      for (let i = 0; i < 8; i++) {
+        const sep = ancestor.lastIndexOf("/");
+        if (sep <= 0) break;
+        ancestor = ancestor.slice(0, sep);
+        if (stopAt && !ancestor.startsWith(stopAt)) break;
+        pushUnique(normalizePosix(`${ancestor}/${tail}`));
+        if (stopAt && ancestor === stopAt) break;
+      }
+    }
+  }
+
+  return fsCandidates.map((p) => rawUrlFor(p, baseDir));
+}
+
+/**
+ * Build Streamdown component overrides for the markdown preview.
+ *
+ * - `p` → `div`: Streamdown wraps images in <div> (for download button / hover
+ *   overlay), but MarkdownParagraph only unwraps the <p> when the sole child
+ *   is <img>. README files often have badges like [![img](url)](link) where
+ *   the direct child is <a>, not <img>, so the <div> ends up inside <p> →
+ *   hydration error. Using <div> avoids the invalid nesting entirely.
+ * - `img`: rewrite relative src to /api/files/raw so embedded images in the
+ *   markdown file actually load.
+ */
+function buildMarkdownComponents(mdFilePath: string, baseDir: string | null) {
+  return {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    p: ({ node: _node, ...props }: any) => <div {...props} />,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    img: ({ node: _node, src, alt, ...rest }: any) => {
+      // The remark plugin replaced raw markdown URLs with a `/__md_asset__/`
+      // sentinel so the URL pipeline can't strip leading `../`. Recover the
+      // original here. External URLs (http:, data:, etc.) bypassed the
+      // sentinel and arrive unchanged.
+      const decoded = typeof src === "string" ? decodeMdAssetSrc(src) : null;
+      const effective = decoded ?? (typeof src === "string" ? src : "");
+      const candidates = effective
+        ? buildAssetCandidates(effective, mdFilePath, baseDir)
+        : [src];
+      return <ResolvedImg candidates={candidates} alt={alt ?? ""} {...rest} />;
+    },
+  };
+}
+
+/**
+ * Renders an image, falling back to the next candidate URL when the current
+ * one 404s. Used for markdown asset resolution where the same `src` may live
+ * in `public/`, `static/`, or directly under the working directory.
+ */
+function ResolvedImg({
+  candidates,
+  alt,
+  ...rest
+}: { candidates: string[]; alt: string } & Omit<
+  React.ImgHTMLAttributes<HTMLImageElement>,
+  "src" | "alt"
+>) {
+  const [idx, setIdx] = useState(0);
+  // Reset on candidate list change (e.g. file switch). Use a string key so
+  // freshly-allocated arrays with the same contents don't retrigger the
+  // reset and clobber the onError fallback.
+  const candidatesKey = candidates.join("|");
+  useEffect(() => {
+    setIdx(0);
+  }, [candidatesKey]);
+
+  if (!candidates.length) return null;
+  const current = candidates[Math.min(idx, candidates.length - 1)];
+  const isLast = idx >= candidates.length - 1;
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={current}
+      alt={alt}
+      {...rest}
+      onError={(e) => {
+        if (!isLast) {
+          setIdx((i) => i + 1);
+        }
+        rest.onError?.(e);
+      }}
+    />
+  );
+}
 
 type ViewMode = "source" | "rendered";
 
@@ -605,6 +797,12 @@ function RenderedView({
   contentRef?: React.RefObject<HTMLDivElement | null>;
   onSeekClick?: (e: React.MouseEvent) => void;
 }) {
+  const { workingDirectory } = usePanel();
+  const markdownComponents = useMemo(
+    () => buildMarkdownComponents(filePath, workingDirectory ?? null),
+    [filePath, workingDirectory],
+  );
+
   if (isHtml(filePath)) {
     // Serve HTML via path-based URL so relative resources (CSS, JS, images)
     // resolve naturally against the file's directory.
@@ -661,7 +859,8 @@ function RenderedView({
       <Streamdown
         className="size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:pl-6 [&_ol]:pl-6"
         plugins={streamdownPlugins}
-        components={docPreviewComponents}
+        components={markdownComponents}
+        remarkPlugins={markdownRemarkPlugins}
       >
         {content}
       </Streamdown>

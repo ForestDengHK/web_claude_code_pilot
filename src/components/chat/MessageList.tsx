@@ -117,6 +117,7 @@ interface MessageListProps {
   viewMode?: ViewMode;
   messageHealthAlerts?: Map<string, HealthAlert[]>;
   onDismissHealthAlert?: (ruleId: string) => void;
+  onEditMessage?: (messageId: string, newContent: string) => Promise<void>;
 }
 
 export function MessageList({
@@ -144,6 +145,7 @@ export function MessageList({
   viewMode = 'normal',
   messageHealthAlerts,
   onDismissHealthAlert,
+  onEditMessage,
 }: MessageListProps) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const scrollerRef = useRef<HTMLElement | null>(null);
@@ -342,6 +344,8 @@ export function MessageList({
                   viewMode={viewMode}
                   healthAlerts={messageHealthAlerts?.get(message.id)}
                   onDismissHealthAlert={onDismissHealthAlert}
+                  onEditMessage={onEditMessage}
+                  isStreaming={isStreaming}
                 />
               </div>
             </div>

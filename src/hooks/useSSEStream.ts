@@ -24,6 +24,11 @@ export interface RateLimitInfo {
   surpassedThreshold?: number;
 }
 
+export interface ImageInfo {
+  path: string;
+  alt?: string;
+}
+
 export interface SSECallbacks {
   onText: (accumulated: string) => void;
   onThinking: (delta: string) => void;
@@ -36,6 +41,7 @@ export interface SSECallbacks {
   onPermissionRequest: (data: PermissionRequestEvent) => void;
   onInputRequest: (data: InputRequestEvent) => void;
   onToolTimeout: (toolName: string, elapsedSeconds: number) => void;
+  onImage?: (image: ImageInfo) => void;
   onRateLimit?: (info: RateLimitInfo) => void;
   onHeartbeat?: () => void;
   onCompact?: (trigger: string, preTokens: number) => void;
@@ -87,6 +93,18 @@ function handleSSEEvent(
         });
       } catch {
         // skip malformed tool_result data
+      }
+      return accumulated;
+    }
+
+    case 'image': {
+      try {
+        const imgData = JSON.parse(event.data) as { path?: string; alt?: string };
+        if (imgData.path) {
+          callbacks.onImage?.({ path: imgData.path, alt: imgData.alt });
+        }
+      } catch {
+        // skip malformed image data
       }
       return accumulated;
     }
@@ -304,6 +322,7 @@ export function useSSEStream() {
         onPermissionRequest: (d) => callbacksRef.current?.onPermissionRequest(d),
         onInputRequest: (d) => callbacksRef.current?.onInputRequest(d),
         onToolTimeout: (n, s) => callbacksRef.current?.onToolTimeout(n, s),
+        onImage: (img) => callbacksRef.current?.onImage?.(img),
         onRateLimit: (i) => callbacksRef.current?.onRateLimit?.(i),
         onHeartbeat: () => callbacksRef.current?.onHeartbeat?.(),
         onError: (a) => callbacksRef.current?.onError(a),

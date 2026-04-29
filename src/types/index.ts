@@ -145,7 +145,8 @@ export type MessageContentBlock =
   | { type: 'thinking'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown }
   | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
-  | { type: 'code'; language: string; code: string };
+  | { type: 'code'; language: string; code: string }
+  | { type: 'image'; path: string; alt?: string };
 
 // Helper to parse message content - returns blocks or wraps plain text
 export function parseMessageContent(content: string): MessageContentBlock[] {
@@ -218,6 +219,7 @@ export interface TokenUsage {
   output_tokens: number;
   cache_read_input_tokens?: number;
   cache_creation_input_tokens?: number;
+  reasoning_output_tokens?: number; // Codex: portion of output_tokens spent on reasoning
   cost_usd?: number;
   model?: string;
   effort?: string; // effort level used for this response (low/medium/high/max)
@@ -432,6 +434,7 @@ export type SSEEventType =
   | 'tool_result'        // tool execution result
   | 'tool_output'        // streaming tool output (stderr from SDK process)
   | 'tool_timeout'       // tool execution timed out
+  | 'image'              // generated/displayed image (Codex imageView), data: { path, alt? }
   | 'status'             // status update (compacting, etc.)
   | 'result'             // final result with usage stats
   | 'error'              // error occurred
