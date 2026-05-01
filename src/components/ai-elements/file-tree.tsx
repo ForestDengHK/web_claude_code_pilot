@@ -388,7 +388,7 @@ export const FileTreeFolder = ({
               </div>
             </TooltipTrigger>
             <TooltipContent side="top" className="flex max-w-[min(300px,80vw)] items-center gap-2 break-all font-mono">
-              <span className="min-w-0">{name}</span>
+              <span className="min-w-0">{path}</span>
               <FolderCopyButton path={path} />
               <button
                 type="button"
