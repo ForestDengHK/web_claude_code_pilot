@@ -25,6 +25,10 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const [sessionModel, setSessionModel] = useState<string>('');
   const [sessionMode, setSessionMode] = useState<string>('');
   const [sessionBackend, setSessionBackend] = useState<'claude' | 'codex'>('claude');
+  // Gate ChatView mounting on session info being loaded — otherwise a Codex session
+  // briefly mounts with backend='claude' (the initial default) and recovery polling
+  // can mislabel the backend (e.g. "Claude is running..." on a Codex session).
+  const [sessionInfoLoaded, setSessionInfoLoaded] = useState(false);
   const [sessionAdvisorModel, setSessionAdvisorModel] = useState<string | null>(null);
   const [branchSummary, setBranchSummary] = useState<string | null>(null);
   const [branchSourceSessionId, setBranchSourceSessionId] = useState<string | null>(null);
@@ -79,6 +83,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
 
   // Load session info and set working directory
   useEffect(() => {
+    setSessionInfoLoaded(false);
     async function loadSession() {
       try {
         const res = await fetch(`/api/chat/sessions/${id}`);
@@ -106,6 +111,8 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
         }
       } catch {
         // Session info load failed - panel will still work without directory
+      } finally {
+        setSessionInfoLoaded(true);
       }
     }
 
@@ -149,7 +156,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     return () => { cancelled = true; };
   }, [id]);
 
-  if (loading) {
+  if (loading || !sessionInfoLoaded) {
     return (
       <div className="flex h-full items-center justify-center">
         <HugeiconsIcon icon={Loading02Icon} className="h-8 w-8 animate-spin text-muted-foreground" />
