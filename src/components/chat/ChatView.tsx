@@ -8,11 +8,11 @@ import { MessageInput } from './MessageInput';
 import { SearchBar } from './SearchBar';
 import { SearchIcon } from 'lucide-react';
 import { HugeiconsIcon } from '@hugeicons/react';
-import { Bookmark02Icon, BrainIcon, Cancel01Icon, ViewIcon, ViewOffSlashIcon, DashboardSquare01Icon } from '@hugeicons/core-free-icons';
+import { Bookmark02Icon, BrainIcon, Cancel01Icon, ViewIcon, ViewOffSlashIcon, DashboardSquare01Icon, Target02Icon, CheckmarkCircle02Icon, PauseIcon, AlertCircleIcon } from '@hugeicons/core-free-icons';
 import { RememberDialog } from './RememberDialog';
 import { usePanel } from '@/hooks/usePanel';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
-import type { RateLimitInfo } from '@/hooks/useSSEStream';
+import type { RateLimitInfo, CodexGoalState } from '@/hooks/useSSEStream';
 import { formatCodexUsageMarkdown } from '@/lib/codex-usage';
 import { getRunningCommandSummary } from '@/lib/streaming-status';
 import { formatClaudeUsageMarkdown } from '@/lib/claude-usage';
@@ -159,6 +159,29 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   useEffect(() => {
     if (backend) setCurrentBackendRaw(backend);
   }, [backend]);
+
+  // Seed activeGoal on mount / session change. Without this, page reloads
+  // hide the badge until the next /goal-related SSE event. Bails for Claude
+  // sessions and for sessions with no Codex thread yet.
+  useEffect(() => {
+    if (backend !== 'codex') {
+      setActiveGoal(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/codex/goal?session_id=${encodeURIComponent(sessionId)}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (cancelled) return;
+        if (data && 'goal' in data) {
+          setActiveGoal(data.goal);
+        }
+      })
+      .catch(() => {
+        // Endpoint failure shouldn't break the chat — just skip the badge.
+      });
+    return () => { cancelled = true; };
+  }, [sessionId, backend]);
   // Sync advisorModel prop → state
   useEffect(() => {
     if (advisorModel !== undefined) setCurrentAdvisorModelRaw(advisorModel || null);
@@ -298,6 +321,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
   const [pendingInputRequest, setPendingInputRequest] = useState<InputRequestEvent | null>(null);
+  // Codex /goal state — populated by `thread/goal/updated` SSE events
+  // during a live stream, and seeded from `/api/codex/goal` on mount so
+  // the badge restores after a page reload. Drives the Goal banner above
+  // MessageList. Codex backend only.
+  const [activeGoal, setActiveGoal] = useState<CodexGoalState | null>(null);
   const [inputRequestResolved, setInputRequestResolved] = useState(false);
   const [streamingToolOutput, setStreamingToolOutput] = useState('');
   const toolTimeoutRef = useRef<{ toolName: string; elapsedSeconds: number } | null>(null);
@@ -1180,6 +1208,10 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           onCompact: (trigger, preTokens) => {
             recordCompact(trigger, preTokens);
           },
+          onGoalUpdate: (goal) => {
+            // Codex /goal lifecycle update — mirrors thread/goal/updated.
+            setActiveGoal(goal);
+          },
           onPermissionRequest: (permData) => {
             setPendingPermission(permData);
             setPermissionResolved(null);
@@ -1681,6 +1713,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           sourceSessionId={branchSourceSessionId}
         />
       )}
+      {activeGoal && currentBackend === 'codex' && <GoalBadge goal={activeGoal} />}
       <ContextHealthToast
         alerts={healthAlerts}
         onDismiss={dismissAlert}
@@ -1859,6 +1892,44 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         effort={currentEffort}
         onEffortChange={setCurrentEffort}
       />
+    </div>
+  );
+}
+
+// Codex `/goal` status banner. Mirrors Codex's goal lifecycle: active during
+// runtime continuation, complete when the model emits task_complete, paused
+// or budget_limited when manually paused or hitting `tokenBudget`. Hidden
+// for Claude sessions and when no goal is set on the thread.
+function GoalBadge({ goal }: { goal: CodexGoalState }) {
+  const { icon, color, label } = (() => {
+    switch (goal.status) {
+      case 'active':
+        return { icon: Target02Icon, color: 'text-emerald-500 bg-emerald-500/10 border-emerald-500/30', label: 'Goal active' };
+      case 'complete':
+        return { icon: CheckmarkCircle02Icon, color: 'text-blue-500 bg-blue-500/10 border-blue-500/30', label: 'Goal complete' };
+      case 'paused':
+        return { icon: PauseIcon, color: 'text-amber-500 bg-amber-500/10 border-amber-500/30', label: 'Goal paused' };
+      case 'budget_limited':
+        return { icon: AlertCircleIcon, color: 'text-orange-500 bg-orange-500/10 border-orange-500/30', label: 'Goal budget reached' };
+      default:
+        return { icon: Target02Icon, color: 'text-muted-foreground bg-muted/50 border-border', label: `Goal: ${goal.status}` };
+    }
+  })();
+
+  const minutes = Math.floor(goal.timeUsedSeconds / 60);
+  const seconds = goal.timeUsedSeconds % 60;
+  const timeStr = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+  const tokensStr = goal.tokensUsed > 0 ? `${goal.tokensUsed.toLocaleString()} tok` : null;
+
+  return (
+    <div className={`mx-3 mt-2 flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs ${color}`}>
+      <HugeiconsIcon icon={icon} size={14} />
+      <span className="font-medium">{label}</span>
+      <span className="truncate text-muted-foreground" title={goal.objective}>· {goal.objective}</span>
+      <span className="ml-auto whitespace-nowrap text-muted-foreground">
+        {tokensStr && <span className="mr-2">{tokensStr}</span>}
+        <span>{timeStr}</span>
+      </span>
     </div>
   );
 }

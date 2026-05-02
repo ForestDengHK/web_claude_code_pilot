@@ -45,7 +45,22 @@ export interface SSECallbacks {
   onRateLimit?: (info: RateLimitInfo) => void;
   onHeartbeat?: () => void;
   onCompact?: (trigger: string, preTokens: number) => void;
+  /** Codex `/goal` lifecycle update. Payload mirrors `thread/goal/updated`
+   *  notifications from the app-server. `null` means goal cleared. */
+  onGoalUpdate?: (goal: CodexGoalState | null) => void;
   onError: (accumulated: string) => void;
+}
+
+/** Subset of Codex's goal state we surface to the UI. */
+export interface CodexGoalState {
+  threadId: string;
+  objective: string;
+  status: 'active' | 'paused' | 'budget_limited' | 'complete';
+  tokenBudget: number | null;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 /**
@@ -128,6 +143,9 @@ function handleSSEEvent(
         const statusData = JSON.parse(event.data);
         if (statusData.session_id) {
           callbacks.onStatus(`Connected (${statusData.model || 'model'})`);
+        } else if (statusData.kind === 'goal') {
+          // Codex /goal lifecycle event. `goal` is null when cleared.
+          callbacks.onGoalUpdate?.(statusData.goal ?? null);
         } else if (statusData.compact) {
           callbacks.onCompact?.(statusData.compact.trigger, statusData.compact.preTokens);
           callbacks.onStatus(statusData.title || 'Context compacted');
@@ -325,6 +343,8 @@ export function useSSEStream() {
         onImage: (img) => callbacksRef.current?.onImage?.(img),
         onRateLimit: (i) => callbacksRef.current?.onRateLimit?.(i),
         onHeartbeat: () => callbacksRef.current?.onHeartbeat?.(),
+        onCompact: (t, p) => callbacksRef.current?.onCompact?.(t, p),
+        onGoalUpdate: (g) => callbacksRef.current?.onGoalUpdate?.(g),
         onError: (a) => callbacksRef.current?.onError(a),
       };
 

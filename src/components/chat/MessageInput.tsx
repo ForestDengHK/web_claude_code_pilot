@@ -26,6 +26,7 @@ import {
   Mic01Icon,
   Loading02Icon,
   Image01Icon,
+  Target02Icon,
 } from "@hugeicons/core-free-icons";
 import { cn } from '@/lib/utils';
 import {
@@ -105,6 +106,10 @@ interface PopoverItem {
   /** When true, an immediate command keeps the typed argument and forwards it
    *  to onCommand as the second parameter (e.g. `/img /tmp/cat.webp`). */
   acceptsArg?: boolean;
+  /** When true, `/cmd <args>` is sent verbatim to the backend without
+   *  COMMAND_PROMPTS expansion. Used for slash commands that the backend
+   *  itself parses (e.g. Codex's `/goal`). */
+  passthrough?: boolean;
   installedSource?: "agents" | "claude";
   icon?: typeof CommandLineIcon;
   /** Codex skill metadata — present only for items from /api/codex/skills */
@@ -136,6 +141,7 @@ const BUILT_IN_COMMANDS: PopoverItem[] = [
   { label: 'terminal-setup', value: '/terminal-setup', description: 'Configure terminal settings', builtIn: true, icon: CommandLineIcon },
   { label: 'memory', value: '/memory', description: 'Edit project memory file', builtIn: true, icon: BrainIcon },
   { label: 'img', value: '/img', description: 'Display an image inline (e.g. /img /tmp/cat.webp)', builtIn: true, immediate: true, acceptsArg: true, icon: Image01Icon },
+  { label: 'goal', value: '/goal', description: 'Codex goal — `/goal <obj>` to start, `/goal` to view state, `/goal clear` to clear', builtIn: true, passthrough: true, icon: Target02Icon },
 ];
 
 interface ModeOption {
@@ -725,7 +731,7 @@ export function MessageInput({
     // and hide Claude-specific ones (compact, doctor, init, review, etc.).
     // `branch` is allowed because ChatView routes summary generation through the
     // active backend's chat endpoint using the user's current model.
-    const CODEX_SAFE_COMMANDS = new Set(['help', 'clear', 'cost', 'usage', 'branch']);
+    const CODEX_SAFE_COMMANDS = new Set(['help', 'clear', 'cost', 'usage', 'branch', 'goal']);
     const commands = backend === 'codex'
       ? BUILT_IN_COMMANDS.filter(c => CODEX_SAFE_COMMANDS.has(c.label))
       : BUILT_IN_COMMANDS;
@@ -940,6 +946,14 @@ export function MessageInput({
           if (cmd.immediate && onCommand && !hasFiles && (cmd.acceptsArg || !userInput)) {
             setInputValue('');
             onCommand(cmd.value, cmd.acceptsArg ? userInput : undefined);
+            return;
+          }
+          // Passthrough: send "/cmd <args>" verbatim. The backend parses the
+          // slash command itself (e.g. Codex's /goal).
+          if (cmd.passthrough) {
+            const finalPrompt = userInput ? `${cmd.value} ${userInput}` : cmd.value;
+            setInputValue('');
+            onSend(finalPrompt, hasFiles ? files : undefined);
             return;
           }
           // Non-immediate built-in: expand with COMMAND_PROMPTS
