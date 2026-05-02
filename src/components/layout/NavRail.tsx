@@ -76,7 +76,7 @@ export function NavRail({ onToggleChatList, skipPermissionsActive }: NavRailProp
                       }
                     }}
                   >
-                    <HugeiconsIcon icon={item.icon} className="h-4 w-4" />
+                    <HugeiconsIcon icon={item.icon} className="h-5 w-5" />
                     <span className="sr-only">{item.label}</span>
                   </Button>
                 ) : (
@@ -90,7 +90,7 @@ export function NavRail({ onToggleChatList, skipPermissionsActive }: NavRailProp
                     )}
                   >
                     <Link href={item.href}>
-                      <HugeiconsIcon icon={item.icon} className="h-4 w-4" />
+                      <HugeiconsIcon icon={item.icon} className="h-5 w-5" />
                       <span className="sr-only">{item.label}</span>
                     </Link>
                   </Button>

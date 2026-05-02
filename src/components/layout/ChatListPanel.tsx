@@ -18,6 +18,7 @@ import {
   Cancel01Icon,
   RefreshIcon,
   CleanIcon,
+  MoreHorizontalIcon,
 } from "@hugeicons/core-free-icons";
 import { AlertTriangle } from 'lucide-react';
 import { useGitSync } from '@/hooks/useGitSync';
@@ -29,6 +30,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { usePanel } from "@/hooks/usePanel";
 import { ImportSessionDialog } from "./ImportSessionDialog";
@@ -120,29 +127,6 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
   const router = useRouter();
   const { streamingSessionId, pendingApprovalSessionId, streamingSessions } = usePanel();
   const { syncStates, pullProject, pullAll, isAnyLoading } = useGitSync();
-
-  // Track recently completed sessions for fade-out "Done" indicator
-  const [recentlyCompleted, setRecentlyCompleted] = useState<Set<string>>(new Set());
-  const prevStreamingIdsRef = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    const currentIds = new Set(streamingSessions.keys());
-    const prevIds = prevStreamingIdsRef.current;
-
-    for (const id of prevIds) {
-      if (!currentIds.has(id)) {
-        setRecentlyCompleted(prev => new Set(prev).add(id));
-        setTimeout(() => {
-          setRecentlyCompleted(prev => {
-            const next = new Set(prev);
-            next.delete(id);
-            return next;
-          });
-        }, 5000);
-      }
-    }
-    prevStreamingIdsRef.current = currentIds;
-  }, [streamingSessions]);
 
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [deletingSession, setDeletingSession] = useState<string | null>(null);
@@ -433,7 +417,7 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
         </span>
       </div>
 
-      {/* New Chat + New Project */}
+      {/* New Chat + overflow menu */}
       <div className="flex items-center gap-2 px-3 pb-2">
         <Button
           variant="outline"
@@ -445,30 +429,26 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
           <HugeiconsIcon icon={PlusSignIcon} className="h-3.5 w-3.5" />
           New Chat
         </Button>
-        <Tooltip>
-          <TooltipTrigger asChild>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
             <Button
               variant="outline"
               size="icon-sm"
               className="h-8 w-8 shrink-0"
-              onClick={() => setFolderPickerOpen(true)}
             >
-              <HugeiconsIcon icon={FolderOpenIcon} className="h-3.5 w-3.5" />
-              <span className="sr-only">Open project folder</span>
+              <HugeiconsIcon icon={MoreHorizontalIcon} className="h-3.5 w-3.5" />
+              <span className="sr-only">More actions</span>
             </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">Open project folder</TooltipContent>
-        </Tooltip>
-        {/* Pull All — only shown when at least one real project exists */}
-        {projectGroups.some(g => g.workingDirectory !== '') && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                size="icon-sm"
-                className="h-8 w-8 shrink-0"
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuItem onSelect={() => setFolderPickerOpen(true)}>
+              <HugeiconsIcon icon={FolderOpenIcon} className="h-3.5 w-3.5" />
+              Open project folder
+            </DropdownMenuItem>
+            {projectGroups.some(g => g.workingDirectory !== '') && (
+              <DropdownMenuItem
                 disabled={isAnyLoading}
-                onClick={() =>
+                onSelect={() =>
                   pullAll(
                     projectGroups
                       .filter(g => g.workingDirectory !== '')
@@ -480,26 +460,15 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                   icon={RefreshIcon}
                   className={cn('h-3.5 w-3.5', isAnyLoading && 'animate-spin')}
                 />
-                <span className="sr-only">Pull all projects</span>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Pull all projects</TooltipContent>
-          </Tooltip>
-        )}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="outline"
-              size="icon-sm"
-              className="h-8 w-8 shrink-0"
-              onClick={() => navigateToOrganize()}
-            >
+                Pull all projects
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onSelect={() => navigateToOrganize()}>
               <HugeiconsIcon icon={CleanIcon} className="h-3.5 w-3.5" />
-              <span className="sr-only">Organize sessions</span>
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">Organize sessions</TooltipContent>
-        </Tooltip>
+              Organize sessions
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* Search */}
@@ -783,7 +752,6 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                             const needsApproval = streamingInfo?.status === 'waiting_permission'
                               || streamingInfo?.status === 'waiting_input'
                               || pendingApprovalSessionId === session.id;
-                            const justCompleted = recentlyCompleted.has(session.id);
 
                             return (
                               <div
@@ -826,13 +794,8 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                                         {streamingInfo.statusText}
                                       </span>
                                     )}
-                                    {justCompleted && !isSessionStreaming && (
-                                      <span className="text-[10px] text-green-500 leading-tight">
-                                        ✓ Done
-                                      </span>
-                                    )}
                                   </div>
-                                  {!isSessionStreaming && !justCompleted && (
+                                  {!isSessionStreaming && (
                                     <div className="flex items-center gap-1 shrink-0">
                                       <span className="text-[10px] text-muted-foreground/40">
                                         {formatRelativeTime(session.updated_at)}
@@ -894,13 +857,6 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
           </div>
         )}
       </ScrollArea>
-
-      {/* Version */}
-      <div className="shrink-0 px-3 py-2 text-center">
-        <span className="text-[10px] text-muted-foreground/40">
-          v{process.env.NEXT_PUBLIC_APP_VERSION}
-        </span>
-      </div>
 
       {/* Import CLI Session Dialog */}
       <ImportSessionDialog
