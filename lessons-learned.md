@@ -4,6 +4,36 @@ Debugging notes and post-mortems. Chronological, newest first.
 
 ---
 
+## 2026-05-02 — Codex `/goal` integration: passthrough is a trap
+
+**Severity**: Low (no shipped bug — caught in the verification phase before commit). But the wasted iteration is worth recording: it's the kind of trap I'll hit again the next time a CLI ships a new "slash command" feature.
+
+**Symptom**: First-pass integration registered `/goal` as a popover entry that sent `/goal <objective>` verbatim into `turn/start` text input. Manual smoke test looked fine — Codex responded normally — but the run was a fake. `~/.codex/state_5.sqlite`'s `thread_goals` table stayed empty: no goal record was ever created. The persistence and runtime-continuation behavior the feature exists for did not engage at all.
+
+**Root cause**: Codex's `/goal` is a **TUI-side slash command**, not a server-side one. The TUI parses `/goal <obj>` client-side and dispatches `thread/goal/set` JSON-RPC to the app-server. The app-server itself has no "parse text input for slash commands" code path — text in `turn/start` reaches the model unchanged. CodePilot bypasses the TUI entirely (we drive `codex app-server` directly via JSON-RPC), so the TUI's parser was the missing piece.
+
+The trap was that the binary contained literal strings `/goal` and `/goals` plus modules called `slash_command` / `slash_dispatch`. That signal pointed at server-side parsing — but those modules turned out to be inside the TUI's own crate (the binary statically links the TUI), not the app-server's protocol handler.
+
+**Fix** (commit pending): explicit JSON-RPC integration.
+1. `codex-process-manager.ts`: declare `capabilities: { experimentalApi: true }` on `initialize` (gate #1 — without it, all `thread/goal/*` methods reject with "requires experimentalApi capability").
+2. `~/.codex/config.toml`: add `[features]\ngoals = true` (gate #2 — without it, methods reject with "goals feature is disabled" even with the capability declared).
+3. `route.ts`: regex-extract the bare objective from `/goal <obj>` user input before any memory/branch prepend.
+4. `codex-client.ts`: new `goalObjective` option on `streamCodex`. After thread setup but before `turn/start`, call `thread/goal/set { threadId, objective }`. Errors surface as SSE so users see the most likely fix (the config flag).
+5. `MessageInput.tsx`: register `/goal` in `BUILT_IN_COMMANDS` with a new `passthrough: true` flag (the existing non-immediate command path mangles `/cmd <arg>` into `User context: <arg>` when `COMMAND_PROMPTS` has no template; the slash prefix gets stripped). Filter to Codex backend only via `CODEX_SAFE_COMMANDS`.
+
+**The empirical probe that unstuck me**: official docs lag, source isn't local. I wrote a 30-line Node script that spawned `codex app-server`, sent JSON-RPC by hand, and probed `thread/goal/set` with guessed parameter shapes. Three iterations to find the truth: (a) camelCase fields not snake_case, (b) needs `experimentalApi` capability, (c) needs `[features].goals = true`. Each error message named the next gate. Total time: ~10 minutes. Beats reading speculative blog posts every time.
+
+**Lessons**:
+1. **A CLI's slash commands ≠ its protocol.** Before assuming a slash command "passes through" to the server, check whether the server has its own slash parser, or whether the client (TUI/web app) does the dispatch. They share names but not semantics. The article that prompted this work didn't draw this distinction — neither did I until I checked the goal table and found it empty.
+2. **Don't trust binary-string signals at face value.** Strings like `slash_command` and `/goal` in the binary proved the *string exists somewhere*, not where it's parsed. A statically-linked TUI puts its own internals into the same binary as the server. To distinguish: look for actual JSON-RPC method literals (`thread/goal/set` with quotes) rather than namespace fragments.
+3. **For experimental APIs, expect a two-gate pattern**: a capability declaration in the handshake AND a feature flag in config. Either alone is insufficient. When you see "requires X capability" or "feature is disabled," check the *other* gate too.
+4. **Empirical probing > docs/articles for new features.** A 30-line stdio JSON-RPC script teaches you the contract in 10 minutes. The article got the existence right but missed the gating mechanism. Spec the contract by talking to the server, then build to that.
+5. **Verify against the persistence layer, not the chat surface.** A `/goal` request that didn't actually create a goal still got a perfectly normal model response — because the model just saw text and replied. The "did this feature engage" check has to be made against state Codex itself owns (`~/.codex/state_5.sqlite`), not the chat output.
+
+**Open gap (deferred to v2)**: Multi-turn goal continuation. `streamCodex` listens for one `turn/started → turn/completed` cycle then closes the SSE stream. Codex's auto-continuation (the "Continue working toward the active thread goal" developer-message injection from the article) fires subsequent turns on the same thread, but our handler is no longer attached so the chat history misses them. Goal state in Codex's DB is fine — only CodePilot's per-message record is incomplete. v2 needs a "goal-aware" stream mode that stays attached as long as `thread/goal/get` reports `active`, plus a `thread/goal/updated` notification subscription for a UI status badge.
+
+---
+
 ## 2026-04-25 — Terminal unreachable over HTTPS reverse proxies
 
 **Severity**: Medium. Terminal feature broken for the two production access paths (Tailscale-HTTPS and `ccpilot.swifttools.eu`); the LAN/Tailscale-direct path still worked, which masked it during local dev.
