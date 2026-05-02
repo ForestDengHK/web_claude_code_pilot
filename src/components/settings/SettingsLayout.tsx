@@ -10,6 +10,7 @@ import {
   Notification02Icon,
   BrainIcon,
   Pulse02Icon,
+  BridgeIcon,
 } from "@hugeicons/core-free-icons";
 import { Plug01Icon } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
@@ -20,8 +21,10 @@ import { SttSection } from "./SttSection";
 import NotificationSection from "./NotificationSection";
 import { MemorySection } from "./MemorySection";
 import { ContextHealthSection } from "./ContextHealthSection";
+import BridgeSection from "@/components/bridge/BridgeSection";
+import TelegramBridgeSection from "@/components/bridge/TelegramBridgeSection";
 
-type Section = "general" | "providers" | "cli" | "stt" | "notifications" | "memory" | "context-health";
+type Section = "general" | "providers" | "cli" | "stt" | "notifications" | "memory" | "context-health" | "bridge";
 
 interface SidebarItem {
   id: Section;
@@ -36,6 +39,7 @@ const sidebarItems: SidebarItem[] = [
   { id: "cli", label: "Claude CLI", icon: CodeIcon },
   { id: "stt", label: "Voice Input", icon: Mic01Icon },
   { id: "notifications", label: "Notifications", icon: Notification02Icon },
+  { id: "bridge", label: "IM Bridge", icon: BridgeIcon },
   { id: "context-health", label: "Context Health", icon: Pulse02Icon },
 ];
 
@@ -118,6 +122,12 @@ export function SettingsLayout() {
           {activeSection === "cli" && <CliSettingsSection />}
           {activeSection === "stt" && <SttSection />}
           {activeSection === "notifications" && <NotificationSection />}
+          {activeSection === "bridge" && (
+            <div className="space-y-6">
+              <BridgeSection />
+              <TelegramBridgeSection />
+            </div>
+          )}
           {activeSection === "context-health" && <ContextHealthSection />}
         </div>
       </div>

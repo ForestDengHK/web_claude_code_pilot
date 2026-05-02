@@ -11,7 +11,6 @@ import {
   Settings02Icon,
   Moon02Icon,
   Sun02Icon,
-  BridgeIcon,
   ComputerTerminal01Icon,
 } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
@@ -30,7 +29,6 @@ interface NavRailProps {
 const navItems = [
   { href: "/chat", label: "Chats", icon: Message02Icon },
   { href: "/extensions", label: "Extensions", icon: GridIcon },
-  { href: "/bridge", label: "Bridge", icon: BridgeIcon },
   { href: "/terminal", label: "Terminal", icon: ComputerTerminal01Icon },
   { href: "/settings", label: "Settings", icon: Settings02Icon },
 ] as const;
