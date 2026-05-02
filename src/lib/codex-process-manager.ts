@@ -260,7 +260,9 @@ export class CodexProcessManager {
     return new Promise<void>((resolve, reject) => {
       const initRequest = formatJsonRpcRequest('initialize', {
         clientInfo: { name: 'codepilot', title: 'CodePilot', version: '1.0.0' },
-        capabilities: null,
+        // experimentalApi unlocks `thread/goal/*` (requires [features].goals = true
+        // in ~/.codex/config.toml). Other Codex methods we use are unaffected.
+        capabilities: { experimentalApi: true },
       });
       const initRequestId = getLastRequestId();
 

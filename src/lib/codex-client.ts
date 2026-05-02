@@ -64,6 +64,13 @@ export interface CodexStreamOptions {
    * 'never'). Omit to preserve the legacy "inherit from Codex config" path.
    */
   approvalPolicy?: AskForApproval;
+  /**
+   * When set, calls `thread/goal/set` against the active thread before
+   * starting the turn. The objective is the bare goal text (no `/goal`
+   * prefix). Requires `[features].goals = true` in `~/.codex/config.toml`
+   * and the `experimentalApi` capability declared at initialize time.
+   */
+  goalObjective?: string;
 }
 
 export interface CodexReviewResult {
@@ -74,6 +81,18 @@ export interface CodexReviewResult {
   overallCorrectness?: string;
   overallExplanation?: string;
   overallConfidenceScore?: number;
+}
+
+/** Codex goal lifecycle state. Mirrors `thread/goal/get` response. */
+export interface CodexGoal {
+  threadId: string;
+  objective: string;
+  status: 'active' | 'paused' | 'budget_limited' | 'complete';
+  tokenBudget: number | null;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 // Codex app-server UserInput union (v2 protocol)
@@ -548,6 +567,127 @@ function normalizeReviewResult(review: string): { review: string } | { error: st
 // Main streaming function
 // ---------------------------------------------------------------------------
 
+/**
+ * Synthetic stream for `/goal` and `/goal clear` sub-commands. Skips the
+ * model turn entirely — just calls the relevant `thread/goal/*` JSON-RPC
+ * method and emits the result as SSE: a status event so the badge updates,
+ * a text block with the human-readable response, then result/done. The
+ * route's existing tee+persist captures it as a regular assistant message.
+ */
+export function streamCodexGoalAction(options: {
+  sessionId: string;
+  codexThreadId: string | undefined;
+  action: 'status' | 'clear';
+}): ReadableStream<string> {
+  const { sessionId, codexThreadId, action } = options;
+  return new ReadableStream<string>({
+    async start(controller) {
+      const closeWith = (text: string, isError = false) => {
+        controller.enqueue(formatSSE({
+          type: isError ? 'error' : 'text',
+          data: text,
+        }));
+        controller.enqueue(formatSSE({
+          type: 'result',
+          data: JSON.stringify({ subtype: isError ? 'error' : 'success' }),
+        }));
+        controller.enqueue(formatSSE({ type: 'done', data: '' }));
+        controller.close();
+      };
+
+      if (!codexThreadId) {
+        closeWith(action === 'clear'
+          ? 'No goal to clear — this chat has no Codex thread yet. Type `/goal <objective>` to start one.'
+          : 'No active goal yet. Type `/goal <objective>` to start one.');
+        return;
+      }
+
+      try {
+        const proc = await CodexProcessManager.getOrCreate(sessionId);
+        const method = action === 'clear' ? 'thread/goal/clear' : 'thread/goal/get';
+        const result = await sendJsonRpcRequest<{ goal: CodexGoal | null }>(
+          proc,
+          method,
+          { threadId: codexThreadId },
+          15_000,
+        );
+
+        // Push a status event so the chat badge reflects the new state
+        // immediately (clear → null, status → current goal).
+        controller.enqueue(formatSSE({
+          type: 'status',
+          data: JSON.stringify({
+            kind: 'goal',
+            goal: action === 'clear' ? null : (result.goal ?? null),
+          }),
+        }));
+
+        // Format the human-readable response.
+        if (action === 'clear') {
+          if (result.goal) {
+            closeWith(`Goal cleared.\n\n_Previous objective: ${result.goal.objective}_`);
+          } else {
+            closeWith('No goal was set on this thread.');
+          }
+        } else {
+          // status query
+          if (!result.goal) {
+            closeWith('No active goal on this thread.\n\nStart one with `/goal <objective>`.');
+          } else {
+            const g = result.goal;
+            const minutes = Math.floor(g.timeUsedSeconds / 60);
+            const seconds = g.timeUsedSeconds % 60;
+            const timeStr = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+            const tokensStr = g.tokenBudget != null
+              ? `${g.tokensUsed.toLocaleString()} / ${g.tokenBudget.toLocaleString()}`
+              : g.tokensUsed.toLocaleString();
+            closeWith(
+              `**Goal: ${g.status}**\n\n` +
+              `**Objective:** ${g.objective}\n\n` +
+              `**Tokens used:** ${tokensStr}\n` +
+              `**Time used:** ${timeStr}`
+            );
+          }
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'unknown error';
+        closeWith(
+          `Goal command failed: ${message}\n\n_If this says "goals feature is disabled," ` +
+          `add \`[features]\\ngoals = true\` to ~/.codex/config.toml._`,
+          true,
+        );
+      }
+    },
+  });
+}
+
+/**
+ * Query the current `/goal` state for a thread. Returns null if no goal,
+ * the goals feature is disabled in Codex config, or the thread isn't loaded.
+ *
+ * Used by `/api/codex/goal` so the chat header badge restores on page reload
+ * (the in-memory `activeGoal` state is otherwise lost between SSE streams).
+ */
+export async function queryCodexGoal(
+  sessionId: string,
+  threadId: string,
+): Promise<CodexGoal | null> {
+  try {
+    const proc = await CodexProcessManager.getOrCreate(sessionId);
+    const result = await sendJsonRpcRequest<{ goal: CodexGoal | null }>(
+      proc,
+      'thread/goal/get',
+      { threadId },
+      10_000,
+    );
+    return result.goal ?? null;
+  } catch {
+    // feature disabled, capability missing, thread not loaded, or process
+    // not initialized — surface as "no goal" rather than an error.
+    return null;
+  }
+}
+
 export function streamCodex(options: CodexStreamOptions): ReadableStream<string> {
   const {
     prompt,
@@ -563,6 +703,7 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
     skills,
     skipPermissions = false,
     approvalPolicy: explicitApprovalPolicy,
+    goalObjective,
   } = options;
   const requestedEffort = effort || 'high';
   const isMiniModel = model ? /mini/i.test(model) : false;
@@ -574,8 +715,19 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
     async start(controller) {
       let codexProcess: CodexProcess | null = null;
       let messageHandler: ((msg: JsonRpcMessage) => void) | null = null;
+      let goalEventHandler: ((msg: JsonRpcMessage) => void) | null = null;
       let exitHandler: ((error?: Error) => void) | null = null;
       let abortListener: (() => void) | null = null;
+
+      // Multi-turn goal mode: when a goal is active on the thread, Codex
+      // auto-fires continuation turns (the article's "runtime continuation")
+      // until status hits `complete` (or user clears it). We keep the SSE
+      // stream open across those turns so the chat captures every continuation.
+      // turnState lives in this outer scope so the goal handler (which fires
+      // between turns) can read whether a turn is currently running.
+      const turnState = { activeTurnId: null as string | null };
+      let goalIsActive = false;
+      let tryResolveOuter: (() => void) | null = null;
 
       // Heartbeat: send periodic keepalive so the client can detect dead connections
       heartbeatInterval = setInterval(() => {
@@ -667,6 +819,82 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
           throw new Error('Failed to obtain Codex thread ID');
         }
 
+        // Subscribe to goal lifecycle notifications BEFORE goal/set so we
+        // don't race the initial `thread/goal/updated`. The handler updates
+        // `goalIsActive` and forwards each goal state to the client (so the
+        // UI can render a "Goal: active/complete/paused" badge).
+        goalEventHandler = (msg: JsonRpcMessage) => {
+          if (msg.type !== 'notification') return;
+          if (msg.method === 'thread/goal/updated') {
+            const params = msg.params as { goal?: { status?: string } } | undefined;
+            const goal = params?.goal;
+            if (goal && typeof goal.status === 'string') {
+              goalIsActive = goal.status === 'active';
+              try {
+                controller.enqueue(formatSSE({
+                  type: 'status',
+                  data: JSON.stringify({ kind: 'goal', goal }),
+                }));
+              } catch {
+                // controller closed — ignore
+              }
+              if (!goalIsActive && tryResolveOuter) tryResolveOuter();
+            }
+          } else if (msg.method === 'thread/goal/cleared') {
+            goalIsActive = false;
+            try {
+              controller.enqueue(formatSSE({
+                type: 'status',
+                data: JSON.stringify({ kind: 'goal', goal: null }),
+              }));
+            } catch {
+              // controller closed — ignore
+            }
+            if (tryResolveOuter) tryResolveOuter();
+          }
+        };
+        codexProcess.onMessage(goalEventHandler);
+
+        // Probe existing goal state on the thread (a resumed thread may
+        // already have an active goal, or `goalObjective` may have been set
+        // by a previous request). Failing here is fine — most likely the
+        // [features].goals flag is off, in which case the rest of the flow
+        // continues normally without goal tracking.
+        try {
+          const existing = await sendJsonRpcRequest<{
+            goal?: { status?: string } | null;
+          }>(codexProcess, 'thread/goal/get', { threadId });
+          if (existing.goal && typeof existing.goal.status === 'string') {
+            goalIsActive = existing.goal.status === 'active';
+            controller.enqueue(formatSSE({
+              type: 'status',
+              data: JSON.stringify({ kind: 'goal', goal: existing.goal }),
+            }));
+          }
+        } catch {
+          // goals feature disabled or unavailable — silent skip
+        }
+
+        // Set / replace the persisted goal before the turn fires. Codex's
+        // goal subsystem then tracks the turn against this objective and
+        // emits `thread/goal/updated` notifications on state changes.
+        if (goalObjective && goalObjective.trim()) {
+          try {
+            await sendJsonRpcRequest(codexProcess, 'thread/goal/set', {
+              threadId,
+              objective: goalObjective.trim(),
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'unknown error';
+            // Surface the failure via SSE so the user sees why the goal
+            // didn't activate (most common: `[features].goals = true` missing).
+            controller.enqueue(formatSSE({
+              type: 'error',
+              data: `Codex /goal failed: ${message}. Add "[features]\\ngoals = true" to ~/.codex/config.toml.`,
+            }));
+          }
+        }
+
         const desiredApprovalPolicy = resolveDesiredApprovalPolicy(
           skipPermissions,
           configuredApprovalPolicy,
@@ -741,23 +969,34 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
             tokenUsage: { baseline: null, latest: null, contextWindow: null },
             turnStartedAt: Date.now(),
           };
-          let activeTurnId: string | null = null;
-
+          // turnState.activeTurnId lives in the outer scope so goalEventHandler
+          // can read it between turns. Read/write through the shared object.
           const rememberTurnId = (nextTurnId: string | null) => {
             if (!nextTurnId || !codexProcess) return;
-            activeTurnId = nextTurnId;
+            turnState.activeTurnId = nextTurnId;
             codexProcess.currentTurnId = nextTurnId;
             CodexProcessManager.flushPendingInterrupt(codexProcess);
           };
 
           const clearActiveTurn = () => {
             if (!codexProcess) return;
-            if (!activeTurnId || codexProcess.currentTurnId === activeTurnId) {
+            if (!turnState.activeTurnId || codexProcess.currentTurnId === turnState.activeTurnId) {
               codexProcess.currentTurnId = null;
             }
             codexProcess.interruptRequested = false;
-            activeTurnId = null;
+            turnState.activeTurnId = null;
           };
+
+          // Resolve only when no turn is running AND no goal is active. In
+          // single-turn (legacy) mode goalIsActive stays false, so this fires
+          // immediately after turn/completed — same behavior as before.
+          // In goal mode it gates close on goal status flipping to terminal.
+          const tryResolve = () => {
+            if (!goalIsActive && !turnState.activeTurnId) {
+              resolve();
+            }
+          };
+          tryResolveOuter = tryResolve;
 
           exitHandler = (error?: Error) => {
             clearActiveTurn();
@@ -783,7 +1022,7 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
                 codexProcess!,
                 sessionId,
                 threadId!,
-                resolve,
+                tryResolve,
                 reject,
                 model,
                 resolvedEffort,
@@ -818,9 +1057,12 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
         controller.enqueue(formatSSE({ type: 'done', data: '' }));
         controller.close();
       } finally {
-        // Clean up message handler
+        // Clean up message handlers
         if (codexProcess && messageHandler) {
           codexProcess.offMessage(messageHandler);
+        }
+        if (codexProcess && goalEventHandler) {
+          codexProcess.offMessage(goalEventHandler);
         }
         if (codexProcess && exitHandler) {
           codexProcess.offExit(exitHandler);
@@ -828,6 +1070,7 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
         if (abortController && abortListener) {
           abortController.signal.removeEventListener('abort', abortListener);
         }
+        tryResolveOuter = null;
       }
     },
 

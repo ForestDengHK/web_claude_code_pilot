@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { streamCodex, type CodexSkillRef } from '@/lib/codex-client';
+import { streamCodex, streamCodexGoalAction, type CodexSkillRef } from '@/lib/codex-client';
 import { detectBackendSwitch, buildIncrementalBridge } from '@/lib/context-bridge';
 import { addMessage, getSession, updateSessionTitle, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected } from '@/lib/db';
 import { normalizeCodexMode } from '@/lib/permission-modes';
@@ -142,48 +142,74 @@ export async function POST(request: NextRequest) {
       ? allFiles
       : undefined;
 
-    // Stream Codex response
-    let effectivePrompt = prompt || content;
+    // Stream Codex response. Branch on Codex `/goal` slash forms:
+    //   `/goal` / `/goal status` / `/goal clear` → no model turn, just
+    //     `thread/goal/{get,clear}` JSON-RPC; synthetic SSE response.
+    //   `/goal <objective>`                      → set goal AND start a turn.
+    //   anything else                            → regular turn.
+    let stream: ReadableStream<string>;
+    const trimmedContent = (typeof content === 'string' ? content : '').trim();
 
-    // Inject branch summary on the first turn of a branched session.
-    if (session.branch_summary && !session.codex_thread_id) {
-      effectivePrompt = `[Context from previous conversation]\n---\n${session.branch_summary}\n---\n\n${effectivePrompt}`;
-    }
-
-    if (contextBridgePrompt) {
-      effectivePrompt = `${contextBridgePrompt}\n\n---\n\n${effectivePrompt}`;
-    }
-
-    // Inject memory context at most once per session, regardless of backend switches.
-    if (!hasSessionInjectedMemory(session_id) && isMemoryEnabled(session_id) && session.working_directory) {
-      const memoryContext = buildMemoryContext(session.working_directory);
-      if (memoryContext) {
-        effectivePrompt = `${memoryContext}\n\n---\n\n${effectivePrompt}`;
-        markSessionMemoryInjected(session_id);
+    if (trimmedContent === '/goal' || trimmedContent === '/goal status' || trimmedContent === '/goal clear') {
+      const action: 'status' | 'clear' = trimmedContent === '/goal clear' ? 'clear' : 'status';
+      stream = streamCodexGoalAction({
+        sessionId: session_id,
+        codexThreadId: session.codex_thread_id || undefined,
+        action,
+      });
+    } else {
+      let effectivePrompt = prompt || content;
+      let goalObjective: string | undefined;
+      const goalMatch = trimmedContent.match(/^\/goal\s+([\s\S]+)$/);
+      if (goalMatch) {
+        const objective = goalMatch[1]?.trim();
+        if (objective) {
+          goalObjective = objective;
+          effectivePrompt = objective;
+        }
       }
+
+      // Inject branch summary on the first turn of a branched session.
+      if (session.branch_summary && !session.codex_thread_id) {
+        effectivePrompt = `[Context from previous conversation]\n---\n${session.branch_summary}\n---\n\n${effectivePrompt}`;
+      }
+
+      if (contextBridgePrompt) {
+        effectivePrompt = `${contextBridgePrompt}\n\n---\n\n${effectivePrompt}`;
+      }
+
+      // Inject memory context at most once per session, regardless of backend switches.
+      if (!hasSessionInjectedMemory(session_id) && isMemoryEnabled(session_id) && session.working_directory) {
+        const memoryContext = buildMemoryContext(session.working_directory);
+        if (memoryContext) {
+          effectivePrompt = `${memoryContext}\n\n---\n\n${effectivePrompt}`;
+          markSessionMemoryInjected(session_id);
+        }
+      }
+
+      // Working mode maps to Codex's approval_policy. Shield (skip_permissions)
+      // still wins and overrides to 'never' inside codex-client. We normalize
+      // here so any stale Claude-vocabulary value (e.g. leftover 'acceptEdits'
+      // after a backend switch) falls back to the Codex default rather than
+      // silently reaching the SDK.
+      const approvalPolicy = normalizeCodexMode(mode || session.mode);
+
+      stream = streamCodex({
+        prompt: effectivePrompt,
+        sessionId: session_id,
+        codexThreadId: session.codex_thread_id || undefined,
+        model: effectiveModel,
+        workingDirectory: session.working_directory || undefined,
+        abortController,
+        files: fileAttachments,
+        contextBridgePrompt: undefined,
+        effort: effort || undefined,
+        skills: codexSkills,
+        skipPermissions: session.skip_permissions === 1,
+        approvalPolicy,
+        goalObjective,
+      });
     }
-
-    // Working mode maps to Codex's approval_policy. Shield (skip_permissions)
-    // still wins and overrides to 'never' inside codex-client. We normalize
-    // here so any stale Claude-vocabulary value (e.g. leftover 'acceptEdits'
-    // after a backend switch) falls back to the Codex default rather than
-    // silently reaching the SDK.
-    const approvalPolicy = normalizeCodexMode(mode || session.mode);
-
-    const stream = streamCodex({
-      prompt: effectivePrompt,
-      sessionId: session_id,
-      codexThreadId: session.codex_thread_id || undefined,
-      model: effectiveModel,
-      workingDirectory: session.working_directory || undefined,
-      abortController,
-      files: fileAttachments,
-      contextBridgePrompt: undefined,
-      effort: effort || undefined,
-      skills: codexSkills,
-      skipPermissions: session.skip_permissions === 1,
-      approvalPolicy,
-    });
 
     // Tee the stream: one for client, one for collecting the response
     const [streamForClient, streamForCollect] = stream.tee();
