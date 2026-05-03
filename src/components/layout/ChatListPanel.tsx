@@ -276,10 +276,8 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
   };
 
   const handleCreateSessionInProject = async (
-    e: React.MouseEvent,
     workingDirectory: string
   ) => {
-    e.stopPropagation();
     try {
       const res = await fetch("/api/chat/sessions", {
         method: "POST",
@@ -636,7 +634,7 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                           );
                         }
                         if (state.status === 'dirty') {
-                          return <AlertTriangle className="h-3 w-3 shrink-0 text-yellow-500" />;
+                          return <AlertTriangle className="h-3 w-3 shrink-0 text-amber-500" />;
                         }
                         // error
                         return (
@@ -647,90 +645,68 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                         );
                       })()}
 
-                      {/* Per-project sync button */}
+                      {/* Per-project actions kebab */}
                       {group.workingDirectory !== '' && (() => {
                         const syncState = syncStates.get(group.workingDirectory);
+                        const isLoading = syncState?.status === 'loading';
                         return (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
                               <Button
                                 variant="ghost"
                                 size="icon-xs"
                                 className={cn(
                                   "h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground transition-opacity",
-                                  "opacity-100 md:opacity-0 md:group-hover/folder:opacity-100"
+                                  "opacity-100 md:opacity-0 md:group-hover/folder:opacity-100",
+                                  "data-[state=open]:opacity-100"
                                 )}
-                                disabled={syncState?.status === 'loading'}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  pullProject(group.workingDirectory, group.displayName);
-                                }}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <HugeiconsIcon
+                                  icon={isLoading ? RefreshIcon : MoreHorizontalIcon}
+                                  className={cn(
+                                    'h-3 w-3',
+                                    isLoading && 'animate-spin'
+                                  )}
+                                />
+                                <span className="sr-only">{group.displayName} actions</span>
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent
+                              align="end"
+                              className="w-44"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <DropdownMenuItem
+                                onSelect={() =>
+                                  handleCreateSessionInProject(group.workingDirectory)
+                                }
+                              >
+                                <HugeiconsIcon icon={PlusSignIcon} className="h-3.5 w-3.5" />
+                                New chat
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={isLoading}
+                                onSelect={() =>
+                                  pullProject(group.workingDirectory, group.displayName)
+                                }
                               >
                                 <HugeiconsIcon
                                   icon={RefreshIcon}
-                                  className={cn(
-                                    'h-3 w-3',
-                                    syncState?.status === 'loading' && 'animate-spin'
-                                  )}
+                                  className={cn('h-3.5 w-3.5', isLoading && 'animate-spin')}
                                 />
-                                <span className="sr-only">Pull {group.displayName}</span>
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent side="right">Pull {group.displayName}</TooltipContent>
-                          </Tooltip>
+                                Pull
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onSelect={() => navigateToOrganize(group.workingDirectory)}
+                              >
+                                <HugeiconsIcon icon={CleanIcon} className="h-3.5 w-3.5" />
+                                Organize
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         );
                       })()}
-
-                      {/* New chat in project button */}
-                      {group.workingDirectory !== "" && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
-                              className={cn(
-                                "h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground transition-opacity",
-                                "opacity-100 md:opacity-0 md:group-hover/folder:opacity-100"
-                              )}
-                              onClick={(e) =>
-                                handleCreateSessionInProject(
-                                  e,
-                                  group.workingDirectory
-                                )
-                              }
-                            >
-                              <HugeiconsIcon
-                                icon={PlusSignIcon}
-                                className="h-3 w-3"
-                              />
-                              <span className="sr-only">
-                                New chat in {group.displayName}
-                              </span>
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent side="right">
-                            New chat in {group.displayName}
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                      {group.workingDirectory !== '' && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
-                              className="h-5 w-5 shrink-0 opacity-100 md:opacity-0 md:group-hover/folder:opacity-100"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                navigateToOrganize(group.workingDirectory);
-                              }}
-                            >
-                              <HugeiconsIcon icon={CleanIcon} className="h-3 w-3" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent side="right">Organize {group.displayName}</TooltipContent>
-                        </Tooltip>
-                      )}
                     </div>
 
                     {/* Session items */}
@@ -772,8 +748,8 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                                   {/* Streaming pulse indicator */}
                                   {isSessionStreaming && (
                                     <span className="relative flex h-2 w-2 shrink-0">
-                                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
-                                      <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+                                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
+                                      <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-500" />
                                     </span>
                                   )}
                                   {/* Approval indicator */}
