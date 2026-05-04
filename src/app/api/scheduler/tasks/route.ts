@@ -25,6 +25,7 @@ function validateInput(b: unknown): { ok: true; value: CreateTaskInput } | { ok:
   if (!b || typeof b !== 'object') return { ok: false, error: 'body must be an object' };
   const o = b as Record<string, unknown>;
   if (typeof o.name !== 'string' || !o.name.trim()) return { ok: false, error: 'name is required' };
+  if (typeof o.description !== 'string' || !o.description.trim()) return { ok: false, error: 'description is required' };
   if (typeof o.workingDirectory !== 'string' || !o.workingDirectory) return { ok: false, error: 'workingDirectory is required' };
   if (o.backend !== 'claude' && o.backend !== 'codex') return { ok: false, error: 'backend must be claude or codex' };
   if (typeof o.prompt !== 'string' || !o.prompt.trim()) return { ok: false, error: 'prompt is required' };
@@ -38,7 +39,7 @@ function validateInput(b: unknown): { ok: true; value: CreateTaskInput } | { ok:
     ok: true,
     value: {
       name: o.name,
-      description: typeof o.description === 'string' ? o.description : null,
+      description: o.description,
       workingDirectory: o.workingDirectory,
       backend: o.backend,
       model: typeof o.model === 'string' ? o.model : null,

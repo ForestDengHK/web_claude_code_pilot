@@ -1,7 +1,13 @@
 "use client";
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { TaskForm } from '@/components/scheduler/TaskForm';
 import { NLAssistDialog } from '@/components/scheduler/NLAssistDialog';
 import type { CreateTaskInput } from '@/lib/scheduler/types';
@@ -10,6 +16,7 @@ export default function NewTaskPage() {
   const router = useRouter();
   const params = useSearchParams();
   const [draft, setDraft] = useState<Partial<CreateTaskInput>>({});
+  const [formOpen, setFormOpen] = useState(true);
   const [showAssist, setShowAssist] = useState(false);
 
   useEffect(() => {
@@ -31,22 +38,30 @@ export default function NewTaskPage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto py-8 px-4">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold">New Scheduled Task</h1>
-        <Button variant="outline" onClick={() => setShowAssist(true)}>AI fill</Button>
-      </div>
-      <TaskForm
-        initial={draft}
-        onSubmit={create}
-        onCancel={() => router.push('/scheduler')}
-        submitLabel="Create"
-      />
+    <div className="flex h-full flex-col">
+      <Dialog open={formOpen} onOpenChange={(open) => { setFormOpen(open); if (!open) router.push('/scheduler'); }}>
+        <DialogContent className="max-h-[calc(100dvh-1rem)] gap-0 overflow-y-auto p-0 sm:max-w-3xl">
+          <DialogHeader className="border-b px-5 py-4">
+            <DialogTitle>New Scheduled Task</DialogTitle>
+            <DialogDescription>
+              Define when the agent runs, where it runs, and what it should do.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="p-5">
+            <TaskForm
+              initial={draft}
+              onSubmit={create}
+              onCancel={() => router.push('/scheduler')}
+              submitLabel="Create"
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
       {showAssist && (
         <NLAssistDialog
           initialText={params.get('text') ?? ''}
           fromSessionId={params.get('sessionId') ?? undefined}
-          onResult={(d) => { setDraft(d); setShowAssist(false); }}
+          onResult={(d) => { setDraft(d); setShowAssist(false); setFormOpen(true); }}
           onClose={() => setShowAssist(false)}
         />
       )}

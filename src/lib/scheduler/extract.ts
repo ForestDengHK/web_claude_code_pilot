@@ -6,10 +6,10 @@ import {
 } from './types';
 import { randomUUID } from 'crypto';
 
-const SYSTEM_PROMPT = `You convert a user's free-form description of a recurring or one-off task into a JSON ScheduledTask draft. Return ONLY valid JSON matching this schema (use null for unknown fields):
+const SYSTEM_PROMPT = `You convert a user's free-form description of a recurring or one-off task into a JSON ScheduledTask draft. Return ONLY valid JSON matching this schema:
 {
   "name": string,
-  "description": string | null,
+  "description": string,
   "workingDirectory": string | null,
   "backend": "claude" | "codex" | null,
   "trigger": { "kind": "cron"|"once"|"interval", "cron"?: string, "runAt"?: number_ms_epoch, "everyMs"?: number, "timezone": string },
@@ -19,6 +19,7 @@ const SYSTEM_PROMPT = `You convert a user's free-form description of a recurring
 Rules:
 - If user mentions a recurring time, use cron. If a single future time, use once with epoch ms. If "every N minutes/hours", use interval.
 - Default timezone to "UTC" unless user specifies.
+- "description" is a concise human-readable summary for the scheduler list.
 - "prompt" is what the agent should do during the run, NOT the user's request to you.
 - Output JSON only, no commentary, no code fences.`;
 
@@ -30,7 +31,7 @@ interface ExtractInput {
 
 interface ExtractDraft {
   name: string;
-  description: string | null;
+  description: string;
   workingDirectory: string | null;
   backend: Backend | null;
   trigger: Partial<TriggerSpec> & { kind: TriggerSpec['kind']; timezone: string };
@@ -116,7 +117,7 @@ function validateDraft(o: unknown): ExtractDraft {
   if (!r.trigger || typeof r.trigger !== 'object') throw new Error('draft missing trigger');
   return {
     name: typeof r.name === 'string' ? r.name : 'Untitled task',
-    description: typeof r.description === 'string' ? r.description : null,
+    description: typeof r.description === 'string' && r.description.trim() ? r.description : 'Scheduled agent task',
     workingDirectory: typeof r.workingDirectory === 'string' ? r.workingDirectory : null,
     backend: r.backend === 'claude' || r.backend === 'codex' ? r.backend : null,
     trigger: r.trigger as ExtractDraft['trigger'],

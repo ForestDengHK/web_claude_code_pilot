@@ -18,6 +18,9 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     managerSetEnabled(id, body.enabled);
     return Response.json({ task: getTask(id) });
   }
+  if ('description' in body && (typeof body.description !== 'string' || !body.description.trim())) {
+    return Response.json({ error: 'description is required' }, { status: 400 });
+  }
   const updated = updateTask(id, body);
   if (!updated) return Response.json({ error: 'not found' }, { status: 404 });
   reschedule(id);
