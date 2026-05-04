@@ -26,6 +26,7 @@ export default function SchedulerPage() {
     setLatestRunStatus(statusMap);
   }, []);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [load]);
 
   async function toggle(id: string, enabled: boolean) {

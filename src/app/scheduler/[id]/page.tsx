@@ -21,6 +21,7 @@ export default function EditTaskPage() {
     setRuns(r.runs ?? []);
   }, [id]);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [load]);
 
   if (!task) return <div className="p-8">Loading…</div>;

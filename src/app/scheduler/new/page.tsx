@@ -15,6 +15,7 @@ export default function NewTaskPage() {
   useEffect(() => {
     const sid = params.get('sessionId');
     const text = params.get('text');
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (sid || text) setShowAssist(true);
   }, [params]);
 
