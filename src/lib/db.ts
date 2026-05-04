@@ -262,6 +262,15 @@ function migrateDb(db: Database.Database): void {
   if (!colNames.includes('memory_injected_at')) {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN memory_injected_at TEXT");
   }
+  if (!colNames.includes('source')) {
+    db.prepare("ALTER TABLE chat_sessions ADD COLUMN source TEXT").run();
+  }
+  if (!colNames.includes('scheduled_task_id')) {
+    db.prepare("ALTER TABLE chat_sessions ADD COLUMN scheduled_task_id TEXT").run();
+  }
+  db.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_chat_sessions_scheduled_task ON chat_sessions(scheduled_task_id) WHERE scheduled_task_id IS NOT NULL"
+  ).run();
 
   const msgColumns = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[];
   const msgColNames = msgColumns.map(c => c.name);
@@ -406,6 +415,59 @@ function migrateDb(db: Database.Database): void {
   if (!colNames.includes('view_mode')) {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN view_mode TEXT DEFAULT NULL");
   }
+
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      working_directory TEXT NOT NULL,
+      backend TEXT NOT NULL,
+      model TEXT,
+      effort TEXT,
+      mode TEXT NOT NULL DEFAULT 'acceptEdits',
+      trigger_kind TEXT NOT NULL,
+      trigger_cron TEXT,
+      trigger_run_at INTEGER,
+      trigger_every_ms INTEGER,
+      timezone TEXT NOT NULL DEFAULT 'UTC',
+      prompt TEXT NOT NULL,
+      system_prompt TEXT,
+      skip_permissions INTEGER NOT NULL DEFAULT 1,
+      max_turns INTEGER NOT NULL DEFAULT 50,
+      tool_timeout_seconds INTEGER NOT NULL DEFAULT 300,
+      wall_clock_timeout_seconds INTEGER NOT NULL DEFAULT 1800,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_run_at TEXT,
+      next_run_at TEXT
+    )
+  `).run();
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_enabled ON scheduled_tasks(enabled)").run();
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_wd ON scheduled_tasks(working_directory)").run();
+
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS task_runs (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      session_id TEXT,
+      status TEXT NOT NULL,
+      trigger_source TEXT NOT NULL,
+      scheduled_at INTEGER NOT NULL,
+      started_at INTEGER,
+      finished_at INTEGER,
+      error TEXT,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      cache_read_tokens INTEGER,
+      cache_creation_tokens INTEGER,
+      FOREIGN KEY (task_id) REFERENCES scheduled_tasks(id) ON DELETE CASCADE
+    )
+  `).run();
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_task_runs_task ON task_runs(task_id, scheduled_at DESC)").run();
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_task_runs_status ON task_runs(status)").run();
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_task_runs_session ON task_runs(session_id)").run();
 }
 
 // ==========================================
@@ -500,6 +562,16 @@ export function updateCodexThreadId(id: string, codexThreadId: string): void {
 export function updateSessionBackend(id: string, backend: 'claude' | 'codex'): void {
   const db = getDb();
   db.prepare('UPDATE chat_sessions SET backend = ? WHERE id = ?').run(backend, id);
+}
+
+export function updateSessionSource(
+  sessionId: string,
+  source: 'manual' | 'scheduled' | null,
+  scheduledTaskId: string | null,
+): void {
+  const db = getDb();
+  db.prepare("UPDATE chat_sessions SET source = ?, scheduled_task_id = ? WHERE id = ?")
+    .run(source, scheduledTaskId, sessionId);
 }
 
 export function updateSessionWorkingDirectory(id: string, workingDirectory: string): void {
