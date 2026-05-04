@@ -1,5 +1,5 @@
 "use client";
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -8,6 +8,10 @@ import type { CreateTaskInput, TriggerSpec } from '@/lib/scheduler/types';
 import {
   DEFAULT_MAX_TURNS, DEFAULT_TOOL_TIMEOUT_SECONDS, DEFAULT_WALL_CLOCK_TIMEOUT_SECONDS,
 } from '@/lib/scheduler/types';
+import {
+  fetchModelCatalog, getEffortOptionsForModel, getDefaultEffortForModel,
+  type ModelCatalog,
+} from '@/lib/model-selection';
 
 interface Props {
   initial?: Partial<CreateTaskInput>;
@@ -22,6 +26,8 @@ export function TaskForm({ initial = {}, onSubmit, onCancel, submitLabel = 'Save
   const [workingDirectory, setWorkingDirectory] = useState(initial.workingDirectory ?? '');
   const [backend, setBackend] = useState<'claude' | 'codex'>(initial.backend ?? 'claude');
   const [model, setModel] = useState(initial.model ?? '');
+  const [effort, setEffort] = useState(initial.effort ?? '');
+  const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [trigger, setTrigger] = useState<TriggerSpec>(
     (initial.trigger as TriggerSpec) ?? { kind: 'cron', cron: '0 9 * * *', timezone: 'UTC' },
   );
@@ -34,12 +40,44 @@ export function TaskForm({ initial = {}, onSubmit, onCancel, submitLabel = 'Save
   const [enabled, setEnabled] = useState(initial.enabled ?? true);
   const [submitting, setSubmitting] = useState(false);
 
+  useEffect(() => {
+    let cancelled = false;
+    void fetchModelCatalog().then((c) => { if (!cancelled) setCatalog(c); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const backendModels = useMemo(
+    () => (catalog?.models ?? []).filter(m => m.group === backend),
+    [catalog, backend],
+  );
+
+  const effortOptions = useMemo(() => {
+    if (!catalog || !model) return [];
+    return getEffortOptionsForModel(model, catalog.claudeEffortInfo, catalog.codexModelInfo);
+  }, [catalog, model]);
+
+  // When model changes, reset effort to that model's default (or clear if unsupported).
+  useEffect(() => {
+    if (!catalog || !model) return;
+    const opts = getEffortOptionsForModel(model, catalog.claudeEffortInfo, catalog.codexModelInfo);
+    if (opts.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (effort !== '') setEffort('');
+      return;
+    }
+    if (!opts.some(o => o.value === effort)) {
+      const def = getDefaultEffortForModel(model, catalog.claudeEffortInfo, catalog.codexModelInfo) ?? opts[0]?.value ?? '';
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setEffort(def);
+    }
+  }, [model, catalog, effort]);
+
   async function handleSubmit() {
     setSubmitting(true);
     try {
       await onSubmit({
         name, description: description || null, workingDirectory, backend,
-        model: model || null, effort: null, mode: 'acceptEdits',
+        model: model || null, effort: effort || null, mode: 'acceptEdits',
         trigger, prompt, systemPrompt: systemPrompt || null,
         skipPermissions, maxTurns, toolTimeoutSeconds, wallClockTimeoutSeconds, enabled,
       });
@@ -66,8 +104,31 @@ export function TaskForm({ initial = {}, onSubmit, onCancel, submitLabel = 'Save
         </select>
       </Field>
       <Field label="Model (optional, defaults to backend default)">
-        <Input value={model} onChange={e => setModel(e.target.value)} />
+        <select
+          className="border rounded px-2 py-1 w-full max-w-md"
+          value={model}
+          onChange={e => setModel(e.target.value)}
+          disabled={!catalog}
+        >
+          <option value="">(backend default)</option>
+          {backendModels.map(m => (
+            <option key={m.value} value={m.value}>{m.label}</option>
+          ))}
+        </select>
       </Field>
+      {effortOptions.length > 0 && (
+        <Field label="Reasoning effort">
+          <select
+            className="border rounded px-2 py-1 w-full max-w-md"
+            value={effort}
+            onChange={e => setEffort(e.target.value)}
+          >
+            {effortOptions.map(o => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </Field>
+      )}
 
       <Field label="Trigger">
         <select className="border rounded px-2 py-1" value={trigger.kind} onChange={e => {
