@@ -13,6 +13,7 @@ import {
   Sun02Icon,
   StructureFolderIcon,
   ComputerTerminal01Icon,
+  Clock01Icon,
 } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
 import { usePanel } from "@/hooks/usePanel";
@@ -26,6 +27,7 @@ const navItems = [
   { href: "/chat", label: "Chats", icon: Message02Icon },
   { href: "/extensions", label: "Extensions", icon: GridIcon },
   { href: "/terminal", label: "Terminal", icon: ComputerTerminal01Icon },
+  { href: "/scheduler", label: "Scheduler", icon: Clock01Icon },
   { href: "/settings", label: "Settings", icon: Settings02Icon },
 ] as const;
 
