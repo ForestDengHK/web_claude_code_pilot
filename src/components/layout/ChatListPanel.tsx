@@ -8,6 +8,7 @@ import {
   Delete02Icon,
   Search01Icon,
   Notification02Icon,
+  Clock01Icon,
   FileImportIcon,
   Folder01Icon,
   ArrowDown01Icon,
@@ -760,6 +761,12 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                                         className="h-2.5 w-2.5 text-amber-500"
                                       />
                                     </span>
+                                  )}
+                                  {session.source === 'scheduled' && (
+                                    <HugeiconsIcon
+                                      icon={Clock01Icon}
+                                      className="h-3 w-3 shrink-0 text-muted-foreground"
+                                    />
                                   )}
                                   <div className="flex-1 min-w-0">
                                     <span className="line-clamp-1 text-[12px] font-medium leading-tight break-all">

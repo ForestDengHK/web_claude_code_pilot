@@ -12,6 +12,7 @@ import {
   Moon02Icon,
   Sun02Icon,
   ComputerTerminal01Icon,
+  Clock01Icon,
 } from "@hugeicons/core-free-icons";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,6 +31,7 @@ const navItems = [
   { href: "/chat", label: "Chats", icon: Message02Icon },
   { href: "/extensions", label: "Extensions", icon: GridIcon },
   { href: "/terminal", label: "Terminal", icon: ComputerTerminal01Icon },
+  { href: "/scheduler", label: "Scheduled tasks", icon: Clock01Icon },
   { href: "/settings", label: "Settings", icon: Settings02Icon },
 ] as const;
 

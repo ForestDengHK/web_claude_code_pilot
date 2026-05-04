@@ -1458,6 +1458,15 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
 
   const handleCommand = useCallback(async (command: string, arg?: string) => {
     switch (command) {
+      case '/schedule': {
+        const text = (arg ?? '').trim();
+        const url = new URL('/scheduler/new', window.location.origin);
+        if (text) url.searchParams.set('text', text);
+        if (sessionId) url.searchParams.set('sessionId', sessionId);
+        url.searchParams.set('from', 'chat');
+        window.open(url.toString(), '_blank', 'noopener');
+        return;
+      }
       case '/img': {
         const path = arg?.trim();
         const content = path

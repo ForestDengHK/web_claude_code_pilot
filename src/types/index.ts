@@ -38,6 +38,8 @@ export interface ChatSession {
   memory_enabled?: number | null; // NULL = use global default, 0 = off, 1 = on
   memory_injected_at?: string | null;
   view_mode?: string | null; // 'verbose' | 'normal' | 'summary', NULL = 'normal'
+  source?: string | null; // e.g. 'scheduled' for sessions spawned by the scheduler
+  scheduled_task_id?: string | null;
 }
 
 // ==========================================

@@ -27,6 +27,7 @@ import {
   Loading02Icon,
   Image01Icon,
   Target02Icon,
+  Clock01Icon,
 } from "@hugeicons/core-free-icons";
 import { cn } from '@/lib/utils';
 import {
@@ -142,6 +143,7 @@ const BUILT_IN_COMMANDS: PopoverItem[] = [
   { label: 'memory', value: '/memory', description: 'Edit project memory file', builtIn: true, icon: BrainIcon },
   { label: 'img', value: '/img', description: 'Display an image inline (e.g. /img /tmp/cat.webp)', builtIn: true, immediate: true, acceptsArg: true, icon: Image01Icon },
   { label: 'goal', value: '/goal', description: 'Codex goal — `/goal <obj>` to start, `/goal` to view state, `/goal clear` to clear', builtIn: true, passthrough: true, icon: Target02Icon },
+  { label: 'schedule', value: '/schedule', description: 'Create a scheduled task — pass text or leave blank to use this conversation', builtIn: true, immediate: true, acceptsArg: true, icon: Clock01Icon },
 ];
 
 interface ModeOption {

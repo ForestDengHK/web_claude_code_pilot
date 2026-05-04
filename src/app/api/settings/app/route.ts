@@ -31,6 +31,8 @@ const ALLOWED_KEYS = [
   // Default-ON gate for the spawn_subagents in-process MCP tool.
   // Stored as 'false' when the user explicitly disables it; absence reads as enabled.
   'enable_spawn_subagents',
+  // Scheduler default values (max turns / timeouts) — JSON-encoded.
+  'scheduler_defaults',
 ];
 
 export async function GET() {

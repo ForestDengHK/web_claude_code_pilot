@@ -11,6 +11,7 @@ import {
   BrainIcon,
   Pulse02Icon,
   BridgeIcon,
+  Clock01Icon,
 } from "@hugeicons/core-free-icons";
 import { Plug01Icon } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
@@ -23,8 +24,9 @@ import { MemorySection } from "./MemorySection";
 import { ContextHealthSection } from "./ContextHealthSection";
 import BridgeSection from "@/components/bridge/BridgeSection";
 import TelegramBridgeSection from "@/components/bridge/TelegramBridgeSection";
+import { SchedulerDefaultsSection } from "./SchedulerDefaultsSection";
 
-type Section = "general" | "providers" | "cli" | "stt" | "notifications" | "memory" | "context-health" | "bridge";
+type Section = "general" | "providers" | "cli" | "stt" | "notifications" | "memory" | "context-health" | "bridge" | "scheduler";
 
 interface SidebarItem {
   id: Section;
@@ -40,6 +42,7 @@ const sidebarItems: SidebarItem[] = [
   { id: "stt", label: "Voice Input", icon: Mic01Icon },
   { id: "notifications", label: "Notifications", icon: Notification02Icon },
   { id: "bridge", label: "IM Bridge", icon: BridgeIcon },
+  { id: "scheduler", label: "Scheduler", icon: Clock01Icon },
   { id: "context-health", label: "Context Health", icon: Pulse02Icon },
 ];
 
@@ -128,6 +131,7 @@ export function SettingsLayout() {
               <TelegramBridgeSection />
             </div>
           )}
+          {activeSection === "scheduler" && <SchedulerDefaultsSection />}
           {activeSection === "context-health" && <ContextHealthSection />}
         </div>
       </div>

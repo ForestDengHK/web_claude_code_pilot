@@ -398,8 +398,16 @@ export default function NewChatPage() {
     [isStreaming, router, workingDir, mode, currentModel, setPendingApprovalSessionId, selectedBackend]
   );
 
-  const handleCommand = useCallback(async (command: string) => {
+  const handleCommand = useCallback(async (command: string, arg?: string) => {
     switch (command) {
+      case '/schedule': {
+        const text = (arg ?? '').trim();
+        const url = new URL('/scheduler/new', window.location.origin);
+        if (text) url.searchParams.set('text', text);
+        url.searchParams.set('from', 'chat');
+        window.open(url.toString(), '_blank', 'noopener');
+        return;
+      }
       case '/help': {
         const helpMessage: Message = {
           id: 'cmd-' + Date.now(),
