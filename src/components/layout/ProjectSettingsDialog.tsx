@@ -89,6 +89,11 @@ export function ProjectSettingsDialog({
       const stored: string[] = Array.isArray(data?.additionalDirectories) ? data.additionalDirectories : dirs;
       setDirs(stored);
       setOriginalDirs(stored);
+      // Notify the file tree (and any other listener) so it can refresh
+      // without requiring a full page reload.
+      window.dispatchEvent(new CustomEvent('project-settings-changed', {
+        detail: { workingDirectory, additionalDirectories: stored },
+      }));
       onOpenChange(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

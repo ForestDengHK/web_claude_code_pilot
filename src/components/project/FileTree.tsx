@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { usePanel } from "@/hooks/usePanel";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { RefreshIcon, Search01Icon, SourceCodeIcon, CodeIcon, File01Icon, CheckListIcon } from "@hugeicons/core-free-icons";
@@ -191,7 +191,12 @@ function RenderTreeNodes({ nodes, searchQuery }: { nodes: FileTreeNode[]; search
 }
 
 export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd, onFileRemove, onFilePreview }: FileTreeProps) {
-  const [tree, setTree] = useState<FileTreeNode[]>([]);
+  // Per-root tree storage. The cwd is always a root; additional roots come
+  // from project settings. Paths are absolute, so other state (gitStatus,
+  // expanded, attached, selected) can stay global without collisions.
+  const [treesByRoot, setTreesByRoot] = useState<Record<string, FileTreeNode[]>>({});
+  const [additionalDirectories, setAdditionalDirectories] = useState<string[]>([]);
+  const [collapsedRoots, setCollapsedRoots] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [gitBranch, setGitBranch] = useState<string | null>(null);
@@ -204,6 +209,37 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false);
+
+  // Roots in render order: primary cwd first, then additional dirs (deduped,
+  // and additional roots that are subpaths of cwd are dropped to avoid
+  // visual duplication).
+  const roots = useMemo<string[]>(() => {
+    const out: string[] = [];
+    if (workingDirectory) out.push(workingDirectory);
+    for (const d of additionalDirectories) {
+      if (!d) continue;
+      if (out.includes(d)) continue;
+      if (workingDirectory && (d === workingDirectory || d.startsWith(workingDirectory + '/'))) continue;
+      out.push(d);
+    }
+    return out;
+  }, [workingDirectory, additionalDirectories]);
+
+  // Pick the root that contains a given absolute path. Longest-match wins so
+  // a file inside a nested additional dir resolves to that dir, not the cwd.
+  const findBaseDirForPath = useCallback((absolutePath: string): string => {
+    let best = workingDirectory;
+    let bestLen = workingDirectory && absolutePath.startsWith(workingDirectory + '/') ? workingDirectory.length : -1;
+    for (const r of roots) {
+      if (absolutePath === r || absolutePath.startsWith(r + '/')) {
+        if (r.length > bestLen) {
+          best = r;
+          bestLen = r.length;
+        }
+      }
+    }
+    return best;
+  }, [workingDirectory, roots]);
 
   // Show/hide dotfiles (persisted per-browser, global across projects)
   const [showHidden, setShowHidden] = useState<boolean>(() => {
@@ -241,7 +277,10 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
   const { setDiffTarget } = usePanel();
 
   const handleDiff = useCallback((absolutePath: string) => {
-    const relative = absolutePath.startsWith(workingDirectory)
+    // Diff is anchored to the cwd's repo. Files under additional roots belong
+    // to other repos; emit the absolute path so the diff view can decide.
+    const inCwd = workingDirectory && absolutePath.startsWith(workingDirectory);
+    const relative = inCwd
       ? absolutePath.slice(workingDirectory.length).replace(/^\//, '')
       : absolutePath;
     setDiffTarget({ file: relative });
@@ -254,19 +293,23 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
   // Lazy-load children for directories that were truncated by depth limit
   const lazyLoadChildren = useCallback(async (dirPath: string) => {
     if (lazyLoadingRef.current.has(dirPath)) return; // already loading
+    const baseDir = findBaseDirForPath(dirPath);
+    if (!baseDir) return;
     lazyLoadingRef.current.add(dirPath);
     try {
       const hiddenParam = showHidden ? "&hidden=1" : "";
       const res = await fetch(
-        `/api/files?dir=${encodeURIComponent(dirPath)}&baseDir=${encodeURIComponent(workingDirectory)}&depth=3${hiddenParam}`
+        `/api/files?dir=${encodeURIComponent(dirPath)}&baseDir=${encodeURIComponent(baseDir)}&depth=3${hiddenParam}`
       );
       if (!res.ok) return;
       const data = await res.json();
       const children: FileTreeNode[] = data.tree || [];
       if (children.length === 0) return;
 
-      // Merge children into the tree
-      setTree(prev => {
+      // Merge children into the matching root's tree
+      setTreesByRoot(prev => {
+        const cur = prev[baseDir];
+        if (!cur) return prev;
         function mergeAt(nodes: FileTreeNode[]): FileTreeNode[] {
           return nodes.map(node => {
             if (node.path === dirPath && node.type === 'directory') {
@@ -278,7 +321,7 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
             return node;
           });
         }
-        return mergeAt(prev);
+        return { ...prev, [baseDir]: mergeAt(cur) };
       });
       // Update git status for new nodes
       setGitStatusMap(prev => {
@@ -295,10 +338,11 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
     } finally {
       lazyLoadingRef.current.delete(dirPath);
     }
-  }, [workingDirectory, showHidden]);
+  }, [findBaseDirForPath, showHidden]);
 
-  // Find empty directories in expanded set and lazy-load them
-  const lazyLoadEmptyDirs = useCallback((newExpanded: Set<string>, currentTree: FileTreeNode[]) => {
+  // Find empty directories in expanded set and lazy-load them. Searches all
+  // roots since the path could belong to any of them.
+  const lazyLoadEmptyDirs = useCallback((newExpanded: Set<string>, currentTrees: Record<string, FileTreeNode[]>) => {
     function findNode(nodes: FileTreeNode[], targetPath: string): FileTreeNode | null {
       for (const n of nodes) {
         if (n.path === targetPath) return n;
@@ -311,7 +355,11 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
     }
 
     for (const p of newExpanded) {
-      const node = findNode(currentTree, p);
+      let node: FileTreeNode | null = null;
+      for (const tree of Object.values(currentTrees)) {
+        node = findNode(tree, p);
+        if (node) break;
+      }
       if (node && node.type === 'directory' && node.children && node.children.length === 0) {
         lazyLoadChildren(p);
       }
@@ -321,16 +369,16 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
   // Handle expand change from tree toggle: update state + lazy load
   const handleExpandedChange = useCallback((newExpanded: Set<string>) => {
     setExpandedPaths(newExpanded);
-    lazyLoadEmptyDirs(newExpanded, tree);
-  }, [tree, lazyLoadEmptyDirs]);
+    lazyLoadEmptyDirs(newExpanded, treesByRoot);
+  }, [treesByRoot, lazyLoadEmptyDirs]);
 
   const fetchTree = useCallback(async () => {
     // Abort any in-flight request to prevent stale responses
     // from overwriting fresher data (race condition on directory switch)
     abortRef.current?.abort();
 
-    if (!workingDirectory) {
-      setTree([]);
+    if (roots.length === 0) {
+      setTreesByRoot({});
       setGitStatusMap(new Map());
       setGitBranch(null);
       setExpandedPaths(new Set());
@@ -343,27 +391,42 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
     setLoading(true);
     try {
       const hiddenParam = showHidden ? "&hidden=1" : "";
-      const res = await fetch(
-        `/api/files?dir=${encodeURIComponent(workingDirectory)}&baseDir=${encodeURIComponent(workingDirectory)}&depth=4${hiddenParam}`,
-        { signal: controller.signal }
+      // Fetch all roots in parallel.
+      const results = await Promise.all(
+        roots.map(async (root) => {
+          try {
+            const res = await fetch(
+              `/api/files?dir=${encodeURIComponent(root)}&baseDir=${encodeURIComponent(root)}&depth=4${hiddenParam}`,
+              { signal: controller.signal }
+            );
+            if (!res.ok) return { root, tree: [] as FileTreeNode[], gitBranch: null as string | null };
+            const data = await res.json();
+            return {
+              root,
+              tree: (data.tree || []) as FileTreeNode[],
+              gitBranch: typeof data.gitBranch === 'string' && data.gitBranch.length > 0 ? data.gitBranch : null,
+            };
+          } catch (e) {
+            if (e instanceof DOMException && e.name === 'AbortError') throw e;
+            return { root, tree: [] as FileTreeNode[], gitBranch: null as string | null };
+          }
+        })
       );
-      if (res.ok) {
-        const data = await res.json();
-        const newTree = data.tree || [];
-        setTree(newTree);
-        setGitStatusMap(buildGitStatusMap(newTree));
-        setGitBranch(typeof data.gitBranch === "string" && data.gitBranch.length > 0 ? data.gitBranch : null);
-        // Start collapsed on fresh load — user can expand as needed
-        setExpandedPaths(prev => prev.size === 0 ? new Set() : prev);
-      } else {
-        setTree([]);
-        setGitStatusMap(new Map());
-        setGitBranch(null);
+
+      const next: Record<string, FileTreeNode[]> = {};
+      const combinedGitMap = new Map<string, string>();
+      for (const { root, tree, gitBranch: rb } of results) {
+        next[root] = tree;
+        for (const [k, v] of buildGitStatusMap(tree)) combinedGitMap.set(k, v);
+        // Branch selector at the top reflects the primary cwd's branch only.
+        if (root === workingDirectory) setGitBranch(rb);
       }
+      setTreesByRoot(next);
+      setGitStatusMap(combinedGitMap);
+      setExpandedPaths(prev => prev.size === 0 ? new Set() : prev);
     } catch (e) {
-      // Silently ignore aborted requests
       if (e instanceof DOMException && e.name === "AbortError") return;
-      setTree([]);
+      setTreesByRoot({});
       setGitStatusMap(new Map());
       setGitBranch(null);
     } finally {
@@ -371,7 +434,7 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
         setLoading(false);
       }
     }
-  }, [workingDirectory, showHidden]);
+  }, [roots, workingDirectory, showHidden]);
 
   useEffect(() => {
     fetchTree();
@@ -384,6 +447,36 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
     return () => window.removeEventListener('refresh-file-tree', handler);
   }, [fetchTree]);
 
+  // Load project-level additional directories for the current cwd.
+  useEffect(() => {
+    if (!workingDirectory) {
+      setAdditionalDirectories([]);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/projects/settings?workingDirectory=${encodeURIComponent(workingDirectory)}`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (cancelled || !data) return;
+        const list: string[] = Array.isArray(data.additionalDirectories) ? data.additionalDirectories : [];
+        setAdditionalDirectories(list);
+      })
+      .catch(() => { /* keep current state on error */ });
+    return () => { cancelled = true; };
+  }, [workingDirectory]);
+
+  // Refresh additional dirs when ProjectSettingsDialog saves a change.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ workingDirectory: string; additionalDirectories: string[] }>).detail;
+      if (!detail) return;
+      if (detail.workingDirectory !== workingDirectory) return;
+      setAdditionalDirectories(Array.isArray(detail.additionalDirectories) ? detail.additionalDirectories : []);
+    };
+    window.addEventListener('project-settings-changed', handler);
+    return () => window.removeEventListener('project-settings-changed', handler);
+  }, [workingDirectory]);
+
   // Track attached file paths from chat input
   useEffect(() => {
     const handler = (e: Event) => {
@@ -395,11 +488,13 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
   }, []);
 
   const handleDeleteConfirm = useCallback(async () => {
-    if (!deleteTarget || !workingDirectory) return;
+    if (!deleteTarget) return;
+    const baseDir = findBaseDirForPath(deleteTarget);
+    if (!baseDir) return;
     setDeleting(true);
     try {
       const res = await fetch(
-        `/api/files?path=${encodeURIComponent(deleteTarget)}&baseDir=${encodeURIComponent(workingDirectory)}`,
+        `/api/files?path=${encodeURIComponent(deleteTarget)}&baseDir=${encodeURIComponent(baseDir)}`,
         { method: 'DELETE' }
       );
       if (res.ok) {
@@ -411,7 +506,7 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
       setDeleting(false);
       setDeleteTarget(null);
     }
-  }, [deleteTarget, workingDirectory, fetchTree]);
+  }, [deleteTarget, findBaseDirForPath, fetchTree]);
 
   // Collect all file/folder paths under a node (for folder selection)
   const collectAllPaths = useCallback((nodes: FileTreeNode[]): string[] => {
@@ -426,7 +521,7 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
     return paths;
   }, []);
 
-  // Find a node in the tree by path
+  // Find a node in a tree by path (recursive within one root's tree)
   const findNode = useCallback((nodes: FileTreeNode[], targetPath: string): FileTreeNode | null => {
     for (const n of nodes) {
       if (n.path === targetPath) return n;
@@ -438,11 +533,20 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
     return null;
   }, []);
 
+  // Find a node across all roots — paths are absolute so unique.
+  const findNodeAcrossRoots = useCallback((targetPath: string): FileTreeNode | null => {
+    for (const tree of Object.values(treesByRoot)) {
+      const found = findNode(tree, targetPath);
+      if (found) return found;
+    }
+    return null;
+  }, [treesByRoot, findNode]);
+
   // Toggle selection of a path (and all children if it's a folder)
   const handleToggleSelect = useCallback((targetPath: string) => {
     setSelectedPaths(prev => {
       const next = new Set(prev);
-      const node = findNode(tree, targetPath);
+      const node = findNodeAcrossRoots(targetPath);
       if (next.has(targetPath)) {
         // Deselect this path and all descendants
         next.delete(targetPath);
@@ -462,7 +566,7 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
       }
       return next;
     });
-  }, [tree, findNode, collectAllPaths]);
+  }, [findNodeAcrossRoots, collectAllPaths]);
 
   const exitSelectionMode = useCallback(() => {
     setSelectionMode(false);
@@ -471,15 +575,17 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
 
   // Batch delete: delete all selected paths sequentially
   const handleBatchDeleteConfirm = useCallback(async () => {
-    if (selectedPaths.size === 0 || !workingDirectory) return;
+    if (selectedPaths.size === 0) return;
     setDeleting(true);
     try {
       // Sort by path length descending so children are deleted before parents
       const sorted = [...selectedPaths].sort((a, b) => b.length - a.length);
       for (const p of sorted) {
+        const baseDir = findBaseDirForPath(p);
+        if (!baseDir) continue;
         try {
           await fetch(
-            `/api/files?path=${encodeURIComponent(p)}&baseDir=${encodeURIComponent(workingDirectory)}`,
+            `/api/files?path=${encodeURIComponent(p)}&baseDir=${encodeURIComponent(baseDir)}`,
             { method: 'DELETE' }
           );
         } catch {
@@ -492,7 +598,7 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
       setBatchDeleteConfirm(false);
       exitSelectionMode();
     }
-  }, [selectedPaths, workingDirectory, fetchTree, exitSelectionMode]);
+  }, [selectedPaths, findBaseDirForPath, fetchTree, exitSelectionMode]);
 
   // --- Folder operations ---
 
@@ -508,13 +614,15 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
   const handleFileInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     const targetDir = uploadTargetRef.current;
-    if (!files || files.length === 0 || !targetDir || !workingDirectory) return;
+    if (!files || files.length === 0 || !targetDir) return;
+    const baseDir = findBaseDirForPath(targetDir);
+    if (!baseDir) return;
 
     setUploading(true);
     try {
       const formData = new FormData();
       formData.append('targetDir', targetDir);
-      formData.append('baseDir', workingDirectory);
+      formData.append('baseDir', baseDir);
       for (let i = 0; i < files.length; i++) {
         formData.append('files', files[i]);
       }
@@ -564,7 +672,9 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
   }, []);
 
   const handleCreateFolderConfirm = useCallback(async () => {
-    if (!createFolderTarget || !workingDirectory) return;
+    if (!createFolderTarget) return;
+    const baseDir = findBaseDirForPath(createFolderTarget);
+    if (!baseDir) return;
 
     const trimmed = newFolderName.trim();
     if (!trimmed) {
@@ -587,7 +697,7 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
         body: JSON.stringify({
           parentDir: createFolderTarget,
           name: trimmed,
-          baseDir: workingDirectory,
+          baseDir,
         }),
       });
 
@@ -611,7 +721,7 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
     } finally {
       setCreating(false);
     }
-  }, [createFolderTarget, newFolderName, workingDirectory, fetchTree]);
+  }, [createFolderTarget, newFolderName, findBaseDirForPath, fetchTree]);
 
   // Get all directory paths in the tree for expand/collapse all
   const getAllDirectoryPaths = useCallback((nodes: FileTreeNode[]): string[] => {
@@ -626,6 +736,29 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
     }
     walk(nodes);
     return paths;
+  }, []);
+
+  // Across-roots variants for the global header buttons.
+  const getAllDirectoryPathsAcrossRoots = useCallback((): string[] => {
+    const out: string[] = [];
+    for (const tree of Object.values(treesByRoot)) {
+      out.push(...getAllDirectoryPaths(tree));
+    }
+    return out;
+  }, [treesByRoot, getAllDirectoryPaths]);
+
+  const totalNodes = useMemo(
+    () => Object.values(treesByRoot).reduce((sum, t) => sum + t.length, 0),
+    [treesByRoot]
+  );
+
+  const toggleRootCollapsed = useCallback((root: string) => {
+    setCollapsedRoots(prev => {
+      const next = new Set(prev);
+      if (next.has(root)) next.delete(root);
+      else next.add(root);
+      return next;
+    });
   }, []);
 
   return (
@@ -658,24 +791,27 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
             </div>
           )}
         </div>
-        {tree.length > 0 && (
+        {totalNodes > 0 && (
           <>
             {!selectionMode && (
               <button
                 className="text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors px-1.5 py-0.5 rounded shrink-0"
                 onClick={() => {
-                  const allDirs = getAllDirectoryPaths(tree);
-                  const allExpanded = allDirs.every(p => expandedPaths.has(p));
+                  const allDirs = getAllDirectoryPathsAcrossRoots();
+                  const allExpanded = allDirs.length > 0 && allDirs.every(p => expandedPaths.has(p));
                   if (allExpanded) {
                     setExpandedPaths(new Set());
                   } else {
                     const newExpanded = new Set(allDirs);
                     setExpandedPaths(newExpanded);
-                    lazyLoadEmptyDirs(newExpanded, tree);
+                    lazyLoadEmptyDirs(newExpanded, treesByRoot);
                   }
                 }}
               >
-                {tree.length > 0 && getAllDirectoryPaths(tree).every(p => expandedPaths.has(p)) ? 'Collapse' : 'Expand'}
+                {(() => {
+                  const allDirs = getAllDirectoryPathsAcrossRoots();
+                  return allDirs.length > 0 && allDirs.every(p => expandedPaths.has(p)) ? 'Collapse' : 'Expand';
+                })()}
               </button>
             )}
             <Button
@@ -747,49 +883,113 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
 
       {/* Tree */}
       <div className="flex-1 overflow-auto">
-        {loading && tree.length === 0 ? (
-          <div className="flex items-center justify-center py-8">
-            <HugeiconsIcon icon={RefreshIcon} className="h-4 w-4 animate-spin text-muted-foreground" />
-          </div>
-        ) : tree.length === 0 ? (
-          <p className="py-4 text-center text-xs text-muted-foreground">
-            {workingDirectory ? 'No files found' : 'Select a project folder to view files'}
-          </p>
-        ) : (
-          <AIFileTree
-            expanded={expandedPaths}
-            onExpandedChange={handleExpandedChange}
-            gitStatusMap={gitStatusMap}
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI Elements FileTree onSelect type conflicts with HTMLAttributes.onSelect
-            onSelect={onFileSelect as any}
-            onAdd={onFileAdd}
-            onRemove={onFileRemove}
-            attachedPaths={attachedPaths}
-            onPreview={onFilePreview ? (path: string) => {
-              const ext = path.split(".").pop()?.toLowerCase() || "";
-              if (PREVIEWABLE_EXTENSIONS.has(ext)) onFilePreview(path);
-            } : undefined}
-            onDownload={(filePath: string) => {
-              const url = `/api/files/raw?path=${encodeURIComponent(filePath)}&download=1`;
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = filePath.split("/").pop() || "file";
-              document.body.appendChild(a);
-              a.click();
-              a.remove();
-            }}
-            onDelete={(filePath: string) => setDeleteTarget(filePath)}
-            onDiff={handleDiff}
-            onUpload={handleUpload}
-            onCreateFolder={handleCreateFolder}
-            selectionMode={selectionMode}
-            selectedPaths={selectedPaths}
-            onToggleSelect={handleToggleSelect}
-            className="border-0 rounded-none"
-          >
-            <RenderTreeNodes nodes={tree} searchQuery={searchQuery} />
-          </AIFileTree>
-        )}
+        {(() => {
+          if (loading && totalNodes === 0) {
+            return (
+              <div className="flex items-center justify-center py-8">
+                <HugeiconsIcon icon={RefreshIcon} className="h-4 w-4 animate-spin text-muted-foreground" />
+              </div>
+            );
+          }
+          if (totalNodes === 0) {
+            return (
+              <p className="py-4 text-center text-xs text-muted-foreground">
+                {workingDirectory ? 'No files found' : 'Select a project folder to view files'}
+              </p>
+            );
+          }
+
+          const renderTree = (nodes: FileTreeNode[]) => (
+            <AIFileTree
+              expanded={expandedPaths}
+              onExpandedChange={handleExpandedChange}
+              gitStatusMap={gitStatusMap}
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AI Elements FileTree onSelect type conflicts with HTMLAttributes.onSelect
+              onSelect={onFileSelect as any}
+              onAdd={onFileAdd}
+              onRemove={onFileRemove}
+              attachedPaths={attachedPaths}
+              onPreview={onFilePreview ? (path: string) => {
+                const ext = path.split(".").pop()?.toLowerCase() || "";
+                if (PREVIEWABLE_EXTENSIONS.has(ext)) onFilePreview(path);
+              } : undefined}
+              onDownload={(filePath: string) => {
+                const url = `/api/files/raw?path=${encodeURIComponent(filePath)}&download=1`;
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = filePath.split("/").pop() || "file";
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+              }}
+              onDelete={(filePath: string) => setDeleteTarget(filePath)}
+              onDiff={handleDiff}
+              onUpload={handleUpload}
+              onCreateFolder={handleCreateFolder}
+              selectionMode={selectionMode}
+              selectedPaths={selectedPaths}
+              onToggleSelect={handleToggleSelect}
+              className="border-0 rounded-none"
+            >
+              <RenderTreeNodes nodes={nodes} searchQuery={searchQuery} />
+            </AIFileTree>
+          );
+
+          // Single-root: render exactly as before, no section header.
+          if (roots.length <= 1) {
+            return renderTree(treesByRoot[roots[0] ?? ''] || []);
+          }
+
+          // Multi-root: collapsible section per root, primary first.
+          return (
+            <div className="flex flex-col">
+              {roots.map((root) => {
+                const isPrimary = root === workingDirectory;
+                const collapsed = collapsedRoots.has(root);
+                const rootTree = treesByRoot[root] || [];
+                return (
+                  <div key={root} className="border-b last:border-b-0">
+                    <button
+                      type="button"
+                      onClick={() => toggleRootCollapsed(root)}
+                      className={cn(
+                        "flex w-full items-center gap-1.5 px-3 py-1.5 text-left",
+                        "hover:bg-accent/40 transition-colors"
+                      )}
+                      title={root}
+                    >
+                      <span
+                        className={cn(
+                          "inline-block w-3 text-[10px] text-muted-foreground transition-transform",
+                          collapsed ? "rotate-0" : "rotate-90"
+                        )}
+                      >
+                        ▶
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                        {getDirectoryLabel(root)}
+                      </span>
+                      {!isPrimary && (
+                        <span className="rounded border border-border/60 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
+                          linked
+                        </span>
+                      )}
+                    </button>
+                    {!collapsed && (
+                      rootTree.length === 0 ? (
+                        <p className="px-4 py-2 text-[11px] text-muted-foreground/70">
+                          {loading ? 'Loading…' : 'Empty'}
+                        </p>
+                      ) : (
+                        renderTree(rootTree)
+                      )
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Floating action bar for multi-select */}
@@ -824,14 +1024,14 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
         <AlertDialogContent size="sm">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-base">
-              {deleteTarget && findNode(tree, deleteTarget)?.type === 'directory'
+              {deleteTarget && findNodeAcrossRoots(deleteTarget)?.type === 'directory'
                 ? 'Delete folder'
                 : 'Delete file'}
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2">
                 <p>
-                  {deleteTarget && findNode(tree, deleteTarget)?.type === 'directory'
+                  {deleteTarget && findNodeAcrossRoots(deleteTarget)?.type === 'directory'
                     ? 'This will permanently delete the folder and all its contents:'
                     : 'This will permanently delete:'}
                 </p>
