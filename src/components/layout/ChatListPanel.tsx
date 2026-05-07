@@ -20,6 +20,7 @@ import {
   RefreshIcon,
   CleanIcon,
   MoreHorizontalIcon,
+  Settings02Icon,
 } from "@hugeicons/core-free-icons";
 import { AlertTriangle } from 'lucide-react';
 import { useGitSync } from '@/hooks/useGitSync';
@@ -41,6 +42,7 @@ import { cn } from "@/lib/utils";
 import { usePanel } from "@/hooks/usePanel";
 import { ImportSessionDialog } from "./ImportSessionDialog";
 import { FolderPicker } from "@/components/chat/FolderPicker";
+import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
 import type { ChatSession } from "@/types";
 
 interface ChatListPanelProps {
@@ -148,6 +150,10 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+  const [projectSettingsTarget, setProjectSettingsTarget] = useState<{
+    workingDirectory: string;
+    displayName: string;
+  } | null>(null);
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
     () => loadCollapsedProjects()
   );
@@ -704,6 +710,17 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
                                 <HugeiconsIcon icon={CleanIcon} className="h-3.5 w-3.5" />
                                 Organize
                               </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onSelect={() =>
+                                  setProjectSettingsTarget({
+                                    workingDirectory: group.workingDirectory,
+                                    displayName: group.displayName,
+                                  })
+                                }
+                              >
+                                <HugeiconsIcon icon={Settings02Icon} className="h-3.5 w-3.5" />
+                                Project settings
+                              </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
                         );
@@ -853,6 +870,18 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
         onOpenChange={setFolderPickerOpen}
         onSelect={handleFolderSelect}
       />
+
+      {/* Per-Project Settings Dialog */}
+      {projectSettingsTarget && (
+        <ProjectSettingsDialog
+          open={!!projectSettingsTarget}
+          onOpenChange={(next) => {
+            if (!next) setProjectSettingsTarget(null);
+          }}
+          workingDirectory={projectSettingsTarget.workingDirectory}
+          projectName={projectSettingsTarget.displayName}
+        />
+      )}
     </aside>
   );
 }

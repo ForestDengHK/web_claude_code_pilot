@@ -24,7 +24,7 @@ import path from 'path';
 import os from 'os';
 import { CodexProcessManager, type CodexProcess } from '@/lib/codex-process-manager';
 import { registerPendingCodexApproval } from '@/lib/codex-approval-registry';
-import { updateCodexThreadId, getSession } from '@/lib/db';
+import { updateCodexThreadId, getSession, getProjectAdditionalDirectories } from '@/lib/db';
 import { sendPushNotification } from './push-notifications';
 import type { AskForApproval } from '@/types/codex/AskForApproval';
 import type { SandboxMode } from '@/types/codex/v2/SandboxMode';
@@ -913,6 +913,21 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
             ? configuredSandboxWorkspaceWrite
             : null,
         );
+
+        // Project-level additional directories (set via Project Settings UI):
+        // for workspace-write sandbox these need to be writable so Codex can
+        // read AND write into linked projects, matching the Claude side.
+        // read-only / danger-full-access modes don't need this — both already
+        // grant full read access (and danger mode bypasses sandbox entirely).
+        if (desiredSandboxPolicy?.type === 'workspaceWrite') {
+          const projectAddlDirs = getProjectAdditionalDirectories(workingDirectory);
+          if (projectAddlDirs.length > 0) {
+            desiredSandboxPolicy.writableRoots = Array.from(new Set([
+              ...desiredSandboxPolicy.writableRoots,
+              ...projectAddlDirs,
+            ]));
+          }
+        }
 
         // 3. Build user inputs
         const userInputs = buildUserInputs(prompt, contextBridgePrompt, files, skills);

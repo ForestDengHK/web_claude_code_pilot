@@ -1145,6 +1145,57 @@ export function getRecentDirectories(limit = 5): string[] {
   return rows.map(r => r.working_directory);
 }
 
+// ==========================================
+// Project-level Additional Directories
+// ==========================================
+// Stored in settings table under key `project_additional_dirs` as a JSON
+// object: { [workingDirectory]: string[] }. Project identity is the cwd
+// path itself; sessions inherit by virtue of running in that cwd.
+
+const PROJECT_ADDL_DIRS_KEY = 'project_additional_dirs';
+
+function readAdditionalDirsMap(): Record<string, string[]> {
+  const db = getDb();
+  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(PROJECT_ADDL_DIRS_KEY) as { value: string } | undefined;
+  if (!row) return {};
+  try {
+    const parsed = JSON.parse(row.value);
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, string[]> : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeAdditionalDirsMap(map: Record<string, string[]>): void {
+  const db = getDb();
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(
+    PROJECT_ADDL_DIRS_KEY,
+    JSON.stringify(map),
+  );
+}
+
+export function getProjectAdditionalDirectories(workingDirectory: string): string[] {
+  if (!workingDirectory) return [];
+  const map = readAdditionalDirsMap();
+  const list = map[workingDirectory];
+  return Array.isArray(list) ? list.filter(p => typeof p === 'string' && p.length > 0) : [];
+}
+
+export function setProjectAdditionalDirectories(workingDirectory: string, dirs: string[]): string[] {
+  if (!workingDirectory) throw new Error('workingDirectory is required');
+  const map = readAdditionalDirsMap();
+  const cleaned = Array.from(new Set(
+    dirs.filter(p => typeof p === 'string' && p.length > 0)
+  ));
+  if (cleaned.length === 0) {
+    delete map[workingDirectory];
+  } else {
+    map[workingDirectory] = cleaned;
+  }
+  writeAdditionalDirsMap(map);
+  return cleaned;
+}
+
 // --- Push Subscriptions ---
 
 export function upsertPushSubscription(

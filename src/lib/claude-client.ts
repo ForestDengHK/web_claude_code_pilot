@@ -21,7 +21,7 @@ import type { ClaudeStreamOptions, SSEEvent, TokenUsage, MCPServerConfig, Permis
 import { registerPendingPermission } from './permission-registry';
 import { registerPendingInputRequest } from './input-request-registry';
 import { cacheRateLimit } from './rate-limit-cache';
-import { getSetting, getActiveProvider, getSession, updateSdkSessionId, getAllMessages } from './db';
+import { getSetting, getActiveProvider, getSession, updateSdkSessionId, getAllMessages, getProjectAdditionalDirectories } from './db';
 import { formatMessagesForContext } from './context-bridge';
 import { sendPushNotification } from './push-notifications';
 import { wasInterrupted } from './abort-registry';
@@ -776,6 +776,10 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // style references — Claude Code reads/explores them directly.
         let finalPrompt: string = prompt;
 
+        // Project-level additional directories always apply, even when the
+        // user's current message has no directory refs attached.
+        const projectAddlDirs = getProjectAdditionalDirectories(workingDirectory);
+
         if (files && files.length > 0) {
           const PATH_REF_TYPES = new Set(['text/x-directory-ref', 'text/x-file-ref']);
           const pathRefFiles = files.filter(f => PATH_REF_TYPES.has(f.type));
@@ -795,13 +799,15 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           }
 
           // Pass attached directories as additionalDirectories so Claude Code
-          // has permission to access paths outside the working directory
+          // has permission to access paths outside the working directory.
+          // Merge per-message directory refs with project-level additional dirs.
           const dirRefs = pathRefFiles
             .filter(f => f.type === 'text/x-directory-ref')
             .map(f => f.filePath || '')
             .filter(Boolean);
-          if (dirRefs.length > 0) {
-            queryOptions.additionalDirectories = dirRefs;
+          const mergedDirs = Array.from(new Set([...projectAddlDirs, ...dirRefs]));
+          if (mergedDirs.length > 0) {
+            queryOptions.additionalDirectories = mergedDirs;
           }
 
           // All uploaded files (images + documents): saved to disk for Read tool access.
@@ -817,6 +823,10 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           if (references.length > 0) {
             finalPrompt = `The user has attached the following files/directories for context. Use the Read tool to read files (including images) and the Glob/LS tools to explore directories:\n\n${references.join('\n')}\n\n${prompt}`;
           }
+        } else if (projectAddlDirs.length > 0) {
+          // No per-message attachments, but project has linked dirs — still
+          // grant the session access to them.
+          queryOptions.additionalDirectories = projectAddlDirs;
         }
 
         // Retry loop: if the first attempt fails due to stale thinking block
