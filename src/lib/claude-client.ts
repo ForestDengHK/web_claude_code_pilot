@@ -176,6 +176,48 @@ function getInstalledPlugins(): SdkPluginConfig[] {
         plugins.push({ type: 'local', path: installPath });
       }
     }
+
+    // Also load plugins installed via URL (codepilot-url-plugins.json).
+    // These already use a hash-named directory; we create a symlink so the
+    // SDK registers them under their declared plugin name.
+    try {
+      const urlRegistryPath = path.join(os.homedir(), '.claude', 'plugins', 'codepilot-url-plugins.json');
+      if (fs.existsSync(urlRegistryPath)) {
+        const urlReg = JSON.parse(fs.readFileSync(urlRegistryPath, 'utf-8')) as {
+          plugins?: Array<{ name?: string; installPath?: string }>;
+        };
+        for (const entry of urlReg.plugins || []) {
+          if (!entry.installPath || !entry.name || !fs.existsSync(entry.installPath)) continue;
+
+          if (path.basename(entry.installPath) === entry.name) {
+            plugins.push({ type: 'local', path: entry.installPath });
+            continue;
+          }
+
+          if (!linksDirReady) {
+            if (!fs.existsSync(linksDir)) fs.mkdirSync(linksDir, { recursive: true });
+            linksDirReady = true;
+          }
+          const linkPath = path.join(linksDir, entry.name);
+          try {
+            if (fs.existsSync(linkPath) || fs.lstatSync(linkPath).isSymbolicLink()) {
+              const target = fs.readlinkSync(linkPath);
+              if (target !== entry.installPath) {
+                fs.unlinkSync(linkPath);
+                fs.symlinkSync(entry.installPath, linkPath);
+              }
+            }
+          } catch {
+            try { fs.symlinkSync(entry.installPath, linkPath); } catch { /* ignore */ }
+          }
+          plugins.push({
+            type: 'local',
+            path: fs.existsSync(linkPath) ? linkPath : entry.installPath,
+          });
+        }
+      }
+    } catch { /* ignore URL plugin load errors */ }
+
     return plugins;
   } catch {
     return [];

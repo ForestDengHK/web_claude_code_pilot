@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 import { Badge } from "@/components/ui/badge";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -22,8 +23,10 @@ import {
   ClockIcon,
   FileImportIcon,
   MessageAddIcon,
+  CloudUploadIcon,
 } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
+import { UploadSessionsPanel } from "./UploadSessionsPanel";
 
 interface ClaudeSessionInfo {
   sessionId: string;
@@ -77,6 +80,7 @@ export function ImportSessionDialog({
   const [importing, setImporting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [tab, setTab] = useState<"browse" | "upload">("browse");
 
   const fetchSessions = useCallback(async () => {
     setLoading(true);
@@ -157,7 +161,7 @@ export function ImportSessionDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl max-h-[80vh] !flex flex-col overflow-hidden">
+      <DialogContent className="sm:max-w-2xl max-h-[85vh] max-w-[calc(100%-1rem)] !flex flex-col overflow-hidden p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <HugeiconsIcon
@@ -172,29 +176,53 @@ export function ImportSessionDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Search */}
-        <div className="relative">
-          <HugeiconsIcon
-            icon={Search01Icon}
-            className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
-          />
-          <Input
-            placeholder="Search by project, message, or branch..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-8 text-sm"
-          />
-        </div>
+        <Tabs
+          value={tab}
+          onValueChange={(v) => setTab(v as "browse" | "upload")}
+          className="flex-1 min-w-0 min-h-0 !flex flex-col gap-3"
+        >
+          {/*
+            h-9 + shrink-0 are explicit because: when this dialog is tall and
+            the inner content (session list) is long, flex children can shrink
+            past their min content size on some mobile browsers, collapsing the
+            tab row's height and clipping the labels (we hit this on Android
+            Chrome — agent-browser/desktop didn't reproduce).
+          */}
+          <TabsList variant="line" className="w-full h-9 shrink-0 flex">
+            <TabsTrigger value="browse" className="flex-1 min-w-0">
+              <HugeiconsIcon icon={FolderOpenIcon} className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">On this server</span>
+            </TabsTrigger>
+            <TabsTrigger value="upload" className="flex-1 min-w-0">
+              <HugeiconsIcon icon={CloudUploadIcon} className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">Upload</span>
+            </TabsTrigger>
+          </TabsList>
 
-        {/* Error */}
-        {error && (
-          <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {error}
-          </div>
-        )}
+          <TabsContent value="browse" className="flex-1 min-h-0 !flex flex-col gap-3">
+            {/* Search */}
+            <div className="relative">
+              <HugeiconsIcon
+                icon={Search01Icon}
+                className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+              />
+              <Input
+                placeholder="Search by project, message, or branch..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-8 text-sm"
+              />
+            </div>
 
-        {/* Session List */}
-        <div className="flex-1 min-h-0 overflow-y-auto -mx-6 px-6">
+            {/* Error */}
+            {error && (
+              <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {error}
+              </div>
+            )}
+
+            {/* Session List */}
+            <div className="flex-1 min-h-0 overflow-y-auto -mx-6 px-6">
           <div className="flex flex-col gap-2 pb-2">
             {loading ? (
               <div className="flex items-center justify-center py-12">
@@ -335,6 +363,12 @@ export function ImportSessionDialog({
             )}
           </div>
         </div>
+          </TabsContent>
+
+          <TabsContent value="upload" className="flex-1 min-h-0 !flex flex-col">
+            <UploadSessionsPanel onClose={() => onOpenChange(false)} />
+          </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
   );

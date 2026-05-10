@@ -882,7 +882,7 @@ export function clearSessionMessages(sessionId: string): void {
   db.prepare('UPDATE chat_sessions SET sdk_session_id = ? WHERE id = ?').run('', sessionId);
 }
 
-export function searchMessages(query: string, limit = 50): { results: Array<{
+type SearchRow = {
   message_id: string;
   session_id: string;
   session_title: string;
@@ -891,11 +891,61 @@ export function searchMessages(query: string, limit = 50): { results: Array<{
   role: string;
   snippet: string;
   created_at: string;
-}>; total: number } {
+};
+
+function buildLikeSnippet(content: string, term: string): string {
+  const idx = content.toLowerCase().indexOf(term.toLowerCase());
+  if (idx < 0) return content.slice(0, 80);
+  const start = Math.max(0, idx - 40);
+  const end = Math.min(content.length, idx + term.length + 40);
+  const escape = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const before = escape(content.slice(start, idx));
+  const match = escape(content.slice(idx, idx + term.length));
+  const after = escape(content.slice(idx + term.length, end));
+  const prefix = start > 0 ? '...' : '';
+  const suffix = end < content.length ? '...' : '';
+  return `${prefix}${before}<mark>${match}</mark>${after}${suffix}`;
+}
+
+export function searchMessages(query: string, limit = 50): { results: SearchRow[]; total: number } {
   const db = getDb();
 
   const safeTerm = query.replace(/['"]/g, '').trim();
   if (!safeTerm) return { results: [], total: 0 };
+
+  // For URL-like queries (containing `://` or `/`), FTS5's default tokenizer
+  // splits on punctuation and breaks PR URL phrase matching. Fall back to a
+  // direct LIKE substring search on `messages.content` so pasting a PR URL
+  // matches the exact string in any transcript.
+  const isUrlLike = /:\/\//.test(safeTerm) || safeTerm.includes('/');
+
+  if (isUrlLike) {
+    try {
+      const likePattern = `%${safeTerm.replace(/[%_]/g, c => `\\${c}`)}%`;
+      const rows = db.prepare(`
+        SELECT m.id as message_id, m.session_id, m.role, m.created_at, m.content,
+               s.title as session_title, s.project_name, s.working_directory
+        FROM messages m
+        JOIN chat_sessions s ON m.session_id = s.id
+        WHERE m.content LIKE ? ESCAPE '\\'
+        ORDER BY m.created_at DESC
+        LIMIT ?
+      `).all(likePattern, limit) as Array<Omit<SearchRow, 'snippet'> & { content: string }>;
+
+      const countRow = db.prepare(`
+        SELECT COUNT(*) as total FROM messages WHERE content LIKE ? ESCAPE '\\'
+      `).get(likePattern) as { total: number };
+
+      const results: SearchRow[] = rows.map(({ content, ...rest }) => ({
+        ...rest,
+        snippet: buildLikeSnippet(content, safeTerm),
+      }));
+      return { results, total: countRow.total };
+    } catch {
+      return { results: [], total: 0 };
+    }
+  }
 
   // Use prefix matching for better UX
   const ftsQuery = safeTerm.split(/\s+/).map(t => `"${t}"*`).join(' ');
@@ -911,16 +961,7 @@ export function searchMessages(query: string, limit = 50): { results: Array<{
       WHERE messages_fts MATCH ?
       ORDER BY rank
       LIMIT ?
-    `).all(ftsQuery, limit) as Array<{
-      message_id: string;
-      session_id: string;
-      session_title: string;
-      project_name: string;
-      working_directory: string;
-      role: string;
-      snippet: string;
-      created_at: string;
-    }>;
+    `).all(ftsQuery, limit) as SearchRow[];
 
     const countRow = db.prepare(`
       SELECT COUNT(*) as total

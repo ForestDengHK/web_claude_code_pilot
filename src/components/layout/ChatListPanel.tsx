@@ -43,6 +43,7 @@ import { usePanel } from "@/hooks/usePanel";
 import { ImportSessionDialog } from "./ImportSessionDialog";
 import { FolderPicker } from "@/components/chat/FolderPicker";
 import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
+import { parsePrUrl } from "@/lib/pr-url";
 import type { ChatSession } from "@/types";
 
 interface ChatListPanelProps {
@@ -378,6 +379,7 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
   }, [searchQuery, searchTab, searchContent]);
 
   const isSearching = searchQuery.length > 0;
+  const detectedPr = useMemo(() => parsePrUrl(searchQuery), [searchQuery]);
 
   const filteredSessions = searchQuery
     ? sessions.filter(
@@ -400,7 +402,7 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
       data-mobile-overlay=""
       className={cn(
         "flex flex-col overflow-hidden bg-sidebar",
-        "fixed inset-0 z-50",
+        "fixed inset-x-0 top-0 bottom-14 z-50",
         "md:static md:inset-auto md:z-auto md:h-full md:shrink-0"
       )}
       style={{ width: width ?? 240 }}
@@ -484,15 +486,25 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
             className="absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground"
           />
           <Input
-            placeholder="Search threads..."
+            placeholder="Search threads or paste a PR URL..."
             value={searchQuery}
             onChange={(e) => {
-              setSearchQuery(e.target.value);
-              if (!e.target.value.trim()) setSearchTab('sessions');
+              const next = e.target.value;
+              setSearchQuery(next);
+              if (!next.trim()) {
+                setSearchTab('sessions');
+              } else if (parsePrUrl(next)) {
+                setSearchTab('content');
+              }
             }}
             className="h-8 pl-7 text-xs"
           />
         </div>
+        {detectedPr && (
+          <p className="mt-1 px-1 text-[10px] text-muted-foreground/80">
+            Searching threads referencing PR #{detectedPr.number} in {detectedPr.owner}/{detectedPr.repo}
+          </p>
+        )}
         {searchQuery.trim() && (
           <div className="flex mt-1.5 gap-1">
             <button

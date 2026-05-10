@@ -166,6 +166,108 @@ describe('claude-session-parser', () => {
     });
   });
 
+  describe('encodeProjectPath', () => {
+    it('should encode a simple Unix path', () => {
+      assert.equal(parser.encodeProjectPath('/root/myproject'), '-root-myproject');
+    });
+
+    it('should encode a deeper Unix path', () => {
+      assert.equal(
+        parser.encodeProjectPath('/Users/john/projects/myapp'),
+        '-Users-john-projects-myapp',
+      );
+    });
+
+    it('should encode a Windows path with backslashes', () => {
+      assert.equal(
+        parser.encodeProjectPath('C:\\Users\\foo\\projects\\myapp'),
+        'C-Users-foo-projects-myapp',
+      );
+    });
+
+    it('should encode a Windows path with forward slashes', () => {
+      assert.equal(
+        parser.encodeProjectPath('D:/work/repo'),
+        'D-work-repo',
+      );
+    });
+
+    it('should round-trip Unix paths through decode/encode', () => {
+      const original = '/Users/party/working/CodePilot';
+      assert.equal(parser.decodeProjectPath(parser.encodeProjectPath(original)), original);
+    });
+
+    it('should round-trip Windows paths through decode/encode', () => {
+      const original = 'C:\\Users\\foo\\code';
+      assert.equal(parser.decodeProjectPath(parser.encodeProjectPath(original)), original);
+    });
+  });
+
+  describe('extractSessionInfoFromContent', () => {
+    it('should parse JSONL content from string (no fs)', () => {
+      const sessionId = 'pure-content-001';
+      const userEntry = makeUserEntry({
+        sessionId,
+        content: 'Hello from a string',
+        cwd: '/tmp/strproject',
+        gitBranch: 'main',
+        version: '2.1.34',
+      });
+      const content = [
+        JSON.stringify(makeQueueEntry(sessionId)),
+        JSON.stringify(userEntry),
+        JSON.stringify(makeAssistantEntry({
+          sessionId,
+          content: [{ type: 'text', text: 'Hi back!' }],
+          parentUuid: userEntry.uuid,
+        })),
+      ].join('\n');
+
+      const info = parser.extractSessionInfoFromContent(content, sessionId, '/tmp/strproject', {
+        fileSize: content.length,
+        mtimeMs: Date.now(),
+      });
+
+      assert.ok(info, 'Should extract info from content');
+      assert.equal(info!.sessionId, sessionId);
+      assert.equal(info!.cwd, '/tmp/strproject');
+      assert.equal(info!.projectName, 'strproject');
+      assert.equal(info!.userMessageCount, 1);
+      assert.equal(info!.assistantMessageCount, 1);
+      assert.equal(info!.preview, 'Hello from a string');
+    });
+
+    it('should return null for content with only queue entries', () => {
+      const sessionId = 'empty-content-001';
+      const content = JSON.stringify(makeQueueEntry(sessionId));
+      const info = parser.extractSessionInfoFromContent(content, sessionId, '/tmp/x', {
+        fileSize: content.length,
+        mtimeMs: Date.now(),
+      });
+      assert.equal(info, null);
+    });
+
+    it('should derive isActive from mtimeMs vs threshold', () => {
+      const sessionId = 'active-test-001';
+      const content = [
+        JSON.stringify(makeQueueEntry(sessionId)),
+        JSON.stringify(makeUserEntry({ sessionId, content: 'msg', cwd: '/tmp/p' })),
+      ].join('\n');
+
+      const fresh = parser.extractSessionInfoFromContent(content, sessionId, '/tmp/p', {
+        fileSize: content.length,
+        mtimeMs: Date.now() - 1000,
+      }, 60_000);
+      assert.equal(fresh?.isActive, true);
+
+      const stale = parser.extractSessionInfoFromContent(content, sessionId, '/tmp/p', {
+        fileSize: content.length,
+        mtimeMs: Date.now() - 120_000,
+      }, 60_000);
+      assert.equal(stale?.isActive, false);
+    });
+  });
+
   describe('getClaudeProjectsDir', () => {
     it('should return path under HOME/.claude/projects', () => {
       const dir = parser.getClaudeProjectsDir();

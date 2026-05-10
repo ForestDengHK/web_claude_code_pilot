@@ -1,139 +1,45 @@
 /**
- * Parser for Claude Code CLI session files (.jsonl).
+ * Server-side parser for Claude Code CLI session files (.jsonl).
  *
  * Claude Code stores conversation history as JSONL files in:
  *   ~/.claude/projects/<encoded-project-path>/<session-uuid>.jsonl
  *
- * Each line is a JSON object with a `type` field:
- *   - "queue-operation": session lifecycle events (dequeue/enqueue)
- *   - "user": user messages with metadata (cwd, git branch, etc.)
- *   - "assistant": assistant responses with structured content blocks
- *
- * Messages are threaded via parentUuid → uuid chains.
+ * Pure parsing logic + types live in `claude-session-shared.ts` so they can
+ * also be used in the browser. This file adds the fs-backed entry points
+ * (listClaudeSessions, parseClaudeSession, getClaudeProjectsDir) that walk
+ * the on-disk projects directory.
  */
 
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import type { MessageContentBlock } from '@/types';
+
+import { MAX_SESSION_FILE_SIZE as MAX_FILE_SIZE } from '@/lib/config';
+import {
+  decodeProjectPath,
+  parseLinesIntoSession,
+  DEFAULT_ACTIVE_THRESHOLD_MS,
+  type ClaudeSessionInfo,
+  type ParsedSession,
+} from '@/lib/claude-session-shared';
+
+// Re-export everything pure for callers who already import from this file.
+export {
+  decodeProjectPath,
+  encodeProjectPath,
+  parseLinesIntoSession,
+  extractSessionInfoFromContent,
+  parseSessionFromContent,
+  DEFAULT_ACTIVE_THRESHOLD_MS,
+} from '@/lib/claude-session-shared';
+export type {
+  ClaudeSessionInfo,
+  ParsedMessage,
+  ParsedSession,
+} from '@/lib/claude-session-shared';
 
 // ==========================================
-// Constants
-// ==========================================
-
-import { MAX_SESSION_FILE_SIZE as MAX_FILE_SIZE, SESSION_ACTIVE_THRESHOLD_MS } from '@/lib/config';
-
-/** Default threshold (ms) for considering a session "active" based on file modification time. */
-const DEFAULT_ACTIVE_THRESHOLD_MS = SESSION_ACTIVE_THRESHOLD_MS;
-
-// ==========================================
-// Types for Claude Code JSONL entries
-// ==========================================
-
-export interface ClaudeSessionInfo {
-  /** Session UUID (filename without .jsonl) */
-  sessionId: string;
-  /** Decoded project directory path (best-effort from folder name) */
-  projectPath: string;
-  /** Project folder name */
-  projectName: string;
-  /** Working directory from the first user message (authoritative) */
-  cwd: string;
-  /** Git branch from the first user message */
-  gitBranch: string;
-  /** Claude Code version used */
-  version: string;
-  /** First user message preview (truncated) */
-  preview: string;
-  /** Number of user messages */
-  userMessageCount: number;
-  /** Number of assistant messages */
-  assistantMessageCount: number;
-  /** Session start timestamp */
-  createdAt: string;
-  /** Last message timestamp */
-  updatedAt: string;
-  /** File size in bytes */
-  fileSize: number;
-  /** Whether the session appears to be currently active (recently modified) */
-  isActive: boolean;
-}
-
-export interface ParsedMessage {
-  role: 'user' | 'assistant';
-  /** Plain text content for display */
-  content: string;
-  /** Structured content blocks (for assistant messages with tool usage) */
-  contentBlocks: MessageContentBlock[];
-  /** Whether this message contains tool calls */
-  hasToolBlocks: boolean;
-  /** Original timestamp from the JSONL entry */
-  timestamp: string;
-}
-
-export interface ParsedSession {
-  info: ClaudeSessionInfo;
-  messages: ParsedMessage[];
-}
-
-// Raw JSONL entry types
-interface JournalEntry {
-  type: string;
-  timestamp?: string;
-  sessionId?: string;
-  [key: string]: unknown;
-}
-
-interface UserEntry extends JournalEntry {
-  type: 'user';
-  parentUuid: string | null;
-  cwd: string;
-  sessionId: string;
-  version: string;
-  gitBranch: string;
-  message: {
-    role: 'user';
-    content: string | ContentBlock[];
-  };
-  uuid: string;
-  timestamp: string;
-}
-
-interface AssistantEntry extends JournalEntry {
-  type: 'assistant';
-  parentUuid: string;
-  cwd: string;
-  sessionId: string;
-  message: {
-    content: ContentBlock[];
-    id?: string;
-    model?: string;
-    role: 'assistant';
-    stop_reason?: string;
-    usage?: {
-      input_tokens: number;
-      output_tokens: number;
-      cache_read_input_tokens?: number;
-      cache_creation_input_tokens?: number;
-    };
-  };
-  uuid: string;
-  timestamp: string;
-}
-
-interface ContentBlock {
-  type: string;
-  text?: string;
-  id?: string;
-  name?: string;
-  input?: unknown;
-  tool_use_id?: string;
-  content?: string | ContentBlock[];
-  is_error?: boolean;
-}
-
-// ==========================================
-// Session Discovery
+// Session Discovery (fs-backed)
 // ==========================================
 
 /**
@@ -141,32 +47,6 @@ interface ContentBlock {
  */
 export function getClaudeProjectsDir(): string {
   return path.join(os.homedir(), '.claude', 'projects');
-}
-
-/**
- * Decode a Claude Code project directory name back to a filesystem path.
- *
- * Claude Code encodes absolute paths by replacing path separators with '-'.
- * Unix:    "/root/clawd"    → "-root-clawd"
- * Windows: "C:\Users\foo"   → "C-Users-foo"
- *
- * NOTE: This is lossy — directory names containing hyphens are ambiguous.
- * e.g., "-root-my-project" could be "/root/my-project" or "/root/my/project".
- * The `cwd` field inside JSONL entries is the authoritative working directory;
- * this function is only used as a fallback for display purposes.
- */
-export function decodeProjectPath(encodedName: string): string {
-  // Windows-style: starts with a drive letter followed by '-', e.g., "C-Users-foo"
-  if (/^[A-Za-z]-/.test(encodedName)) {
-    const drive = encodedName[0].toUpperCase();
-    const rest = encodedName.slice(1).replace(/-/g, '\\');
-    return `${drive}:${rest}`;
-  }
-  // Unix-style: starts with '-', e.g., "-root-clawd"
-  if (encodedName.startsWith('-')) {
-    return encodedName.replace(/^-/, '/').replace(/-/g, '/');
-  }
-  return encodedName;
 }
 
 /**
@@ -250,83 +130,15 @@ function extractSessionInfo(
   if (!result) return null;
   const { lines, stat } = result;
 
-  if (lines.length === 0) return null;
-
-  let cwd = '';
-  let gitBranch = '';
-  let version = '';
-  let preview = '';
-  let createdAt = '';
-  let updatedAt = '';
-  let userMessageCount = 0;
-  let assistantMessageCount = 0;
-
-  for (const line of lines) {
-    try {
-      const entry = JSON.parse(line) as JournalEntry;
-
-      if (entry.timestamp) {
-        if (!createdAt) createdAt = entry.timestamp as string;
-        updatedAt = entry.timestamp as string;
-      }
-
-      if (entry.type === 'user') {
-        const userEntry = entry as UserEntry;
-        userMessageCount++;
-
-        if (!cwd && userEntry.cwd) cwd = userEntry.cwd;
-        if (!gitBranch && userEntry.gitBranch) gitBranch = userEntry.gitBranch;
-        if (!version && userEntry.version) version = userEntry.version;
-
-        if (!preview && userEntry.message?.content) {
-          const msgContent = userEntry.message.content;
-          if (typeof msgContent === 'string') {
-            preview = msgContent.slice(0, 120);
-          } else if (Array.isArray(msgContent)) {
-            const textBlock = msgContent.find(b => b.type === 'text');
-            if (textBlock?.text) {
-              preview = textBlock.text.slice(0, 120);
-            }
-          }
-        }
-      } else if (entry.type === 'assistant') {
-        assistantMessageCount++;
-      }
-    } catch {
-      // Skip malformed lines
-    }
-  }
-
-  // Skip empty sessions (only queue-operation entries, no actual messages)
-  if (userMessageCount === 0 && assistantMessageCount === 0) {
-    return null;
-  }
-
-  // Use cwd from JSONL (authoritative) for projectName; fall back to decoded folder name
-  const effectivePath = cwd || projectPath;
-
-  const isActive = (Date.now() - stat.mtimeMs) < activeThresholdMs;
-
-  return {
+  return parseLinesIntoSession(
+    lines,
     sessionId,
-    projectPath: effectivePath,
-    projectName: path.basename(effectivePath),
-    cwd: effectivePath,
-    gitBranch: gitBranch || '',
-    version: version || '',
-    preview: preview || '(no preview)',
-    userMessageCount,
-    assistantMessageCount,
-    createdAt: createdAt || stat.birthtime.toISOString(),
-    updatedAt: updatedAt || stat.mtime.toISOString(),
-    fileSize: stat.size,
-    isActive,
-  };
+    projectPath,
+    { fileSize: stat.size, mtimeMs: stat.mtimeMs, birthtimeMs: stat.birthtimeMs },
+    activeThresholdMs,
+    false,
+  )?.info ?? null;
 }
-
-// ==========================================
-// Session Parsing
-// ==========================================
 
 /**
  * Fully parse a Claude Code session JSONL file into messages.
@@ -364,183 +176,12 @@ export function parseClaudeSession(sessionId: string): ParsedSession | null {
   if (!result) return null;
   const { lines, stat } = result;
 
-  if (lines.length === 0) return null;
-
-  // Single pass: extract both metadata and messages
-  const messages: ParsedMessage[] = [];
-  let cwd = '';
-  let gitBranch = '';
-  let version = '';
-  let preview = '';
-  let createdAt = '';
-  let updatedAt = '';
-  let userMessageCount = 0;
-  let assistantMessageCount = 0;
-
-  for (const line of lines) {
-    try {
-      const entry = JSON.parse(line) as JournalEntry;
-
-      if (entry.timestamp) {
-        if (!createdAt) createdAt = entry.timestamp as string;
-        updatedAt = entry.timestamp as string;
-      }
-
-      if (entry.type === 'user') {
-        const userEntry = entry as UserEntry;
-        userMessageCount++;
-
-        if (!cwd && userEntry.cwd) cwd = userEntry.cwd;
-        if (!gitBranch && userEntry.gitBranch) gitBranch = userEntry.gitBranch;
-        if (!version && userEntry.version) version = userEntry.version;
-
-        if (!preview && userEntry.message?.content) {
-          const msgContent = userEntry.message.content;
-          if (typeof msgContent === 'string') {
-            preview = msgContent.slice(0, 120);
-          } else if (Array.isArray(msgContent)) {
-            const textBlock = msgContent.find(b => b.type === 'text');
-            if (textBlock?.text) {
-              preview = textBlock.text.slice(0, 120);
-            }
-          }
-        }
-
-        const parsed = parseUserMessage(userEntry);
-        if (parsed) messages.push(parsed);
-      } else if (entry.type === 'assistant') {
-        assistantMessageCount++;
-
-        const assistantEntry = entry as AssistantEntry;
-        const parsed = parseAssistantMessage(assistantEntry);
-        if (parsed) messages.push(parsed);
-      }
-    } catch {
-      // Skip malformed lines
-    }
-  }
-
-  // Skip empty sessions
-  if (userMessageCount === 0 && assistantMessageCount === 0) {
-    return null;
-  }
-
-  const effectivePath = cwd || projectPath;
-
-  const isActive = (Date.now() - stat.mtimeMs) < DEFAULT_ACTIVE_THRESHOLD_MS;
-
-  const info: ClaudeSessionInfo = {
+  return parseLinesIntoSession(
+    lines,
     sessionId,
-    projectPath: effectivePath,
-    projectName: path.basename(effectivePath),
-    cwd: effectivePath,
-    gitBranch: gitBranch || '',
-    version: version || '',
-    preview: preview || '(no preview)',
-    userMessageCount,
-    assistantMessageCount,
-    createdAt: createdAt || stat.birthtime.toISOString(),
-    updatedAt: updatedAt || stat.mtime.toISOString(),
-    fileSize: stat.size,
-    isActive,
-  };
-
-  return { info, messages };
-}
-
-/**
- * Parse a user message entry into a ParsedMessage.
- */
-function parseUserMessage(entry: UserEntry): ParsedMessage | null {
-  const msgContent = entry.message?.content;
-  if (!msgContent) return null;
-
-  let text: string;
-  if (typeof msgContent === 'string') {
-    text = msgContent;
-  } else if (Array.isArray(msgContent)) {
-    // User messages can have structured content (e.g., with images)
-    text = msgContent
-      .filter(b => b.type === 'text')
-      .map(b => b.text || '')
-      .join('\n');
-  } else {
-    return null;
-  }
-
-  if (!text.trim()) return null;
-
-  return {
-    role: 'user',
-    content: text,
-    contentBlocks: [{ type: 'text', text }],
-    hasToolBlocks: false,
-    timestamp: entry.timestamp || new Date().toISOString(),
-  };
-}
-
-/**
- * Parse an assistant message entry into a ParsedMessage.
- * Handles text, tool_use, and tool_result content blocks.
- */
-function parseAssistantMessage(entry: AssistantEntry): ParsedMessage | null {
-  const msgContent = entry.message?.content;
-  if (!msgContent || !Array.isArray(msgContent)) return null;
-
-  const contentBlocks: MessageContentBlock[] = [];
-  const textParts: string[] = [];
-  let hasToolBlocks = false;
-
-  for (const block of msgContent) {
-    switch (block.type) {
-      case 'text': {
-        if (block.text) {
-          contentBlocks.push({ type: 'text', text: block.text });
-          textParts.push(block.text);
-        }
-        break;
-      }
-      case 'tool_use': {
-        hasToolBlocks = true;
-        contentBlocks.push({
-          type: 'tool_use',
-          id: block.id || '',
-          name: block.name || '',
-          input: block.input,
-        });
-        break;
-      }
-      case 'tool_result': {
-        hasToolBlocks = true;
-        const resultContent = typeof block.content === 'string'
-          ? block.content
-          : Array.isArray(block.content)
-            ? block.content
-                .filter(c => c.type === 'text')
-                .map(c => c.text || '')
-                .join('\n')
-            : '';
-        contentBlocks.push({
-          type: 'tool_result',
-          tool_use_id: block.tool_use_id || '',
-          content: resultContent,
-          is_error: block.is_error || false,
-        });
-        break;
-      }
-    }
-  }
-
-  if (contentBlocks.length === 0) return null;
-
-  // Plain text content: join all text blocks
-  const plainText = textParts.join('\n');
-
-  return {
-    role: 'assistant',
-    content: plainText,
-    contentBlocks,
-    hasToolBlocks,
-    timestamp: entry.timestamp || new Date().toISOString(),
-  };
+    projectPath,
+    { fileSize: stat.size, mtimeMs: stat.mtimeMs, birthtimeMs: stat.birthtimeMs },
+    DEFAULT_ACTIVE_THRESHOLD_MS,
+    true,
+  );
 }

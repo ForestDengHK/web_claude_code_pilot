@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { findClaudeBinary } from '@/lib/platform';
+import { listUrlPlugins, installFromUrl } from '@/lib/url-plugins';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,10 +15,12 @@ const execFileAsync = promisify(execFile);
 const PLUGIN_CACHE_DIR = path.join(os.homedir(), '.claude', 'plugins', 'cache');
 
 interface PluginInfo {
-  name: string;       // e.g. "superpowers@claude-plugins-official"
+  name: string;       // e.g. "superpowers@claude-plugins-official" or just "<name>" for URL plugins
   version: string;
   scope: string;
   installPath?: string;
+  source?: 'marketplace' | 'url';
+  url?: string;
 }
 
 interface UpdateResult {
@@ -30,33 +33,48 @@ interface UpdateResult {
 }
 
 /**
- * Read installed plugins from ~/.claude/plugins/installed_plugins.json
+ * Read installed plugins from ~/.claude/plugins/installed_plugins.json plus
+ * URL-installed plugins from codepilot-url-plugins.json.
  */
 function getInstalledPlugins(): PluginInfo[] {
+  const plugins: PluginInfo[] = [];
+
   const installedPath = path.join(os.homedir(), '.claude', 'plugins', 'installed_plugins.json');
-  if (!fs.existsSync(installedPath)) return [];
-
-  try {
-    const data = JSON.parse(fs.readFileSync(installedPath, 'utf-8'));
-    if (!data.plugins || typeof data.plugins !== 'object') return [];
-
-    const plugins: PluginInfo[] = [];
-    for (const [key, entries] of Object.entries(data.plugins)) {
-      const entry = Array.isArray(entries) ? entries[0] : entries;
-      if (entry && typeof entry === 'object') {
-        const e = entry as Record<string, unknown>;
-        plugins.push({
-          name: key,
-          version: (e.version as string) || 'unknown',
-          scope: (e.scope as string) || 'user',
-          installPath: (e.installPath as string) || undefined,
-        });
+  if (fs.existsSync(installedPath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(installedPath, 'utf-8'));
+      if (data.plugins && typeof data.plugins === 'object') {
+        for (const [key, entries] of Object.entries(data.plugins)) {
+          const entry = Array.isArray(entries) ? entries[0] : entries;
+          if (entry && typeof entry === 'object') {
+            const e = entry as Record<string, unknown>;
+            plugins.push({
+              name: key,
+              version: (e.version as string) || 'unknown',
+              scope: (e.scope as string) || 'user',
+              installPath: (e.installPath as string) || undefined,
+              source: 'marketplace',
+            });
+          }
+        }
       }
+    } catch {
+      // ignore — fall through to URL plugins
     }
-    return plugins;
-  } catch {
-    return [];
   }
+
+  for (const entry of listUrlPlugins()) {
+    plugins.push({
+      name: entry.name,
+      version: entry.version,
+      scope: 'user',
+      installPath: entry.installPath,
+      source: 'url',
+      url: entry.url,
+    });
+  }
+
+  return plugins;
 }
 
 /**
@@ -178,6 +196,31 @@ export async function POST(request: NextRequest) {
   const results: UpdateResult[] = [];
 
   for (const plugin of toUpdate) {
+    if (plugin.source === 'url' && plugin.url) {
+      try {
+        const oldVersion = plugin.version;
+        const updated = await installFromUrl(plugin.url);
+        results.push({
+          name: plugin.name,
+          oldVersion,
+          newVersion: updated.version,
+          status: oldVersion !== updated.version ? 'updated' : 'up-to-date',
+          message: oldVersion !== updated.version
+            ? `Re-downloaded from URL (v${oldVersion} → v${updated.version})`
+            : 'Re-downloaded; same version',
+        });
+      } catch (error) {
+        results.push({
+          name: plugin.name,
+          oldVersion: plugin.version,
+          newVersion: null,
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Re-download failed',
+        });
+      }
+      continue;
+    }
+
     try {
       const { stdout, stderr } = await execFileAsync(claudePath, ['plugin', 'update', plugin.name], {
         timeout: 30000,
