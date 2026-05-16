@@ -9,11 +9,12 @@ process.env.CLAUDE_GUI_DATA_DIR = tmpDir;
 
 // Use require to avoid top-level await issues with CJS output
 /* eslint-disable @typescript-eslint/no-require-imports */
-const { getDb, createSession, getSession, updateChannelSessionId } = require('../../lib/db') as typeof import('../../lib/db');
+const { getDb, closeDb, createSession, getSession, updateChannelSessionId } = require('../../lib/db') as typeof import('../../lib/db');
 
 test('updateChannelSessionId persists and is readable', () => {
   getDb();
   // createSession takes positional args: title, model, systemPrompt, workingDirectory, mode, backend
+  // intentionally bypass the TS union — the DB column is untyped TEXT
   const s = createSession('ch', '', '', tmpDir, 'acceptEdits', 'channels' as 'claude');
   updateChannelSessionId(s.id, 'claude-uuid-1234');
   const reread = getSession(s.id);
@@ -21,6 +22,12 @@ test('updateChannelSessionId persists and is readable', () => {
 });
 
 test('backend column accepts the string "channels"', () => {
+  // intentionally bypass the TS union — the DB column is untyped TEXT
   const s = createSession('ch2', '', '', tmpDir, 'acceptEdits', 'channels' as 'claude');
   assert.equal(getSession(s.id)?.backend, 'channels');
+});
+
+test.after(() => {
+  closeDb();
+  fs.rmSync(tmpDir, { recursive: true, force: true });
 });

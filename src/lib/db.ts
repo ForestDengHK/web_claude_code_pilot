@@ -563,8 +563,8 @@ export function updateCodexThreadId(id: string, codexThreadId: string): void {
 }
 
 export function updateChannelSessionId(sessionId: string, channelSessionId: string): void {
-  getDb().prepare(`UPDATE chat_sessions SET channel_session_id = ? WHERE id = ?`)
-    .run(channelSessionId, sessionId);
+  const db = getDb();
+  db.prepare('UPDATE chat_sessions SET channel_session_id = ? WHERE id = ?').run(channelSessionId, sessionId);
 }
 
 export function updateSessionBackend(id: string, backend: 'claude' | 'codex'): void {
