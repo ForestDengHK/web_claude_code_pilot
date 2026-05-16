@@ -235,6 +235,9 @@ function migrateDb(db: Database.Database): void {
   if (!colNames.includes('codex_thread_id')) {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN codex_thread_id TEXT");
   }
+  if (!colNames.includes('channel_session_id')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN channel_session_id TEXT");
+  }
 
   // Context bridge: track which backend's context window ends where
   if (!colNames.includes('last_claude_bridged_msg_id')) {
@@ -557,6 +560,11 @@ export function updateSdkSessionId(id: string, sdkSessionId: string): void {
 export function updateCodexThreadId(id: string, codexThreadId: string): void {
   const db = getDb();
   db.prepare('UPDATE chat_sessions SET codex_thread_id = ? WHERE id = ?').run(codexThreadId, id);
+}
+
+export function updateChannelSessionId(sessionId: string, channelSessionId: string): void {
+  getDb().prepare(`UPDATE chat_sessions SET channel_session_id = ? WHERE id = ?`)
+    .run(channelSessionId, sessionId);
 }
 
 export function updateSessionBackend(id: string, backend: 'claude' | 'codex'): void {
