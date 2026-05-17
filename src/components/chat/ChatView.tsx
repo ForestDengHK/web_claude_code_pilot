@@ -102,7 +102,7 @@ interface ChatViewProps {
   initialHasMore?: boolean;
   modelName?: string;
   initialMode?: string;
-  backend?: 'claude' | 'codex';
+  backend?: 'claude' | 'codex' | 'channels';
   advisorModel?: string | null;
   branchSummary?: string | null;
   branchSourceSessionId?: string | null;
@@ -130,7 +130,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [mode, setMode] = useState(() =>
     normalizeModeForBackend(initialMode, backend || 'claude'),
   );
-  const [currentBackend, setCurrentBackendRaw] = useState<'claude' | 'codex'>(backend || 'claude');
+  const [currentBackend, setCurrentBackendRaw] = useState<'claude' | 'codex' | 'channels'>(backend || 'claude');
   const [currentModel, setCurrentModelRaw] = useState(modelName || '');
   const [currentEffort, setCurrentEffort] = useState<string | undefined>();
   const [currentAdvisorModel, setCurrentAdvisorModelRaw] = useState<string | null>(advisorModel || null);
@@ -390,7 +390,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     }
   }, [sessionId]);
 
-  const setCurrentBackend = useCallback((newBackend: 'claude' | 'codex') => {
+  const setCurrentBackend = useCallback((newBackend: 'claude' | 'codex' | 'channels') => {
     setCurrentBackendRaw(newBackend);
     // Renormalize mode for the new backend's vocabulary. Values that don't
     // belong (e.g. Claude 'acceptEdits' when switching to Codex) fall back to
@@ -941,12 +941,24 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     });
 
     try {
-      const permEndpoint = currentBackend === 'codex' ? '/api/codex/permission' : '/api/chat/permission';
-      await fetch(permEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+      if (currentBackend === 'channels') {
+        await fetch('/api/channels/permission', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId,
+            requestId: pendingPermission.permissionRequestId,
+            allow: decision !== 'deny',
+          }),
+        });
+      } else {
+        const permEndpoint = currentBackend === 'codex' ? '/api/codex/permission' : '/api/chat/permission';
+        await fetch(permEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      }
     } catch {
       // Best effort - the stream will handle timeout
     }
@@ -956,7 +968,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       setPendingPermission(null);
       setPermissionResolved(null);
     }, 1000);
-  }, [pendingPermission, setPendingApprovalSessionId, currentBackend]);
+  }, [pendingPermission, setPendingApprovalSessionId, currentBackend, sessionId]);
 
   const handleInputResponse = useCallback(async (answers: Record<string, string>) => {
     if (!pendingInputRequest) return;
@@ -1082,7 +1094,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       let toolCount = 0;
 
       try {
-        const chatEndpoint = currentBackend === 'codex' ? '/api/codex/chat' : '/api/chat';
+        const chatEndpoint = currentBackend === 'codex' ? '/api/codex/chat' : currentBackend === 'channels' ? '/api/channels/chat' : '/api/chat';
         const response = await fetch(chatEndpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

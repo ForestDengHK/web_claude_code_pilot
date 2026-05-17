@@ -24,7 +24,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const [sessionTitle, setSessionTitle] = useState<string>('');
   const [sessionModel, setSessionModel] = useState<string>('');
   const [sessionMode, setSessionMode] = useState<string>('');
-  const [sessionBackend, setSessionBackend] = useState<'claude' | 'codex'>('claude');
+  const [sessionBackend, setSessionBackend] = useState<'claude' | 'codex' | 'channels'>('claude');
   // Gate ChatView mounting on session info being loaded — otherwise a Codex session
   // briefly mounts with backend='claude' (the initial default) and recovery polling
   // can mislabel the backend (e.g. "Claude is running..." on a Codex session).

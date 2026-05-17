@@ -159,7 +159,7 @@ export function codexModeLabel(mode: CodexUiPermissionMode): string {
  */
 export function normalizeModeForBackend(
   raw: string | null | undefined,
-  backend: 'claude' | 'codex',
+  backend: 'claude' | 'codex' | 'channels',
 ): string {
   return backend === 'codex'
     ? normalizeCodexMode(raw)

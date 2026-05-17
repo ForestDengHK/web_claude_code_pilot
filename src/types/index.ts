@@ -27,7 +27,7 @@ export interface ChatSession {
   mode?: ClaudeUiPermissionMode;
   skip_permissions?: number;
   needs_approval?: boolean;
-  backend: 'claude' | 'codex';
+  backend: 'claude' | 'codex' | 'channels';
   codex_thread_id?: string | null;
   channel_session_id?: string | null;
   last_claude_bridged_msg_id?: string | null;
