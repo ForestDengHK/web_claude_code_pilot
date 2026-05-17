@@ -462,6 +462,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const accumulatedRef = useRef('');
   // Ref to track the last user message content for tier-switch resend
   const lastUserContentRef = useRef('');
+  // Holds the message to resend once a tier switch has actually committed to
+  // currentBackend (see the effect below). Avoids racing the React re-render.
+  const pendingTierResendRef = useRef<string | null>(null);
   // Ref for accumulated thinking content (same purpose as accumulatedRef)
   const accumulatedThinkingRef = useRef('');
   // Ref for sendMessage to allow self-referencing in timeout auto-retry without circular deps
@@ -1449,6 +1452,18 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   // Keep sendMessageRef in sync so timeout auto-retry can call it
   sendMessageRef.current = sendMessage;
 
+  // Resend the queued message once a tier switch has committed to currentBackend.
+  // sendMessage reads currentBackend from its closure to pick the chat endpoint,
+  // so the resend must wait until after the re-render that applies the new tier —
+  // this effect runs exactly then, making the endpoint selection deterministic.
+  useEffect(() => {
+    const msg = pendingTierResendRef.current;
+    if (msg && currentBackend !== 'channels') {
+      pendingTierResendRef.current = null;
+      sendMessageRef.current?.(msg);
+    }
+  }, [currentBackend]);
+
   // Edit-and-resend (Codex only): roll the Codex thread back to before the
   // edited user message, drop those messages locally, then re-send the new
   // text via the normal sendMessage flow.
@@ -1802,14 +1817,12 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
                   body: JSON.stringify({ sessionId }),
                 });
                 const { newTier } = await res.json() as { newTier: Tier };
-                setCurrentBackend(newTier);
-                // Defer resend: setCurrentBackend triggers a React state update,
-                // so sendMessage's closure would still see the old backend if called
-                // synchronously here. setTimeout(0) defers until after re-render.
+                // Queue the resend, then switch the backend. The effect that
+                // watches currentBackend fires the resend after the re-render
+                // commits, so sendMessage picks the new tier's chat endpoint.
                 const msgToResend = lastUserContentRef.current;
-                if (msgToResend) {
-                  setTimeout(() => sendMessageRef.current?.(msgToResend), 0);
-                }
+                pendingTierResendRef.current = msgToResend || null;
+                setCurrentBackend(newTier);
               } catch {
                 // Tier switch failed — dismiss prompt silently; user can retry manually
               }
