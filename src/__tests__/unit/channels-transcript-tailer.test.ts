@@ -50,6 +50,24 @@ test('transcriptPath builds ~/.claude/projects/<encoded>/<id>.jsonl', () => {
   assert.equal(result, expected);
 });
 
+test('assistant entry with usage emits a result SSEEvent carrying token totals', () => {
+  const entry = {
+    type: 'assistant',
+    message: {
+      model: 'claude-sonnet-4-6',
+      content: [{ type: 'text', text: 'hi' }],
+      usage: { input_tokens: 5, output_tokens: 12, cache_read_input_tokens: 100 },
+    },
+  };
+  const events = transcriptEntriesToEvents([entry]);
+  const result = events.find((e) => e.type === 'result');
+  assert.ok(result, 'expected a result event');
+  const usage = JSON.parse(result.data).usage;
+  assert.equal(usage.output_tokens, 12);
+  assert.equal(usage.input_tokens, 5);
+  assert.equal(usage.model, 'claude-sonnet-4-6');
+});
+
 test('assistant entry with rate-limit error emits a rate_limit SSEEvent', () => {
   const entry = { type: 'assistant', error: 'rate_limit', message: { content: [] } };
   const events = transcriptEntriesToEvents([entry]);

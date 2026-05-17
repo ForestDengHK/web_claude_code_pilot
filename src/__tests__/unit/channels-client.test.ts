@@ -11,7 +11,7 @@ async function collect(stream: ReadableStream<string>): Promise<string> {
   return out;
 }
 
-test('assembleStream emits emitted events then result+done on finish', async () => {
+test('assembleStream emits emitted events then done on finish', async () => {
   const stream = assembleStream({
     onStart: (emit, finish) => {
       emit({ type: 'text', data: 'hi' });
@@ -22,7 +22,6 @@ test('assembleStream emits emitted events then result+done on finish', async () 
   const joined = await collect(stream);
   assert.match(joined, /"type":"text"/);
   assert.match(joined, /"type":"tool_use"/);
-  assert.match(joined, /"type":"result"/);
   assert.match(joined, /"type":"done"/);
 });
 
@@ -33,6 +32,24 @@ test('assembleStream surfaces finish() text as a text event', async () => {
   const joined = await collect(stream);
   assert.match(joined, /"type":"text"/);
   assert.match(joined, /the final answer/);
+});
+
+test('assembleStream emits a result event carrying finish() usage', async () => {
+  const stream = assembleStream({
+    onStart: (_emit, finish) => finish('answer', { output_tokens: 42, model: 'claude-sonnet-4-6' }),
+  });
+  const joined = await collect(stream);
+  const resultLine = joined.split('\n').find((l) => l.includes('"type":"result"'));
+  assert.ok(resultLine, 'expected a result event');
+  const usage = JSON.parse(JSON.parse(resultLine.slice(6)).data).usage;
+  assert.equal(usage.output_tokens, 42);
+  assert.equal(usage.model, 'claude-sonnet-4-6');
+});
+
+test('assembleStream omits the result event when finish() has no usage', async () => {
+  const stream = assembleStream({ onStart: (_emit, finish) => finish('answer') });
+  const joined = await collect(stream);
+  assert.doesNotMatch(joined, /"type":"result"/);
 });
 
 test('assembleStream emits error on fail', async () => {

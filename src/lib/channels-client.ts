@@ -11,7 +11,8 @@ function sse(event: SSEEvent): string {
 
 /** Pure, testable stream assembler. `onStart` gets emit + finish + fail callbacks. */
 export function assembleStream(opts: {
-  onStart: (emit: (e: SSEEvent) => void, finish: (finalText: string) => void,
+  onStart: (emit: (e: SSEEvent) => void,
+            finish: (finalText: string, usage?: unknown) => void,
             fail: (msg: string) => void) => void;
 }): ReadableStream<string> {
   return new ReadableStream<string>({
@@ -19,13 +20,13 @@ export function assembleStream(opts: {
       let closed = false;
       const emit = (e: SSEEvent) => { if (!closed) controller.enqueue(sse(e)); };
       const close = () => { if (!closed) { closed = true; controller.close(); } };
-      const finish = (finalText: string) => {
+      const finish = (finalText: string, usage?: unknown) => {
         // The model delivers its answer through the `reply` tool; that text
         // arrives here as finalText. Emit it as a `text` event so it flows
         // through the standard text-accumulation path (DB persistence + UI
-        // render) — the `result` event below carries no consumer for it.
+        // render). `usage`, when present, carries the turn's token totals.
         if (finalText) emit({ type: 'text', data: finalText });
-        emit({ type: 'result', data: JSON.stringify({ result: finalText }) });
+        if (usage) emit({ type: 'result', data: JSON.stringify({ usage }) });
         emit({ type: 'done', data: '' });
         close();
       };
@@ -70,6 +71,15 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           // so it doesn't render as a tool block. The answer text itself is
           // surfaced via finish() instead.
           const replyToolUseIds = new Set<string>();
+          // Accumulate per-message token usage from the transcript tail into a
+          // single turn total, emitted once via finish() so the UI shows the
+          // same `model · N tokens` badge it shows for the SDK backend.
+          const turnUsage = {
+            input_tokens: 0, output_tokens: 0,
+            cache_read_input_tokens: 0, cache_creation_input_tokens: 0,
+            model: undefined as string | undefined,
+          };
+          let sawUsage = false;
           const tail = tailTranscript(
             transcriptPath(opts.workingDirectory, claudeSessionId),
             (events) => {
@@ -87,6 +97,23 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
                     const d = JSON.parse(e.data);
                     if (replyToolUseIds.has(d.tool_use_id)) continue;
                   } catch { /* fall through and emit as-is */ }
+                } else if (e.type === 'result') {
+                  try {
+                    const u = JSON.parse(e.data).usage;
+                    if (u) {
+                      sawUsage = true;
+                      // output sums across the turn; input/cache reflect the
+                      // latest message (the running context size).
+                      turnUsage.output_tokens += u.output_tokens ?? 0;
+                      turnUsage.input_tokens = u.input_tokens ?? turnUsage.input_tokens;
+                      turnUsage.cache_read_input_tokens =
+                        u.cache_read_input_tokens ?? turnUsage.cache_read_input_tokens;
+                      turnUsage.cache_creation_input_tokens =
+                        u.cache_creation_input_tokens ?? turnUsage.cache_creation_input_tokens;
+                      if (u.model) turnUsage.model = u.model;
+                    }
+                  } catch { /* ignore malformed usage */ }
+                  continue; // accumulated, not forwarded per-message
                 }
                 emit(e);
               }
@@ -119,7 +146,10 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
               }) });
             } else if (ev.kind === 'reply') {
               if (done) return; done = true;
-              setTimeout(() => { cleanup(); finish(ev.text); }, 400);
+              setTimeout(() => {
+                cleanup();
+                finish(ev.text, sawUsage ? turnUsage : undefined);
+              }, 400);
             }
           });
 

@@ -13,7 +13,11 @@ export function transcriptPath(cwd: string, claudeSessionId: string): string {
 interface TranscriptEntry {
   type?: string;
   error?: string;
-  message?: { content?: Array<Record<string, unknown>> };
+  message?: {
+    content?: Array<Record<string, unknown>>;
+    usage?: Record<string, number>;
+    model?: string;
+  };
 }
 
 /**
@@ -51,6 +55,19 @@ export function transcriptEntriesToEvents(entries: TranscriptEntry[]): SSEEvent[
           id: block.id, name: block.name, input: block.input,
         }) });
       }
+    }
+    // Surface per-message token usage so the UI can show the same
+    // `model · N tokens` badge it shows for the SDK backend. streamChannels
+    // accumulates these across the turn into a single final result event.
+    if (isAssistant && entry.message?.usage) {
+      const u = entry.message.usage;
+      out.push({ type: 'result', data: JSON.stringify({ usage: {
+        input_tokens: u.input_tokens ?? 0,
+        output_tokens: u.output_tokens ?? 0,
+        cache_read_input_tokens: u.cache_read_input_tokens ?? 0,
+        cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0,
+        model: entry.message.model,
+      } }) });
     }
   }
   return out;
