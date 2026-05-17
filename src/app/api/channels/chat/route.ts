@@ -146,7 +146,40 @@ export async function POST(request: NextRequest) {
       unregisterAbort(session_id);
     });
 
-    return new Response(streamForClient, {
+    // Pipe client stream through a transform that injects a synthetic
+    // tier_exhausted event immediately after the first rate_limit event.
+    let rateLimitSeen = false;
+    const tierExhaustedLine =
+      'data: ' +
+      JSON.stringify({
+        type: 'tier_exhausted',
+        data: JSON.stringify({ from: 'channels', to: 'claude' }),
+      }) +
+      '\n\n';
+    const transform = new TransformStream<string, string>({
+      transform(chunk, controller) {
+        controller.enqueue(chunk);
+        if (!rateLimitSeen) {
+          const lines = chunk.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const evt = JSON.parse(line.slice(6));
+                if (evt.type === 'rate_limit') {
+                  rateLimitSeen = true;
+                  controller.enqueue(tierExhaustedLine);
+                  break;
+                }
+              } catch {
+                // skip malformed line
+              }
+            }
+          }
+        }
+      },
+    });
+
+    return new Response(streamForClient.pipeThrough(transform), {
       headers: {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',

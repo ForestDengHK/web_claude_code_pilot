@@ -444,6 +444,7 @@ export type SSEEventType =
   | 'permission_request' // permission approval needed
   | 'input_request'      // AskUserQuestion mid-stream prompt
   | 'rate_limit'         // rate limit info from Claude
+  | 'tier_exhausted'    // tier hit usage limit; client should prompt to switch
   | 'heartbeat'          // keepalive signal for connection health
   | 'session_reset'      // stale SDK session cleared, retry in progress
   | 'done';              // stream complete
