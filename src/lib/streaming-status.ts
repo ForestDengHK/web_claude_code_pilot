@@ -25,3 +25,16 @@ export function getRunningCommandSummary(
   if (input.path) return `${tool.name}: ${String(input.path)}`;
   return `Running ${tool.name}...`;
 }
+
+/**
+ * Format a tool's input for display in the permission dialog. Picks the most
+ * meaningful field, falling back to a JSON dump. Tolerates a missing input —
+ * the Channels permission_request payload can lack a structured toolInput.
+ */
+export function formatToolInput(input: Record<string, unknown> | undefined | null): string {
+  if (!input || typeof input !== 'object') return '';
+  if (input.command) return String(input.command);
+  if (input.file_path) return String(input.file_path);
+  if (input.path) return String(input.path);
+  return JSON.stringify(input, null, 2);
+}

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 
 /* eslint-disable @typescript-eslint/no-require-imports */
-const { assembleStream } = require('../../lib/channels-client') as typeof import('../../lib/channels-client');
+const { assembleStream, permissionToolInput } = require('../../lib/channels-client') as typeof import('../../lib/channels-client');
 
 async function collect(stream: ReadableStream<string>): Promise<string> {
   const reader = stream.getReader();
@@ -57,4 +57,19 @@ test('assembleStream emits error on fail', async () => {
   const joined = await collect(stream);
   assert.match(joined, /"type":"error"/);
   assert.match(joined, /boom/);
+});
+
+test('permissionToolInput parses a JSON input preview into an object', () => {
+  // The channel permission relay only carries input_preview (a JSON string).
+  // It must become a structured toolInput so the permission dialog renders.
+  assert.deepEqual(permissionToolInput('{"command":"git status"}'), { command: 'git status' });
+});
+
+test('permissionToolInput falls back to {input} for a truncated / non-JSON preview', () => {
+  // input_preview is truncated to ~200 chars, so it is often invalid JSON.
+  assert.deepEqual(permissionToolInput('{"command":"git sta'), { input: '{"command":"git sta' });
+});
+
+test('permissionToolInput falls back to {input} for a JSON non-object preview', () => {
+  assert.deepEqual(permissionToolInput('"hello"'), { input: 'hello' });
 });

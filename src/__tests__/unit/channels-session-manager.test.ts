@@ -28,6 +28,17 @@ test('buildSpawnArgs adds --resume when resuming', () => {
   assert.ok(i >= 0 && args[i + 1] === 'U-2');
 });
 
+test('buildSpawnArgs omits --session-id when resuming (claude rejects both)', () => {
+  // `claude` errors out — "--session-id can only be used with --continue or
+  // --resume if --fork-session is also specified" — and exits 1, so a resumed
+  // channel session never starts.
+  const args = buildSpawnArgs({
+    claudeSessionId: 'U-2', mcpConfigJson: '{}', resume: true,
+  });
+  assert.ok(!args.includes('--session-id'),
+    '--session-id must be omitted when --resume is present');
+});
+
 test('buildSpawnArgs adds --permission-mode for a valid mode and --append-system-prompt', () => {
   const args = buildSpawnArgs({
     claudeSessionId: 'U-3', mcpConfigJson: '{}',

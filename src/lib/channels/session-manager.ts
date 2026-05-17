@@ -58,18 +58,23 @@ export interface SpawnArgsInput {
 
 /** Pure, testable: construct the claude CLI argv. */
 export function buildSpawnArgs(input: SpawnArgsInput): string[] {
-  const args = [
-    '--session-id', input.claudeSessionId,
+  // `--session-id` starts a new session; `--resume` continues an existing one.
+  // claude rejects both together ("--session-id can only be used with
+  // --continue or --resume if --fork-session is also specified") and exits 1,
+  // so pick exactly one. --resume keeps writing to the same transcript file.
+  const args = input.resume
+    ? ['--resume', input.claudeSessionId]
+    : ['--session-id', input.claudeSessionId];
+  args.push(
     '--mcp-config', input.mcpConfigJson,
     '--dangerously-load-development-channels', 'server:codepilot',
     '--allowedTools', 'mcp__codepilot__reply',
-  ];
+  );
   if (input.model) args.push('--model', input.model);
   if (input.mode && VALID_PERMISSION_MODES.has(input.mode)) {
     args.push('--permission-mode', input.mode);
   }
   if (input.systemPrompt) args.push('--append-system-prompt', input.systemPrompt);
-  if (input.resume) args.push('--resume', input.claudeSessionId);
   return args;
 }
 
@@ -181,7 +186,9 @@ export function getSession(codepilotSessionId: string): ChannelSession | undefin
 
 export function killSession(codepilotSessionId: string): void {
   const s = registry().get(codepilotSessionId);
-  if (s && s.state !== 'exited') { try { s.proc.kill(); } catch { /* noop */ } }
+  // SIGKILL, not the default term signal: killSession is used to reap a
+  // wedged/stalled process, which may ignore a catchable signal.
+  if (s && s.state !== 'exited') { try { s.proc.kill('SIGKILL'); } catch { /* noop */ } }
   registry().delete(codepilotSessionId);
 }
 

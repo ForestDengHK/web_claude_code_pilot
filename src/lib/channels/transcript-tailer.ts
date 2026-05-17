@@ -17,6 +17,7 @@ interface TranscriptEntry {
     content?: Array<Record<string, unknown>>;
     usage?: Record<string, number>;
     model?: string;
+    stop_reason?: string;
   };
 }
 
@@ -68,6 +69,15 @@ export function transcriptEntriesToEvents(entries: TranscriptEntry[]): SSEEvent[
         cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0,
         model: entry.message.model,
       } }) });
+    }
+    // The channel protocol carries no turn-end signal, and the model does not
+    // reliably call the `reply` tool after agentic (tool-using) turns — it
+    // simply ends the turn the normal way. A terminal `stop_reason` (anything
+    // other than `tool_use`, which means "paused to call a tool") is the
+    // reliable signal that the assistant turn is over.
+    const stopReason = entry.message?.stop_reason;
+    if (isAssistant && stopReason && stopReason !== 'tool_use') {
+      out.push({ type: 'turn_complete', data: '' });
     }
   }
   return out;

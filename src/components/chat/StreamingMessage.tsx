@@ -19,7 +19,7 @@ import {
 import { Shimmer } from '@/components/ai-elements/shimmer';
 import type { ToolUIPart } from 'ai';
 import type { PermissionRequestEvent, InputRequestEvent, ViewMode } from '@/types';
-import { getRunningCommandSummary as getCommandSummary } from '@/lib/streaming-status';
+import { getRunningCommandSummary as getCommandSummary, formatToolInput } from '@/lib/streaming-status';
 
 interface ToolUseInfo {
   id: string;
@@ -348,13 +348,6 @@ export function StreamingMessage({
     }
     // Pending - no decision yet
     return { id: pendingPermission?.permissionRequestId || '' };
-  };
-
-  const formatToolInput = (input: Record<string, unknown>): string => {
-    if (input.command) return String(input.command);
-    if (input.file_path) return String(input.file_path);
-    if (input.path) return String(input.path);
-    return JSON.stringify(input, null, 2);
   };
 
   // Extract a human-readable summary of the running command

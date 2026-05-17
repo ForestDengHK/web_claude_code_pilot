@@ -400,6 +400,13 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
               } catch {
                 // skip malformed result data
               }
+            } else if (event.type === 'error') {
+              // A failed turn (stall / timeout / transport error) must still
+              // leave an assistant message in the DB. Otherwise the last row
+              // stays a bare 'user' message and the /status `dbHint` keeps
+              // reporting the session as busy for 5 minutes, trapping recovery
+              // polling so the composer never resets.
+              currentText += (currentText ? '\n\n' : '') + '⚠️ ' + event.data;
             }
           } catch {
             // skip malformed lines

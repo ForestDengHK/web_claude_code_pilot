@@ -447,6 +447,7 @@ export type SSEEventType =
   | 'tier_exhausted'    // tier hit usage limit; client should prompt to switch
   | 'heartbeat'          // keepalive signal for connection health
   | 'session_reset'      // stale SDK session cleared, retry in progress
+  | 'turn_complete'      // channels: assistant turn ended (terminal stop_reason); consumed internally by streamChannels
   | 'done';              // stream complete
 
 export interface SSEEvent {

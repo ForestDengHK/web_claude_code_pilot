@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { getSession as getDbSession, updateChannelSessionId } from './db';
-import { ensureSession } from './channels/session-manager';
+import { ensureSession, killSession } from './channels/session-manager';
 import { tailTranscript, transcriptPath } from './channels/transcript-tailer';
 import { subscribeChannelEvents } from './channels/event-bus';
 import type { SSEEvent } from '@/types';
@@ -36,6 +36,25 @@ export function assembleStream(opts: {
   });
 }
 
+/**
+ * Build a structured `toolInput` object from the channel permission relay's
+ * `input_preview`. The relay only carries `input_preview` — a JSON string
+ * truncated to ~200 chars — so parse it when valid and otherwise wrap the raw
+ * text in `{ input }`. The frontend's permission dialog expects an object;
+ * omitting it entirely used to crash `StreamingMessage`.
+ */
+export function permissionToolInput(inputPreview: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(inputPreview);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return { input: parsed };
+  } catch {
+    return { input: inputPreview };
+  }
+}
+
 export interface ChannelsStreamOptions {
   prompt: string;
   sessionId: string;            // CodePilot session id
@@ -47,6 +66,22 @@ export interface ChannelsStreamOptions {
 }
 
 const TURN_TIMEOUT_MS = 10 * 60_000;
+
+// After a terminal `turn_complete` is tailed, wait this long for the transcript
+// to settle before closing the stream. The turn's final message is often
+// tailed as separate `thinking` then `text` entries; this debounce window lets
+// any trailing entries arrive (the poll interval is 120ms) so the answer text
+// is not cut off. Each new `turn_complete` resets the timer.
+const TURN_SETTLE_MS = 700;
+
+// If the channel transcript produces no new activity for this long, the
+// underlying `claude --channels` process is considered stalled (the research-
+// preview interactive process can wedge mid-turn). The turn is failed and the
+// process killed so the *next* message respawns a fresh one via --resume —
+// otherwise a single stall bricks the whole session, with every later message
+// queued behind the dead turn. Suspended while a permission prompt is pending
+// (the model is then legitimately idle, waiting on the user's verdict).
+const STALL_TIMEOUT_MS = 150_000;
 
 export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<string> {
   return assembleStream({
@@ -87,6 +122,7 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           const tail = tailTranscript(
             transcriptPath(opts.workingDirectory, claudeSessionId),
             (events) => {
+              bumpStall(); // transcript grew → the process is alive
               for (const e of events) {
                 if (e.type === 'tool_use') {
                   try {
@@ -118,6 +154,12 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
                     }
                   } catch { /* ignore malformed usage */ }
                   continue; // accumulated, not forwarded per-message
+                } else if (e.type === 'turn_complete') {
+                  // The assistant turn ended (terminal stop_reason in the
+                  // transcript). Schedule the stream close; do not forward
+                  // this internal event to the client.
+                  scheduleFinish();
+                  continue;
                 }
                 emit(e);
               }
@@ -125,6 +167,9 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           );
 
           let done = false;
+          let finishTimer: ReturnType<typeof setTimeout> | undefined;
+          let stallTimer: ReturnType<typeof setTimeout> | undefined;
+          let permissionPending = false;
 
           // cleanup references timeout and unsub — both are declared below.
           // cleanup is only ever *called* from callbacks that fire after all
@@ -134,19 +179,71 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           // eslint-disable-next-line prefer-const
           let unsub: () => void;
 
-          const cleanup = () => { tail.stop(); unsub(); clearTimeout(timeout); };
+          const cleanup = () => {
+            tail.stop(); unsub();
+            clearTimeout(timeout); clearTimeout(finishTimer); clearTimeout(stallTimer);
+          };
 
-          timeout = setTimeout(() => {
-            if (done) return; done = true; cleanup(); fail('channel turn timed out');
-          }, TURN_TIMEOUT_MS);
+          // Fail the turn AND kill the channel process. Used for stalls /
+          // timeouts / transport errors: the process is in an unknown state,
+          // so killing it lets the next message respawn a clean one (--resume
+          // continues the transcript) instead of queueing behind a dead turn.
+          const failAndKill = (msg: string) => {
+            if (done) return;
+            done = true;
+            cleanup();
+            try { killSession(opts.sessionId); } catch { /* best effort */ }
+            fail(msg);
+          };
+
+          // (Re)arm the stall watchdog. Called on every transcript poll that
+          // sees activity; if the gap between two calls exceeds STALL_TIMEOUT_MS
+          // the process is wedged. Disabled once a permission prompt is pending.
+          const bumpStall = () => {
+            if (done || permissionPending) return;
+            clearTimeout(stallTimer);
+            stallTimer = setTimeout(
+              () => failAndKill('channel turn stalled — no activity'),
+              STALL_TIMEOUT_MS,
+            );
+          };
+
+          // Close the stream once the transcript reports the turn is over.
+          // Debounced (TURN_SETTLE_MS) so trailing thinking/text entries are
+          // tailed before we stop; a later turn_complete resets the timer.
+          // This is the primary turn terminator — the `reply` channel event
+          // below is a secondary signal the model only sometimes emits.
+          const scheduleFinish = () => {
+            if (done) return;
+            clearTimeout(finishTimer);
+            finishTimer = setTimeout(() => {
+              if (done) return;
+              done = true;
+              cleanup();
+              // The answer text already streamed via the transcript tail, so
+              // pass '' — finish() would otherwise emit it a second time.
+              finish('', sawUsage ? turnUsage : undefined);
+            }, TURN_SETTLE_MS);
+          };
+
+          timeout = setTimeout(
+            () => failAndKill('channel turn timed out'),
+            TURN_TIMEOUT_MS,
+          );
 
           unsub = subscribeChannelEvents(opts.sessionId, (ev) => {
             if (ev.kind === 'permission_request') {
+              // The model is now legitimately idle, waiting on the user's
+              // verdict — suspend the stall watchdog so the wait isn't
+              // mistaken for a wedged process. The TURN_TIMEOUT_MS cap remains.
+              permissionPending = true;
+              clearTimeout(stallTimer);
               emit({ type: 'permission_request', data: JSON.stringify({
                 permissionRequestId: ev.request.request_id,
                 toolName: ev.request.tool_name,
+                toolUseId: '',
+                toolInput: permissionToolInput(ev.request.input_preview),
                 description: ev.request.description,
-                input_preview: ev.request.input_preview,
               }) });
             } else if (ev.kind === 'reply') {
               if (done) return; done = true;
@@ -157,11 +254,16 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
             }
           });
 
+          // Arm the stall watchdog now that the turn is underway. Covers the
+          // case where the process produces no transcript output at all.
+          bumpStall();
+
           const res = await fetch(`http://127.0.0.1:${session.channelPort}/push`, {
             method: 'POST', body: opts.prompt,
           });
-          if (!res.ok && !done) { done = true; cleanup(); fail('failed to push message'); }
+          if (!res.ok) failAndKill('failed to push message');
         } catch (err) {
+          try { killSession(opts.sessionId); } catch { /* best effort */ }
           fail(err instanceof Error ? err.message : String(err));
         }
       })();

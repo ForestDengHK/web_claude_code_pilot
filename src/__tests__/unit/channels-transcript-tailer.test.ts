@@ -74,3 +74,42 @@ test('assistant entry with rate-limit error emits a rate_limit SSEEvent', () => 
   assert.equal(events.length, 1);
   assert.equal(events[0].type, 'rate_limit');
 });
+
+test('assistant entry with terminal stop_reason end_turn emits turn_complete', () => {
+  // The channel protocol has no turn-end signal and the model does not
+  // reliably call the reply tool after agentic turns — it just ends the turn.
+  // A terminal stop_reason in the transcript is the only reliable signal.
+  const entry = { type: 'assistant', message: {
+    stop_reason: 'end_turn', content: [{ type: 'text', text: 'all done' }],
+  } };
+  const events = transcriptEntriesToEvents([entry]);
+  assert.ok(events.some((e) => e.type === 'turn_complete'),
+    'expected a turn_complete event');
+});
+
+test('assistant entry with stop_reason stop_sequence emits turn_complete', () => {
+  const entry = { type: 'assistant', message: {
+    stop_reason: 'stop_sequence', content: [{ type: 'text', text: 'done' }],
+  } };
+  const events = transcriptEntriesToEvents([entry]);
+  assert.ok(events.some((e) => e.type === 'turn_complete'));
+});
+
+test('assistant entry with stop_reason tool_use does NOT emit turn_complete', () => {
+  // tool_use means the turn continues (model paused to call a tool).
+  const entry = { type: 'assistant', message: {
+    stop_reason: 'tool_use',
+    content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }],
+  } };
+  const events = transcriptEntriesToEvents([entry]);
+  assert.ok(!events.some((e) => e.type === 'turn_complete'),
+    'tool_use is not a turn end');
+});
+
+test('assistant entry with no stop_reason does NOT emit turn_complete', () => {
+  const entry = { type: 'assistant', message: {
+    content: [{ type: 'text', text: 'partial' }],
+  } };
+  const events = transcriptEntriesToEvents([entry]);
+  assert.ok(!events.some((e) => e.type === 'turn_complete'));
+});
