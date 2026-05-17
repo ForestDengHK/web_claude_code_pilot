@@ -20,6 +20,11 @@ export function assembleStream(opts: {
       const emit = (e: SSEEvent) => { if (!closed) controller.enqueue(sse(e)); };
       const close = () => { if (!closed) { closed = true; controller.close(); } };
       const finish = (finalText: string) => {
+        // The model delivers its answer through the `reply` tool; that text
+        // arrives here as finalText. Emit it as a `text` event so it flows
+        // through the standard text-accumulation path (DB persistence + UI
+        // render) — the `result` event below carries no consumer for it.
+        if (finalText) emit({ type: 'text', data: finalText });
         emit({ type: 'result', data: JSON.stringify({ result: finalText }) });
         emit({ type: 'done', data: '' });
         close();
@@ -60,9 +65,32 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           });
           emit({ type: 'status', data: JSON.stringify({ session_id: claudeSessionId }) });
 
+          // The `reply` tool is CodePilot's answer-delivery channel, not a
+          // real tool action — drop its tool_use (and matching tool_result)
+          // so it doesn't render as a tool block. The answer text itself is
+          // surfaced via finish() instead.
+          const replyToolUseIds = new Set<string>();
           const tail = tailTranscript(
             transcriptPath(opts.workingDirectory, claudeSessionId),
-            (events) => { for (const e of events) emit(e); },
+            (events) => {
+              for (const e of events) {
+                if (e.type === 'tool_use') {
+                  try {
+                    const d = JSON.parse(e.data);
+                    if (d.name === 'mcp__codepilot__reply') {
+                      replyToolUseIds.add(d.id);
+                      continue;
+                    }
+                  } catch { /* fall through and emit as-is */ }
+                } else if (e.type === 'tool_result') {
+                  try {
+                    const d = JSON.parse(e.data);
+                    if (replyToolUseIds.has(d.tool_use_id)) continue;
+                  } catch { /* fall through and emit as-is */ }
+                }
+                emit(e);
+              }
+            },
           );
 
           let done = false;

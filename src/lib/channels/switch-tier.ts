@@ -24,3 +24,19 @@ export function seedSdkResumeFromChannel(sessionId: string): void {
       .run(s.channel_session_id, sessionId);
   }
 }
+
+/**
+ * Drop the rate-limited turn — the trailing user message and anything saved
+ * after it (the dead/partial assistant message). The tier-switch caller
+ * resends that message on the new tier, so leaving the old copy would show a
+ * duplicate user message plus a dead assistant message in the conversation.
+ */
+export function discardExhaustedTurn(sessionId: string): void {
+  const db = getDb();
+  const lastUser = db.prepare(
+    `SELECT rowid FROM messages WHERE session_id = ? AND role = 'user' ORDER BY rowid DESC LIMIT 1`,
+  ).get(sessionId) as { rowid: number } | undefined;
+  if (!lastUser) return;
+  db.prepare(`DELETE FROM messages WHERE session_id = ? AND rowid >= ?`)
+    .run(sessionId, lastUser.rowid);
+}

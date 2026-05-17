@@ -26,6 +26,15 @@ test('assembleStream emits emitted events then result+done on finish', async () 
   assert.match(joined, /"type":"done"/);
 });
 
+test('assembleStream surfaces finish() text as a text event', async () => {
+  // The reply-tool answer arrives via finish(); it must reach the client as a
+  // text event, otherwise the model's answer is silently dropped.
+  const stream = assembleStream({ onStart: (_emit, finish) => finish('the final answer') });
+  const joined = await collect(stream);
+  assert.match(joined, /"type":"text"/);
+  assert.match(joined, /the final answer/);
+});
+
 test('assembleStream emits error on fail', async () => {
   const stream = assembleStream({ onStart: (_emit, _finish, fail) => fail('boom') });
   const joined = await collect(stream);

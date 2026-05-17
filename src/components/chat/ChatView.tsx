@@ -1817,10 +1817,13 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
                   body: JSON.stringify({ sessionId }),
                 });
                 const { newTier } = await res.json() as { newTier: Tier };
+                const msgToResend = lastUserContentRef.current;
+                // switch-tier dropped the exhausted turn server-side; refetch
+                // so the UI clears it before the resend re-adds the message.
+                await recoverMessages();
                 // Queue the resend, then switch the backend. The effect that
                 // watches currentBackend fires the resend after the re-render
                 // commits, so sendMessage picks the new tier's chat endpoint.
-                const msgToResend = lastUserContentRef.current;
                 pendingTierResendRef.current = msgToResend || null;
                 setCurrentBackend(newTier);
               } catch {
