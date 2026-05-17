@@ -1,10 +1,8 @@
 import { NextRequest } from 'next/server';
 import { streamChannels } from '@/lib/channels-client';
-import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected } from '@/lib/db';
+import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting } from '@/lib/db';
 import { sendPushNotification } from '@/lib/push-notifications';
-import { normalizeClaudeMode } from '@/lib/permission-modes';
-import { registerAbort, registerQuery, unregisterAbort } from '@/lib/abort-registry';
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
+import { registerAbort, unregisterAbort } from '@/lib/abort-registry';
 import {
   initStreamBuffer,
   appendStreamText,
@@ -22,8 +20,8 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
-    const body: SendMessageRequest & { files?: FileAttachment[]; toolTimeout?: number; effort?: string; disable_tools?: boolean; max_turns?: number } = await request.json();
-    const { session_id, content, prompt, model, mode, files, toolTimeout, effort, disable_tools, max_turns } = body;
+    const body: SendMessageRequest & { files?: FileAttachment[] } = await request.json();
+    const { session_id, content, prompt, model, files } = body;
 
     if (!session_id || !content) {
       return new Response(JSON.stringify({ error: 'session_id and content are required' }), {
@@ -102,18 +100,7 @@ export async function POST(request: NextRequest) {
     // Determine model: request override > session model > default setting
     const effectiveModel = model || session.model || getSetting('default_model') || undefined;
 
-    // Working mode uses SDK-native names directly ('plan' | 'acceptEdits' |
-    // 'auto'). `normalizeClaudeMode` handles legacy DB values ('code' →
-    // 'acceptEdits') and unknown input, so we never feed the SDK a stale
-    // vocabulary. When the shield (skipPermissions) is on, claude-client
-    // upgrades this to 'bypassPermissions' — that override lives there.
-    const permissionMode = normalizeClaudeMode(mode || session.mode);
-
     // Phase 2: tier-switch bridging handled by the tier orchestrator
-
-    // Skill content is now injected directly into the user message as <command-name> blocks
-    // (matching Claude Code CLI behavior). Only session-level system_prompt is used here.
-    const systemPromptOverride = session.system_prompt || undefined;
 
     const abortController = new AbortController();
 
@@ -125,34 +112,11 @@ export async function POST(request: NextRequest) {
     // returns and recovery polling kicks in, the full response is already in the DB.
     registerAbort(session_id, abortController);
 
-    // Convert file attachments to the format expected by streamChannels.
-    // Include filePath from the already-saved files so channels-client can
-    // reference the on-disk copies instead of writing them again.
-    // Path references (from tree +) carry originalPath and need no disk copy.
-    const allFiles = [
-      ...uploadFiles.map((f, i) => {
-        const meta = fileMeta?.find((m: { id: string }) => m.id === f.id);
-        return {
-          id: f.id || `file-${Date.now()}-${i}`,
-          name: f.name,
-          type: f.type,
-          size: f.size,
-          data: f.data,
-          filePath: meta?.filePath,
-        };
-      }),
-      ...pathRefs.map((r) => ({
-        id: r.id,
-        name: r.name,
-        type: r.type,
-        size: 0,
-        data: '',
-        filePath: r.originalPath,
-      })),
-    ];
-    const fileAttachments: FileAttachment[] | undefined = allFiles.length > 0
-      ? allFiles
-      : undefined;
+    // Note: the Channels backend does not yet support file attachments —
+    // `ChannelsStreamOptions` has no `files` field. Uploaded files are still
+    // saved to disk and their metadata is embedded in the user message above
+    // (so attachments survive a page reload), but they are not forwarded to
+    // the Channels turn.
 
     // Stream Channels response.
     // Use `prompt` (skill-injected content) if provided, otherwise plain `content`.
