@@ -12,6 +12,7 @@ test('buildSpawnArgs includes channels + mcp-config + pre-approved reply tool', 
   });
   assert.ok(args.includes('--session-id'));
   assert.ok(args.includes('U-1'));
+  assert.ok(args.includes('--mcp-config'));
   assert.ok(args.includes('--dangerously-load-development-channels'));
   assert.ok(args.includes('server:codepilot'));
   assert.ok(args.includes('--allowedTools'));

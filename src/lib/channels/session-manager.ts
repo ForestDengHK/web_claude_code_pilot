@@ -23,6 +23,9 @@ function registry(): Map<string, ChannelSession> {
 }
 
 export async function allocatePort(): Promise<number> {
+  // TOCTOU: we bind to :0, read the assigned port, close the server, then hand
+  // the port to a child process. There is an inherent race window where another
+  // process could claim the port before the child binds it. Acceptable here.
   return new Promise((resolve, reject) => {
     const srv = net.createServer();
     srv.once('error', reject);
@@ -106,10 +109,22 @@ export async function ensureSession(input: EnsureInput): Promise<ChannelSession>
     state: 'starting', lastUsedAt: Date.now(),
   };
   reg.set(input.codepilotSessionId, session);
-  proc.onExit(() => { session.state = 'exited'; });
+  proc.onExit(({ exitCode, signal }) => {
+    session.state = 'exited';
+    console.log(`[channels:${input.codepilotSessionId}] process exited (code=${exitCode}, signal=${signal})`);
+  });
   autoConfirm(proc);
 
-  await waitForPort(channelPort, 30_000);
+  try {
+    await waitForPort(channelPort, 30_000);
+  } catch (err) {
+    // waitForPort timed out: the spawned process is orphaned and the registry
+    // entry is stuck in 'starting'. Kill the process and remove the entry so a
+    // subsequent ensureSession() call gets a fresh start instead of a dead one.
+    try { proc.kill(); } catch { /* noop */ }
+    reg.delete(input.codepilotSessionId);
+    throw err;
+  }
   session.state = 'ready';
   return session;
 }
@@ -120,7 +135,7 @@ async function waitForPort(port: number, timeoutMs: number): Promise<void> {
     const ok = await new Promise<boolean>((resolve) => {
       const s = net.connect(port, '127.0.0.1');
       s.once('connect', () => { s.destroy(); resolve(true); });
-      s.once('error', () => resolve(false));
+      s.once('error', () => { s.destroy(); resolve(false); });
     });
     if (ok) return;
     await new Promise((r) => setTimeout(r, 500));
