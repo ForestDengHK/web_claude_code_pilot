@@ -13,7 +13,16 @@ export interface ChannelSession {
   proc: pty.IPty;
   state: 'starting' | 'ready' | 'exited';
   lastUsedAt: number;
+  // Config baked in at spawn time. permission-mode and the system prompt are
+  // CLI flags, so a change requires respawning the process (see ensureSession).
+  spawnedMode?: string;
+  spawnedSystemPrompt?: string;
 }
+
+/** Valid values for `claude --permission-mode`. */
+const VALID_PERMISSION_MODES = new Set([
+  'acceptEdits', 'auto', 'bypassPermissions', 'default', 'dontAsk', 'plan',
+]);
 
 const KEY = '__codepilot_channel_sessions__';
 function registry(): Map<string, ChannelSession> {
@@ -41,6 +50,10 @@ export interface SpawnArgsInput {
   mcpConfigJson: string;
   model?: string;
   resume?: boolean;
+  /** Permission mode; ignored unless it is a valid `--permission-mode` value. */
+  mode?: string;
+  /** Extra system prompt appended to the default one. */
+  systemPrompt?: string;
 }
 
 /** Pure, testable: construct the claude CLI argv. */
@@ -52,6 +65,10 @@ export function buildSpawnArgs(input: SpawnArgsInput): string[] {
     '--allowedTools', 'mcp__codepilot__reply',
   ];
   if (input.model) args.push('--model', input.model);
+  if (input.mode && VALID_PERMISSION_MODES.has(input.mode)) {
+    args.push('--permission-mode', input.mode);
+  }
+  if (input.systemPrompt) args.push('--append-system-prompt', input.systemPrompt);
   if (input.resume) args.push('--resume', input.claudeSessionId);
   return args;
 }
@@ -70,6 +87,8 @@ export interface EnsureInput {
   model?: string;
   resume: boolean;
   internalUrl: string;   // e.g. http://127.0.0.1:4000
+  mode?: string;
+  systemPrompt?: string;
 }
 
 /** Return a ready ChannelSession, spawning the claude process if needed. */
@@ -77,8 +96,18 @@ export async function ensureSession(input: EnsureInput): Promise<ChannelSession>
   const reg = registry();
   const existing = reg.get(input.codepilotSessionId);
   if (existing && existing.state !== 'exited') {
-    existing.lastUsedAt = Date.now();
-    return existing;
+    // permission-mode and the system prompt are baked in at spawn time. If the
+    // user changed either, the running process can't honor it — kill it and
+    // fall through to respawn (with --resume, so the transcript continues).
+    const configChanged =
+      existing.spawnedMode !== input.mode ||
+      existing.spawnedSystemPrompt !== input.systemPrompt;
+    if (!configChanged) {
+      existing.lastUsedAt = Date.now();
+      return existing;
+    }
+    try { existing.proc.kill(); } catch { /* noop */ }
+    reg.delete(input.codepilotSessionId);
   }
 
   const claudeBin = findClaudeBinary();
@@ -91,6 +120,7 @@ export async function ensureSession(input: EnsureInput): Promise<ChannelSession>
   const args = buildSpawnArgs({
     claudeSessionId: input.claudeSessionId, mcpConfigJson,
     model: input.model, resume: input.resume,
+    mode: input.mode, systemPrompt: input.systemPrompt,
   });
   const proc = pty.spawn(claudeBin, args, {
     name: 'xterm-256color', cols: 120, rows: 40, cwd: input.cwd,
@@ -107,6 +137,8 @@ export async function ensureSession(input: EnsureInput): Promise<ChannelSession>
     claudeSessionId: input.claudeSessionId,
     channelPort, cwd: input.cwd, proc,
     state: 'starting', lastUsedAt: Date.now(),
+    spawnedMode: input.mode,
+    spawnedSystemPrompt: input.systemPrompt,
   };
   reg.set(input.codepilotSessionId, session);
   proc.onExit(({ exitCode, signal }) => {

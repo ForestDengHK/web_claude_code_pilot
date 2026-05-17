@@ -114,6 +114,9 @@ export function tailTranscript(
     if (entries.length) onEvents(transcriptEntriesToEvents(entries));
   };
 
-  const interval = setInterval(readNew, 250);
+  // Poll fairly tight so tool calls / thinking surface responsively. The
+  // final answer still arrives in one piece via the reply tool — that part
+  // is not incremental regardless of poll rate.
+  const interval = setInterval(readNew, 120);
   return { stop: () => { stopped = true; clearInterval(interval); } };
 }

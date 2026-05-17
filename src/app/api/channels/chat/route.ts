@@ -112,12 +112,6 @@ export async function POST(request: NextRequest) {
     // returns and recovery polling kicks in, the full response is already in the DB.
     registerAbort(session_id, abortController);
 
-    // Note: the Channels backend does not yet support file attachments —
-    // `ChannelsStreamOptions` has no `files` field. Uploaded files are still
-    // saved to disk and their metadata is embedded in the user message above
-    // (so attachments survive a page reload), but they are not forwarded to
-    // the Channels turn.
-
     // Stream Channels response.
     // Use `prompt` (skill-injected content) if provided, otherwise plain `content`.
     let effectivePrompt = prompt || content;
@@ -128,6 +122,19 @@ export async function POST(request: NextRequest) {
       effectivePrompt = `[Context from previous conversation]\n---\n${session.branch_summary}\n---\n\n${effectivePrompt}`;
     }
 
+    // Forward attached files to the Channels turn. The channel transport is
+    // text-only (no image/binary blocks), so instead we list the on-disk paths
+    // and let the model open them with the Read tool — Read handles images too.
+    // Uploads live in .codepilot-uploads/; path-refs point at tree-picked files.
+    const attachedPaths = [
+      ...(fileMeta?.map(f => ({ name: f.name, path: f.filePath })) ?? []),
+      ...pathRefs.map(r => ({ name: r.name, path: r.originalPath })),
+    ];
+    if (attachedPaths.length > 0) {
+      const list = attachedPaths.map(f => `- ${f.name}: ${f.path}`).join('\n');
+      effectivePrompt = `${effectivePrompt}\n\n[Attached files — use the Read tool to open them:\n${list}\n]`;
+    }
+
     const internalUrl = new URL(request.url).origin;
 
     const stream = streamChannels({
@@ -136,6 +143,8 @@ export async function POST(request: NextRequest) {
       workingDirectory: session.working_directory,
       model: effectiveModel,
       internalUrl,
+      mode: session.mode || undefined,
+      systemPrompt: session.system_prompt || undefined,
     });
 
     // Tee the stream: one for client, one for collecting the response

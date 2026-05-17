@@ -42,6 +42,8 @@ export interface ChannelsStreamOptions {
   workingDirectory: string;
   model?: string;
   internalUrl: string;          // CodePilot's own base URL, e.g. http://127.0.0.1:4000
+  mode?: string;                // permission mode for the channel session
+  systemPrompt?: string;        // extra system prompt for the channel session
 }
 
 const TURN_TIMEOUT_MS = 10 * 60_000;
@@ -63,6 +65,8 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
             model: opts.model,
             resume: resuming,
             internalUrl: opts.internalUrl,
+            mode: opts.mode,
+            systemPrompt: opts.systemPrompt,
           });
           emit({ type: 'status', data: JSON.stringify({ session_id: claudeSessionId }) });
 
