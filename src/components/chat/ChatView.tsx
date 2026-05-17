@@ -21,6 +21,8 @@ import { normalizeModeForBackend } from '@/lib/permission-modes';
 import { useContextHealth } from '@/hooks/useContextHealth';
 import { ContextHealthToast } from './ContextHealthToast';
 import type { HealthAction } from '@/lib/context-health';
+import type { Tier } from '@/lib/channels/tiers';
+import { TierSwitchPrompt } from './TierSwitchPrompt';
 
 interface ToolUseInfo {
   id: string;
@@ -320,6 +322,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
 
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
+  const [pendingTierSwitch, setPendingTierSwitch] = useState<{ from: Tier; to: Tier } | null>(null);
   const [pendingInputRequest, setPendingInputRequest] = useState<InputRequestEvent | null>(null);
   // Codex /goal state — populated by `thread/goal/updated` SSE events
   // during a live stream, and seeded from `/api/codex/goal` on mount so
@@ -456,6 +459,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
 
   // Ref to keep accumulated streaming content in sync regardless of React batching
   const accumulatedRef = useRef('');
+  // Ref to track the last user message content for tier-switch resend
+  const lastUserContentRef = useRef('');
   // Ref for accumulated thinking content (same purpose as accumulatedRef)
   const accumulatedThinkingRef = useRef('');
   // Ref for sendMessage to allow self-referencing in timeout auto-retry without circular deps
@@ -1011,6 +1016,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     async (content: string, files?: FileAttachment[], skillInfo?: { name: string; content: string }, codexSkills?: Array<{ name: string; path: string }>) => {
       if (isStreaming) return;
 
+      // Track last user message for tier-switch resend
+      lastUserContentRef.current = content;
+
       // Bump generation: any in-flight recovery polls from the previous stream
       // will see a generation mismatch and bail out, preventing them from
       // clobbering this new stream's messages/state.
@@ -1243,6 +1251,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           onRateLimit: (info) => {
             const key = info.rateLimitType || 'default';
             rateLimitsRef.current.set(key, info);
+          },
+          onTierExhausted: (from, to) => {
+            setPendingTierSwitch({ from, to });
           },
           onHeartbeat: () => {
             lastSseDataRef.current = Date.now();
@@ -1774,6 +1785,37 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         onDismissHealthAlert={dismissAlert}
         onEditMessage={currentBackend === 'codex' ? editAndResendCodex : undefined}
       />
+      {/* Tier-switch confirmation prompt */}
+      {pendingTierSwitch && (
+        <div className="mx-auto w-full max-w-3xl px-4 py-2">
+          <TierSwitchPrompt
+            from={pendingTierSwitch.from}
+            to={pendingTierSwitch.to}
+            onCancel={() => setPendingTierSwitch(null)}
+            onConfirm={async () => {
+              setPendingTierSwitch(null);
+              try {
+                const res = await fetch('/api/channels/switch-tier', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ sessionId }),
+                });
+                const { newTier } = await res.json() as { newTier: Tier };
+                setCurrentBackend(newTier);
+                // Defer resend: setCurrentBackend triggers a React state update,
+                // so sendMessage's closure would still see the old backend if called
+                // synchronously here. setTimeout(0) defers until after re-render.
+                const msgToResend = lastUserContentRef.current;
+                if (msgToResend) {
+                  setTimeout(() => sendMessageRef.current?.(msgToResend), 0);
+                }
+              } catch {
+                // Tier switch failed — dismiss prompt silently; user can retry manually
+              }
+            }}
+          />
+        </div>
+      )}
       {/* Advisor Mode Bar — Claude backend only */}
       {currentBackend === 'claude' && (() => {
         const hasMessages = messages.length > 0;
