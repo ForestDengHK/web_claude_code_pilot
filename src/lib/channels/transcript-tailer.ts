@@ -16,28 +16,39 @@ interface TranscriptEntry {
   message?: { content?: Array<Record<string, unknown>> };
 }
 
-/** Pure: convert raw transcript entries into SSEEvents. Only assistant content. */
+/**
+ * Pure: convert raw transcript entries into SSEEvents.
+ * Assistant entries are processed fully (text / thinking / tool_use).
+ * User entries are processed for tool_result blocks only — their text blocks
+ * are CodePilot-side echoes of the prompt and are ignored.
+ */
 export function transcriptEntriesToEvents(entries: TranscriptEntry[]): SSEEvent[] {
   const out: SSEEvent[] = [];
   for (const entry of entries) {
-    if (entry.type !== 'assistant') continue;
-    if (entry.error && /rate.?limit|usage.?limit/i.test(entry.error)) {
+    if (entry.type !== 'assistant' && entry.type !== 'user') continue;
+    const isAssistant = entry.type === 'assistant';
+    if (isAssistant && entry.error && /rate.?limit|usage.?limit/i.test(entry.error)) {
       out.push({ type: 'rate_limit', data: JSON.stringify({ tier: 'channels' }) });
     }
     const content = entry.message?.content ?? [];
     for (const block of content) {
       const t = block.type as string;
-      if (t === 'text') {
+      if (t === 'tool_result') {
+        // tool_result blocks arrive on user-type entries in Claude Code's
+        // transcript; emit them for both entry kinds.
+        out.push({ type: 'tool_result', data: JSON.stringify({
+          tool_use_id: block.tool_use_id, content: block.content,
+        }) });
+      } else if (!isAssistant) {
+        // User entries: only tool_result blocks are relevant; skip text/etc.
+        continue;
+      } else if (t === 'text') {
         out.push({ type: 'text', data: String(block.text ?? '') });
       } else if (t === 'thinking') {
         out.push({ type: 'thinking', data: String(block.thinking ?? '') });
       } else if (t === 'tool_use') {
         out.push({ type: 'tool_use', data: JSON.stringify({
           id: block.id, name: block.name, input: block.input,
-        }) });
-      } else if (t === 'tool_result') {
-        out.push({ type: 'tool_result', data: JSON.stringify({
-          tool_use_id: block.tool_use_id, content: block.content,
         }) });
       }
     }
@@ -58,10 +69,14 @@ export function tailTranscript(
   let offset = 0;
   try { offset = fs.statSync(filePath).size; } catch { offset = 0; }
   let stopped = false;
+  // Carry-over for a JSON line split across two poll reads (no trailing \n yet).
+  let leftover = '';
 
   const readNew = () => {
     if (stopped) return;
     let size = 0;
+    // TOCTOU: the file may grow/shrink between statSync and openSync; an
+    // accepted limitation of a polling tailer — the next tick reconciles.
     try { size = fs.statSync(filePath).size; } catch { return; }
     if (size <= offset) return;
     const fd = fs.openSync(filePath, 'r');
@@ -69,10 +84,15 @@ export function tailTranscript(
     fs.readSync(fd, buf, 0, buf.length, offset);
     fs.closeSync(fd);
     offset = size;
-    const lines = buf.toString('utf8').split('\n').filter(Boolean);
+    const chunk = leftover + buf.toString('utf8');
+    const lines = chunk.split('\n');
+    // The last element is the unterminated tail (or '' if chunk ended in \n);
+    // keep it for the next tick.
+    leftover = lines.pop() ?? '';
     const entries: TranscriptEntry[] = [];
     for (const line of lines) {
-      try { entries.push(JSON.parse(line)); } catch { /* partial line; ignored */ }
+      if (!line) continue;
+      try { entries.push(JSON.parse(line)); } catch { /* malformed line; ignored */ }
     }
     if (entries.length) onEvents(transcriptEntriesToEvents(entries));
   };
