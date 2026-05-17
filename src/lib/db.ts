@@ -509,7 +509,7 @@ export function createSession(
   systemPrompt?: string,
   workingDirectory?: string,
   mode?: string,
-  backend?: 'claude' | 'codex',
+  backend?: 'claude' | 'codex' | 'channels',
   branchSummary?: string | null,
   branchSourceSessionId?: string | null,
 ): ChatSession {
@@ -567,7 +567,7 @@ export function updateChannelSessionId(sessionId: string, channelSessionId: stri
   db.prepare('UPDATE chat_sessions SET channel_session_id = ? WHERE id = ?').run(channelSessionId, sessionId);
 }
 
-export function updateSessionBackend(id: string, backend: 'claude' | 'codex'): void {
+export function updateSessionBackend(id: string, backend: 'claude' | 'codex' | 'channels'): void {
   const db = getDb();
   db.prepare('UPDATE chat_sessions SET backend = ? WHERE id = ?').run(backend, id);
 }

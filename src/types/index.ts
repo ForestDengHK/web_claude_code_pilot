@@ -239,7 +239,7 @@ export interface CreateSessionRequest {
   system_prompt?: string;
   working_directory?: string;
   mode?: string;
-  backend?: 'claude' | 'codex';
+  backend?: 'claude' | 'codex' | 'channels';
   branch_summary?: string;
   branch_source_session_id?: string;
 }
