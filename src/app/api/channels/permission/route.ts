@@ -13,8 +13,12 @@ export async function POST(req: NextRequest) {
   if (!session || session.state === 'exited') {
     return NextResponse.json({ error: 'no live channel session' }, { status: 409 });
   }
-  const res = await fetch(`http://127.0.0.1:${session.channelPort}/verdict`, {
-    method: 'POST', body: formatVerdict(requestId, allow),
-  });
-  return NextResponse.json({ ok: res.ok });
+  try {
+    const res = await fetch(`http://127.0.0.1:${session.channelPort}/verdict`, {
+      method: 'POST', body: formatVerdict(requestId, allow),
+    });
+    return NextResponse.json({ ok: res.ok });
+  } catch {
+    return NextResponse.json({ ok: false, error: 'verdict delivery failed' }, { status: 502 });
+  }
 }
