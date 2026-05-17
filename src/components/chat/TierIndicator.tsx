@@ -9,7 +9,9 @@ import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
 
-const TIERS: Tier[] = ['channels', 'claude', 'codex'];
+// The menu only switches between T1 (Channels) and T2 (Agent SDK). Codex (T3)
+// is reached by picking a Codex model, not from this menu.
+const SWITCHABLE_TIERS: Tier[] = ['channels', 'claude'];
 
 interface TierIndicatorProps {
   tier: Tier;
@@ -46,7 +48,7 @@ export function TierIndicator({ tier, onSelectTier }: TierIndicatorProps) {
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
-        {TIERS.map((t) => (
+        {SWITCHABLE_TIERS.map((t) => (
           <DropdownMenuItem
             key={t}
             onSelect={() => { if (t !== tier) onSelectTier(t); }}
