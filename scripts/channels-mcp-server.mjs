@@ -16,11 +16,12 @@ const log = (...a) => console.error('[channels-mcp]', SESSION_ID, ...a);
 
 async function toCodePilot(kind, payload) {
   try {
-    await fetch(`${INTERNAL_URL}/api/channels/internal`, {
+    const res = await fetch(`${INTERNAL_URL}/api/channels/internal`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId: SESSION_ID, kind, ...payload }),
     });
+    if (!res.ok) log('toCodePilot non-ok', kind, res.status);
   } catch (e) { log('toCodePilot failed', kind, String(e)); }
 }
 
@@ -80,6 +81,7 @@ let chatSeq = 1;
 const VERDICT_RE = /^\s*(allow|deny):([a-km-z]{5})\s*$/i;
 const server = http.createServer((req, res) => {
   if (req.method !== 'POST') { res.writeHead(404); res.end(); return; }
+  req.setEncoding('utf8');
   let body = '';
   req.on('data', (c) => (body += c));
   req.on('end', async () => {
@@ -89,6 +91,7 @@ const server = http.createServer((req, res) => {
         method: 'notifications/claude/channel',
         params: { content: body, meta: { chat_id: chatId } },
       });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, chatId }));
       return;
     }
