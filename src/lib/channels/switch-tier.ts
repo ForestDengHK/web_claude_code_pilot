@@ -26,6 +26,20 @@ export function seedSdkResumeFromChannel(sessionId: string): void {
 }
 
 /**
+ * Manually switch a conversation to an explicit tier, any direction. Unlike
+ * applyTierSwitch (driven by exhaustion, always the next tier, discards the
+ * failed turn), this is driven by the user picking a tier and only changes
+ * the backend — no turn is discarded and nothing is resent.
+ */
+export function switchToTier(sessionId: string, target: Tier): void {
+  const s = getSession(sessionId);
+  if (s?.backend === 'channels' && target !== 'channels') {
+    seedSdkResumeFromChannel(sessionId);
+  }
+  getDb().prepare(`UPDATE chat_sessions SET backend = ? WHERE id = ?`).run(target, sessionId);
+}
+
+/**
  * Drop the rate-limited turn — the trailing user message and anything saved
  * after it (the dead/partial assistant message). The tier-switch caller
  * resends that message on the new tier, so leaving the old copy would show a

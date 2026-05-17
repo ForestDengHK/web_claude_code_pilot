@@ -95,6 +95,23 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
     return () => window.removeEventListener('session-backend-changed', handleBackendChanged);
   }, [id]);
 
+  // Manual tier switch from the TierIndicator menu: persist the backend
+  // server-side, update the indicator, and tell ChatView to route future
+  // messages to the new tier. Unlike the exhaustion flow, nothing is resent.
+  const handleSelectTier = useCallback(async (target: Tier) => {
+    try {
+      await fetch('/api/channels/switch-tier', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: id, targetTier: target }),
+      });
+      setSessionBackend(target);
+      window.dispatchEvent(new CustomEvent('tier-switch-requested', {
+        detail: { id, backend: target },
+      }));
+    } catch { /* silent — user can retry from the menu */ }
+  }, [id]);
+
   // Load session info and set working directory
   useEffect(() => {
     setSessionInfoLoaded(false);
@@ -204,7 +221,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
               <span className="text-xs text-muted-foreground shrink-0">/</span>
             </>
           )}
-          <TierIndicator tier={sessionBackend as Tier} />
+          <TierIndicator tier={sessionBackend as Tier} onSelectTier={handleSelectTier} />
           {isEditingTitle ? (
             <div>
               <Input

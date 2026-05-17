@@ -10,7 +10,7 @@ process.env.CLAUDE_GUI_DATA_DIR = tmpDir;
 // Use require to avoid top-level await issues with CJS output (matches channels-db.test.ts style)
 /* eslint-disable @typescript-eslint/no-require-imports */
 const { getDb, createSession, getSession, addMessage } = require('../../lib/db') as typeof import('../../lib/db');
-const { applyTierSwitch, discardExhaustedTurn } = require('../../lib/channels/switch-tier') as typeof import('../../lib/channels/switch-tier');
+const { applyTierSwitch, discardExhaustedTurn, switchToTier } = require('../../lib/channels/switch-tier') as typeof import('../../lib/channels/switch-tier');
 
 test('applyTierSwitch moves channels -> claude', () => {
   getDb();
@@ -44,4 +44,15 @@ test('discardExhaustedTurn drops the trailing user message and everything after 
 test('discardExhaustedTurn is a no-op when there are no messages', () => {
   const s = createSession('t4', undefined, undefined, tmpDir, undefined, 'channels');
   assert.doesNotThrow(() => discardExhaustedTurn(s.id));
+});
+
+test('switchToTier changes backend to an arbitrary target without discarding messages', () => {
+  const s = createSession('t5', undefined, undefined, tmpDir, undefined, 'channels');
+  addMessage(s.id, 'user', 'keep me', null, 'channels');
+  switchToTier(s.id, 'codex');
+  assert.equal(getSession(s.id)?.backend, 'codex');
+  const rows = getDb()
+    .prepare('SELECT content FROM messages WHERE session_id = ?')
+    .all(s.id) as Array<{ content: string }>;
+  assert.deepEqual(rows, [{ content: 'keep me' }]);
 });

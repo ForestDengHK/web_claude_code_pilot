@@ -394,6 +394,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   }, [sessionId]);
 
   const setCurrentBackend = useCallback((newBackend: 'claude' | 'codex' | 'channels') => {
+    if (newBackend === currentBackend) return;
     setCurrentBackendRaw(newBackend);
     window.dispatchEvent(new CustomEvent('session-backend-changed', { detail: { id: sessionId, backend: newBackend } }));
     // Renormalize mode for the new backend's vocabulary. Values that don't
@@ -424,7 +425,19 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         }
       }).catch(() => { /* silent */ });
     }
-  }, [sessionId, mode]);
+  }, [sessionId, mode, currentBackend]);
+
+  // Manual tier switch initiated from the title-bar TierIndicator. The page
+  // already persisted the backend server-side; here we just sync currentBackend
+  // so future messages route to the new tier's endpoint.
+  useEffect(() => {
+    function handleTierSwitchRequested(e: Event) {
+      const detail = (e as CustomEvent<{ id: string; backend: 'claude' | 'codex' | 'channels' }>).detail;
+      if (detail.id === sessionId) setCurrentBackend(detail.backend);
+    }
+    window.addEventListener('tier-switch-requested', handleTierSwitchRequested);
+    return () => window.removeEventListener('tier-switch-requested', handleTierSwitchRequested);
+  }, [sessionId, setCurrentBackend]);
 
   const setCurrentAdvisorModel = useCallback((newAdvisorModel: string | null) => {
     setCurrentAdvisorModelRaw(newAdvisorModel);
