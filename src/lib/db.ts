@@ -659,7 +659,7 @@ export function addMessage(
   role: 'user' | 'assistant',
   content: string,
   tokenUsage?: string | null,
-  backend?: 'claude' | 'codex' | null,
+  backend?: 'claude' | 'codex' | 'channels' | null,
 ): Message {
   const db = getDb();
   const id = crypto.randomBytes(16).toString('hex');
@@ -687,7 +687,7 @@ export function addMessage(
 export function addDraftMessage(
   sessionId: string,
   content: string,
-  backend?: 'claude' | 'codex' | null,
+  backend?: 'claude' | 'codex' | 'channels' | null,
 ): Message {
   const db = getDb();
   const id = crypto.randomBytes(16).toString('hex');
