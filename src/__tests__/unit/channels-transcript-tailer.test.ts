@@ -49,3 +49,10 @@ test('transcriptPath builds ~/.claude/projects/<encoded>/<id>.jsonl', () => {
   );
   assert.equal(result, expected);
 });
+
+test('assistant entry with rate-limit error emits a rate_limit SSEEvent', () => {
+  const entry = { type: 'assistant', error: 'rate_limit', message: { content: [] } };
+  const events = transcriptEntriesToEvents([entry]);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].type, 'rate_limit');
+});
