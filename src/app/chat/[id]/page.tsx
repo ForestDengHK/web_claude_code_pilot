@@ -10,6 +10,8 @@ import { DownloadMenu } from '@/components/chat/DownloadMenu';
 import { Input } from '@/components/ui/input';
 import { usePanel } from '@/hooks/usePanel';
 import { normalizeClaudeMode } from '@/lib/permission-modes';
+import { TierIndicator } from '@/components/chat/TierIndicator';
+import type { Tier } from '@/lib/channels/tiers';
 
 interface ChatSessionPageProps {
   params: Promise<{ id: string }>;
@@ -80,6 +82,18 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
       titleInputRef.current.select();
     }
   }, [isEditingTitle]);
+
+  // Listen for live tier-switch events emitted by ChatView
+  useEffect(() => {
+    function handleBackendChanged(e: Event) {
+      const detail = (e as CustomEvent<{ id: string; backend: Tier }>).detail;
+      if (detail.id === id) {
+        setSessionBackend(detail.backend);
+      }
+    }
+    window.addEventListener('session-backend-changed', handleBackendChanged);
+    return () => window.removeEventListener('session-backend-changed', handleBackendChanged);
+  }, [id]);
 
   // Load session info and set working directory
   useEffect(() => {
@@ -190,6 +204,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
               <span className="text-xs text-muted-foreground shrink-0">/</span>
             </>
           )}
+          <TierIndicator tier={sessionBackend as Tier} />
           {isEditingTitle ? (
             <div>
               <Input

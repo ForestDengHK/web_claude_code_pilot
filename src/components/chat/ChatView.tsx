@@ -395,6 +395,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
 
   const setCurrentBackend = useCallback((newBackend: 'claude' | 'codex' | 'channels') => {
     setCurrentBackendRaw(newBackend);
+    window.dispatchEvent(new CustomEvent('session-backend-changed', { detail: { id: sessionId, backend: newBackend } }));
     // Renormalize mode for the new backend's vocabulary. Values that don't
     // belong (e.g. Claude 'acceptEdits' when switching to Codex) fall back to
     // the new backend's default; user-chosen values in the right vocabulary
