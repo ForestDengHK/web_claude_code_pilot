@@ -588,8 +588,13 @@ export function MessageInput({
         const preferred = allModels.find((model) => model.value === preferredValue);
         if (preferred) {
           onModelChange?.(preferred.value);
-          // Auto-set backend based on model group
-          const newBackend = preferred.group === 'codex' ? 'codex' : 'claude';
+          // Auto-set backend based on model group. Claude-family models work
+          // with both 'claude' (T2 SDK) and 'channels' (T1) backends, so don't
+          // demote 'channels' to 'claude' here — only switch when the model
+          // group disagrees with the current backend.
+          const newBackend = preferred.group === 'codex'
+            ? 'codex'
+            : (backend === 'channels' ? 'channels' : 'claude');
           if (newBackend !== backend) onBackendChange?.(newBackend);
           // Auto-set default effort
           if (!effort) {

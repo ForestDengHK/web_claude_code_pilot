@@ -1594,9 +1594,11 @@ export function isMemoryEnabled(sessionId: string): boolean {
     return session.memory_enabled === 1;
   }
 
-  // Global default from settings
+  // Global default from settings. Stored as 'false' when the user explicitly
+  // disables it; absence (or 'true') reads as enabled — so memory is on by
+  // default for new installs and only off when the user opts out.
   const globalSetting = getSetting('memory_enabled');
-  return globalSetting === 'true';
+  return globalSetting !== 'false';
 }
 
 export function hasSessionInjectedMemory(sessionId: string): boolean {

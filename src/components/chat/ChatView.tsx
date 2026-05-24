@@ -205,7 +205,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         }
       }
       if (settingsData?.settings) {
-        setMemoryGlobalDefault(settingsData.settings.memory_enabled === 'true');
+        setMemoryGlobalDefault(settingsData.settings.memory_enabled !== 'false');
         let contextHealthConfig = {};
         if (settingsData.settings.context_health_config) {
           try {

@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { streamChannels } from '@/lib/channels-client';
-import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting } from '@/lib/db';
+import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected } from '@/lib/db';
 import { sendPushNotification } from '@/lib/push-notifications';
 import { registerAbort, unregisterAbort } from '@/lib/abort-registry';
 import {
@@ -120,6 +120,17 @@ export async function POST(request: NextRequest) {
     // Only inject when there is no sdk_session_id yet (first turn — subsequent turns use resume).
     if (session.branch_summary && !session.sdk_session_id) {
       effectivePrompt = `[Context from previous conversation]\n---\n${session.branch_summary}\n---\n\n${effectivePrompt}`;
+    }
+
+    // Inject memory context at most once per session, regardless of backend switches.
+    // Mirrors the T2 (claude SDK) route — T1 has no built-in memory, so without this
+    // toggling Memory ON in the UI would be a no-op when the channels backend is active.
+    if (!hasSessionInjectedMemory(session_id) && isMemoryEnabled(session_id) && session.working_directory) {
+      const memoryContext = buildMemoryContext(session.working_directory);
+      if (memoryContext) {
+        effectivePrompt = `${memoryContext}\n\n---\n\n${effectivePrompt}`;
+        markSessionMemoryInjected(session_id);
+      }
     }
 
     // Forward attached files to the Channels turn. The channel transport is
