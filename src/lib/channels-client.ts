@@ -119,12 +119,22 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
             model: undefined as string | undefined,
           };
           let sawUsage = false;
+          // Track whether the transcript already streamed natural text for
+          // this turn. The MCP `reply` tool's text argument is the model's
+          // full final answer — when the model writes natural text AND calls
+          // reply (the normal case, encouraged by the MCP server instructions),
+          // emitting ev.text in the reply handler appends the same answer a
+          // second time. Only fall back to ev.text when no transcript text
+          // arrived (model used only the reply tool).
+          let sawTextFromTranscript = false;
           const tail = tailTranscript(
             transcriptPath(opts.workingDirectory, claudeSessionId),
             (events) => {
               bumpStall(); // transcript grew → the process is alive
               for (const e of events) {
-                if (e.type === 'tool_use') {
+                if (e.type === 'text') {
+                  sawTextFromTranscript = true;
+                } else if (e.type === 'tool_use') {
                   try {
                     const d = JSON.parse(e.data);
                     if (d.name === 'mcp__codepilot__reply') {
@@ -249,7 +259,18 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
               if (done) return; done = true;
               setTimeout(() => {
                 cleanup();
-                finish(ev.text, sawUsage ? turnUsage : undefined);
+                // If the transcript already streamed the model's natural text
+                // for this turn, ev.text repeats the same content (the MCP
+                // server tells the model to put its full final answer in the
+                // reply tool's `text` arg, but the model also writes it as
+                // natural text first). Skip the re-emit in that case to avoid
+                // duplicating the answer in the saved message. When no
+                // transcript text arrived (model used only the reply tool),
+                // fall back to ev.text so the answer isn't lost.
+                finish(
+                  sawTextFromTranscript ? '' : ev.text,
+                  sawUsage ? turnUsage : undefined,
+                );
               }, 400);
             }
           });
