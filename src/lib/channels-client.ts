@@ -3,6 +3,7 @@ import { getSession as getDbSession, updateChannelSessionId } from './db';
 import { ensureSession, killSession } from './channels/session-manager';
 import { tailTranscript, transcriptPath } from './channels/transcript-tailer';
 import { subscribeChannelEvents } from './channels/event-bus';
+import { loadEnabledPluginPaths, loadMergedMcpServers } from './claude-config-loader';
 import type { SSEEvent } from '@/types';
 
 function sse(event: SSEEvent): string {
@@ -63,6 +64,8 @@ export interface ChannelsStreamOptions {
   internalUrl: string;          // CodePilot's own base URL, e.g. http://127.0.0.1:4000
   mode?: string;                // permission mode for the channel session
   systemPrompt?: string;        // extra system prompt for the channel session
+  effort?: string;              // reasoning effort level (low/medium/high/xhigh/max)
+  skipPermissions?: boolean;    // shield toggle — adds --dangerously-skip-permissions
   /**
    * AbortSignal that, when triggered, immediately fails the turn AND kills the
    * underlying PTY process. Required for the user's Stop button: without this,
@@ -100,6 +103,13 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           const claudeSessionId = db?.channel_session_id ?? randomUUID();
           if (!resuming) updateChannelSessionId(opts.sessionId, claudeSessionId);
 
+          // Load plugins + user/project MCP servers via the shared loader
+          // so T1 sees the same set as T2. Done per turn (not cached) so the
+          // configChanged check picks up changes the user makes between turns,
+          // e.g. installing a new plugin or editing .mcp.json.
+          const pluginPaths = loadEnabledPluginPaths();
+          const extraMcpServers = loadMergedMcpServers(opts.workingDirectory);
+
           const session = await ensureSession({
             codepilotSessionId: opts.sessionId,
             claudeSessionId,
@@ -109,6 +119,10 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
             internalUrl: opts.internalUrl,
             mode: opts.mode,
             systemPrompt: opts.systemPrompt,
+            effort: opts.effort,
+            skipPermissions: opts.skipPermissions,
+            extraMcpServers,
+            pluginPaths,
           });
           emit({ type: 'status', data: JSON.stringify({ session_id: claudeSessionId }) });
 

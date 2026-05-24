@@ -57,6 +57,60 @@ test('buildSpawnArgs ignores an invalid permission mode', () => {
   assert.ok(!args.includes('--permission-mode'));
 });
 
+test('buildSpawnArgs adds --effort for a valid effort level', () => {
+  const args = buildSpawnArgs({
+    claudeSessionId: 'U-5', mcpConfigJson: '{}', effort: 'xhigh',
+  });
+  const i = args.indexOf('--effort');
+  assert.ok(i >= 0 && args[i + 1] === 'xhigh');
+});
+
+test('buildSpawnArgs drops a malformed effort value', () => {
+  // Malformed values (digits, symbols, oversize) are rejected by sanitizeEffortLevel
+  // so the CLI falls back to the model's default effort instead of erroring.
+  const args = buildSpawnArgs({
+    claudeSessionId: 'U-6', mcpConfigJson: '{}', effort: 'high!!',
+  });
+  assert.ok(!args.includes('--effort'));
+});
+
+test('buildSpawnArgs adds --dangerously-skip-permissions when skipPermissions is true', () => {
+  const args = buildSpawnArgs({
+    claudeSessionId: 'U-7', mcpConfigJson: '{}', skipPermissions: true,
+  });
+  assert.ok(args.includes('--dangerously-skip-permissions'));
+});
+
+test('buildSpawnArgs omits --dangerously-skip-permissions when off', () => {
+  const args = buildSpawnArgs({
+    claudeSessionId: 'U-8', mcpConfigJson: '{}', skipPermissions: false,
+  });
+  assert.ok(!args.includes('--dangerously-skip-permissions'));
+});
+
+test('buildSpawnArgs emits one --plugin-dir per pluginPaths entry', () => {
+  const args = buildSpawnArgs({
+    claudeSessionId: 'U-9', mcpConfigJson: '{}',
+    pluginPaths: ['/path/one', '/path/two'],
+  });
+  // Pair up flag with the path that immediately follows it.
+  const paired: Array<[string, string]> = [];
+  for (let i = 0; i < args.length - 1; i++) {
+    if (args[i] === '--plugin-dir') paired.push([args[i], args[i + 1]]);
+  }
+  assert.deepStrictEqual(paired, [
+    ['--plugin-dir', '/path/one'],
+    ['--plugin-dir', '/path/two'],
+  ]);
+});
+
+test('buildSpawnArgs omits --plugin-dir when pluginPaths is empty', () => {
+  const args = buildSpawnArgs({
+    claudeSessionId: 'U-10', mcpConfigJson: '{}', pluginPaths: [],
+  });
+  assert.ok(!args.includes('--plugin-dir'));
+});
+
 test('allocatePort returns a usable TCP port', async () => {
   const p = await allocatePort();
   assert.ok(p > 1024 && p < 65536);
