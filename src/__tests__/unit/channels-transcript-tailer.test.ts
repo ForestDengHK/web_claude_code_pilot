@@ -113,3 +113,25 @@ test('assistant entry with no stop_reason does NOT emit turn_complete', () => {
   const events = transcriptEntriesToEvents([entry]);
   assert.ok(!events.some((e) => e.type === 'turn_complete'));
 });
+
+test('synthetic assistant entry (model "<synthetic>") emits no events', () => {
+  // `claude --resume` injects this when it classifies the prior turn as
+  // interrupted. Without filtering, its stop_sequence would fire turn_complete
+  // and close the stream before the real reply arrives.
+  const entry = { type: 'assistant', message: {
+    model: '<synthetic>',
+    stop_reason: 'stop_sequence',
+    content: [{ type: 'text', text: 'No response requested.' }],
+    usage: { input_tokens: 0, output_tokens: 0 },
+  } };
+  assert.deepEqual(transcriptEntriesToEvents([entry]), []);
+});
+
+test('isMeta user entry ("Continue from where you left off.") emits no events', () => {
+  // The other half of the synthetic recovery pair the SDK writes on resume.
+  const entry = {
+    type: 'user', isMeta: true,
+    message: { content: [{ type: 'text', text: 'Continue from where you left off.' }] },
+  };
+  assert.deepEqual(transcriptEntriesToEvents([entry]), []);
+});

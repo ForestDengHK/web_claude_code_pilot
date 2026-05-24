@@ -12,6 +12,7 @@ export function transcriptPath(cwd: string, claudeSessionId: string): string {
 
 interface TranscriptEntry {
   type?: string;
+  isMeta?: boolean;
   error?: string;
   message?: {
     content?: Array<Record<string, unknown>>;
@@ -31,6 +32,18 @@ export function transcriptEntriesToEvents(entries: TranscriptEntry[]): SSEEvent[
   const out: SSEEvent[] = [];
   for (const entry of entries) {
     if (entry.type !== 'assistant' && entry.type !== 'user') continue;
+    // Drop SDK-internal recovery messages. When `claude --resume` loads a
+    // transcript whose last turn ended on a tool_result from a non-built-in
+    // tool (the `mcp__codepilot__reply` we always use), it treats the turn as
+    // interrupted and synthesises a pair: a `{user "Continue from where you
+    // left off.", isMeta:true}` and an `{assistant model:"<synthetic>",
+    // stop_reason:"stop_sequence", "No response requested."}`. The pair is
+    // CLI bookkeeping — never sent to the model — but `stop_sequence` is a
+    // terminal stop reason, so without this filter the tailer surfaces the
+    // synthetic text as the turn's response and fires turn_complete, closing
+    // the stream before the real reply arrives.
+    if (entry.isMeta) continue;
+    if (entry.type === 'assistant' && entry.message?.model === '<synthetic>') continue;
     const isAssistant = entry.type === 'assistant';
     if (isAssistant && entry.error && /rate.?limit|usage.?limit/i.test(entry.error)) {
       out.push({ type: 'rate_limit', data: JSON.stringify({ tier: 'channels' }) });
