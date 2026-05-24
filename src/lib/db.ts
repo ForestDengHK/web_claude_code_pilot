@@ -867,14 +867,19 @@ export function updateLastBridgedMsgId(sessionId: string, backend: 'claude' | 'c
 /**
  * Get the backend that handled the last assistant message in a session.
  * Returns null if there are no assistant messages or no backend is recorded.
+ *
+ * The return type includes 'channels' because T1 messages are stored with
+ * that value; callers compare against the runtime string, so casting to a
+ * narrower union here used to silently mis-route Channels(T1)↔SDK(T2)
+ * transitions through the cross-vendor bridge path.
  */
-export function getLastAssistantBackend(sessionId: string): 'claude' | 'codex' | null {
+export function getLastAssistantBackend(sessionId: string): 'claude' | 'codex' | 'channels' | null {
   const db = getDb();
   const row = db.prepare(
     "SELECT backend FROM messages WHERE session_id = ? AND role = 'assistant' ORDER BY rowid DESC LIMIT 1"
   ).get(sessionId) as { backend: string | null } | undefined;
   if (!row?.backend) return null;
-  return row.backend as 'claude' | 'codex';
+  return row.backend as 'claude' | 'codex' | 'channels';
 }
 
 export function clearSessionMessages(sessionId: string): void {
