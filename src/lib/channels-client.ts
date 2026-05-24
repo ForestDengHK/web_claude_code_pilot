@@ -63,6 +63,13 @@ export interface ChannelsStreamOptions {
   internalUrl: string;          // CodePilot's own base URL, e.g. http://127.0.0.1:4000
   mode?: string;                // permission mode for the channel session
   systemPrompt?: string;        // extra system prompt for the channel session
+  /**
+   * AbortSignal that, when triggered, immediately fails the turn AND kills the
+   * underlying PTY process. Required for the user's Stop button: without this,
+   * killing the PTY externally still leaves the stream hanging until
+   * STALL_TIMEOUT_MS (~150s) of transcript silence elapses.
+   */
+  abortSignal?: AbortSignal;
 }
 
 const TURN_TIMEOUT_MS = 10 * 60_000;
@@ -278,6 +285,20 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           // Arm the stall watchdog now that the turn is underway. Covers the
           // case where the process produces no transcript output at all.
           bumpStall();
+
+          // User Stop / Force Stop: abort immediately. T1 has no graceful
+          // turn-cancel primitive in the channel protocol, so we fail the
+          // turn AND kill the PTY. The session resumes on the next user
+          // message via --resume against the transcript on disk.
+          if (opts.abortSignal) {
+            if (opts.abortSignal.aborted) {
+              failAndKill('stopped by user');
+            } else {
+              opts.abortSignal.addEventListener('abort', () => {
+                failAndKill('stopped by user');
+              }, { once: true });
+            }
+          }
 
           const res = await fetch(`http://127.0.0.1:${session.channelPort}/push`, {
             method: 'POST', body: opts.prompt,

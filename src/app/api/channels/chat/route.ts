@@ -3,6 +3,7 @@ import { streamChannels } from '@/lib/channels-client';
 import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected } from '@/lib/db';
 import { sendPushNotification } from '@/lib/push-notifications';
 import { registerAbort, unregisterAbort } from '@/lib/abort-registry';
+import { killSession as killChannelSession } from '@/lib/channels/session-manager';
 import {
   initStreamBuffer,
   appendStreamText,
@@ -112,6 +113,36 @@ export async function POST(request: NextRequest) {
     // returns and recovery polling kicks in, the full response is already in the DB.
     registerAbort(session_id, abortController);
 
+    // Wire the AbortController to actually terminate the channel turn. The T1
+    // (channels) protocol has no turn-level interrupt primitive — `claude
+    // --channels` exposes no "cancel current turn" command — so the only way
+    // to stop an in-flight turn is to SIGKILL the underlying PTY process.
+    //
+    // Two layers cooperate here:
+    //  1. The signal is forwarded into `streamChannels` (below) so the
+    //     streaming side fails fast and closes the SSE stream immediately
+    //     (otherwise we'd wait ~150s for the stall watchdog).
+    //  2. This belt-and-braces listener ensures the PTY is actually reaped
+    //     even if the stream-side fail path somehow misses (e.g. abort fires
+    //     before ensureSession resolves, or `failAndKill` early-returns).
+    //
+    // Session state is preserved on disk so the conversation survives:
+    //  - `channel_session_id` lives in SQLite
+    //  - the transcript .jsonl keeps full history
+    //  - the next user message respawns the PTY via `--resume`
+    //
+    // Consequences for T1:
+    //  - Stop and Force Stop are equivalent (no graceful half-step).
+    //  - Next message has ~10s respawn latency.
+    //  - A partial tool_use may remain in the transcript; the resumed model
+    //    handles it as it would any abrupt termination.
+    //
+    // T2 (Claude SDK) is unaffected: it goes through `interruptSession()` →
+    // `q.interrupt()` for graceful stop and never touches this signal.
+    abortController.signal.addEventListener('abort', () => {
+      try { killChannelSession(session_id); } catch { /* best effort */ }
+    }, { once: true });
+
     // Stream Channels response.
     // Use `prompt` (skill-injected content) if provided, otherwise plain `content`.
     let effectivePrompt = prompt || content;
@@ -156,6 +187,7 @@ export async function POST(request: NextRequest) {
       internalUrl,
       mode: session.mode || undefined,
       systemPrompt: session.system_prompt || undefined,
+      abortSignal: abortController.signal,
     });
 
     // Tee the stream: one for client, one for collecting the response
