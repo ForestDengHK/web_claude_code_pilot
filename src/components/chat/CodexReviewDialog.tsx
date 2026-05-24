@@ -516,7 +516,7 @@ export function CodexReviewDialog({
                 </div>
                 <div className="rounded-xl border bg-card p-5">
                   <Streamdown
-                    className="prose prose-sm max-w-none text-[14px] leading-7 dark:prose-invert [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:pl-6 [&_ol]:pl-6 [&_code]:font-mono [&_pre]:overflow-x-auto"
+                    className="prose prose-sm max-w-none text-[14px] leading-7 dark:prose-invert [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:pl-6 [&_ol]:pl-6 [&_code]:font-mono [&_pre]:overflow-x-auto [&_:not(pre)>code]:[overflow-wrap:anywhere]"
                     plugins={streamdownPlugins}
                   >
                     {reviewSummary}
@@ -669,7 +669,7 @@ export function CodexReviewDialog({
                     {/* Body */}
                     <div className="mt-4 text-[13.5px] leading-7 text-foreground/85">
                       <Streamdown
-                        className="prose prose-sm max-w-none dark:prose-invert [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:pl-6 [&_ol]:pl-6 [&_code]:font-mono [&_code]:text-[12px] [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:bg-muted/40"
+                        className="prose prose-sm max-w-none dark:prose-invert [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&_ul]:pl-6 [&_ol]:pl-6 [&_code]:font-mono [&_code]:text-[12px] [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:bg-muted/40 [&_:not(pre)>code]:[overflow-wrap:anywhere]"
                         plugins={streamdownPlugins}
                       >
                         {selectedFinding.body}

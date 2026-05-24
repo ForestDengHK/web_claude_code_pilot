@@ -583,6 +583,9 @@ export const MessageResponse = memo(
       <Streamdown
         className={cn(
           "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+          // Long inline code (paths, URLs) must wrap on narrow screens; without
+          // this, mobile messages can scroll horizontally and clip the tail.
+          "[&_:not(pre)>code]:[overflow-wrap:anywhere]",
           className
         )}
         components={streamdownComponents}

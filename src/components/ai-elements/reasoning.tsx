@@ -217,7 +217,11 @@ export const ReasoningContent = memo(
       )}
       {...props}
     >
-      <Streamdown plugins={streamdownPlugins} {...props}>
+      <Streamdown
+        plugins={streamdownPlugins}
+        className="[&_:not(pre)>code]:[overflow-wrap:anywhere]"
+        {...props}
+      >
         {children}
       </Streamdown>
     </CollapsibleContent>
