@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useTheme } from "next-themes";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Cancel01Icon, Copy01Icon, Tick01Icon, Loading02Icon, ArrowExpandIcon, ArrowShrinkIcon, PencilEdit02Icon } from "@hugeicons/core-free-icons";
+import { Cancel01Icon, Copy01Icon, Tick01Icon, Loading02Icon, ArrowExpandIcon, ArrowShrinkIcon, PencilEdit02Icon, Download04Icon } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,6 +31,7 @@ import { TTSButton } from "@/components/chat/TTSButton";
 import { findTextRange, highlightRange, scrollToRange } from "@/lib/tts/highlight";
 import { PinchZoomContainer } from "@/components/project/PinchZoomContainer";
 import type { FilePreview as FilePreviewType } from "@/types";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 
 const streamdownPlugins = { cjk, code, math, mermaid };
 
@@ -239,6 +240,11 @@ function ResolvedImg({
 
 type ViewMode = "source" | "rendered";
 
+type PdfLoadingTask = {
+  promise: Promise<PDFDocumentProxy>;
+  destroy: () => Promise<void>;
+};
+
 interface DocPreviewProps {
   filePath: string;
   viewMode: ViewMode;
@@ -252,6 +258,7 @@ const RENDERABLE_EXTENSIONS = new Set([
   ".md", ".mdx", ".html", ".htm",
   ".json", ".csv", ".tsv", ".svg", ".xml", ".yaml", ".yml",
   ".pdf",
+  ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp",
 ]);
 
 import { IMAGE_EXTENSIONS_SET as IMAGE_EXTENSIONS } from '@/lib/config';
@@ -288,6 +295,11 @@ function isSvg(filePath: string): boolean {
 
 function isPdf(filePath: string): boolean {
   return getExtension(filePath) === ".pdf";
+}
+
+function isOffice(filePath: string): boolean {
+  const ext = getExtension(filePath);
+  return [".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp"].includes(ext);
 }
 
 function isImage(filePath: string): boolean {
@@ -334,7 +346,8 @@ export function DocPreview({
   const isImageFile = isImage(filePath);
   const isVideoFile = isVideo(filePath);
   const isAudioFile = isAudio(filePath);
-  const isBinaryPreview = isPdfFile || isImageFile || isVideoFile || isAudioFile;
+  const isOfficeFile = isOffice(filePath);
+  const isBinaryPreview = isPdfFile || isImageFile || isVideoFile || isAudioFile || isOfficeFile;
   const isMarkdownFile = isMarkdown(filePath);
 
   // TTS for markdown preview
@@ -467,7 +480,7 @@ export function DocPreview({
     return () => {
       cancelled = true;
     };
-  }, [filePath, isBinaryPreview]);
+  }, [filePath, isBinaryPreview, workingDirectory]);
 
   const handleCopyContent = async () => {
     const text = preview?.content || filePath;
@@ -658,6 +671,8 @@ export function DocPreview({
           <ImageRenderedView filePath={filePath} baseDir={workingDirectory} />
         ) : isPdfFile ? (
           <PdfRenderedView filePath={filePath} baseDir={workingDirectory} />
+        ) : isOfficeFile ? (
+          <OfficeRenderedView filePath={filePath} baseDir={workingDirectory} />
         ) : preview ? (
           viewMode === "rendered" && canRender ? (
             <RenderedView
@@ -835,6 +850,10 @@ function RenderedView({
 
   if (isPdf(filePath)) {
     return <PdfRenderedView filePath={filePath} />;
+  }
+
+  if (isOffice(filePath)) {
+    return <OfficeRenderedView filePath={filePath} />;
   }
 
   const ext = getExtension(filePath);
@@ -1109,10 +1128,17 @@ function ImageRenderedView({ filePath, baseDir }: { filePath: string; baseDir?: 
 }
 
 /** Build the /api/files/raw URL with optional baseDir for scoped access */
-function rawFileUrl(filePath: string, baseDir?: string): string {
-  let url = `/api/files/raw?path=${encodeURIComponent(filePath)}`;
-  if (baseDir) url += `&baseDir=${encodeURIComponent(baseDir)}`;
-  return url;
+function rawFileUrl(filePath: string, baseDir?: string, download = false): string {
+  const params = new URLSearchParams({ path: filePath });
+  if (baseDir) params.set("baseDir", baseDir);
+  if (download) params.set("download", "1");
+  return `/api/files/raw?${params.toString()}`;
+}
+
+function officePreviewUrl(filePath: string, baseDir?: string): string {
+  const params = new URLSearchParams({ path: filePath });
+  if (baseDir) params.set("baseDir", baseDir);
+  return `/api/files/office-preview?${params.toString()}`;
 }
 
 /* ── Video Rendered View (HTML5 video with streaming) ── */
@@ -1169,14 +1195,239 @@ function AudioRenderedView({ filePath, baseDir }: { filePath: string; baseDir?: 
 /* ── PDF Rendered View (browser built-in viewer) ── */
 
 function PdfRenderedView({ filePath, baseDir }: { filePath: string; baseDir?: string }) {
-  const src = rawFileUrl(filePath, baseDir);
+  const fileName = filePath.split("/").pop() || "document.pdf";
   return (
-    <PinchZoomContainer iframeMode resetKey={filePath}>
-      <iframe
-        src={src}
-        className="h-full w-full border-0"
-        title="PDF Preview"
-      />
+    <PdfJsRenderedView
+      sourceUrl={rawFileUrl(filePath, baseDir)}
+      downloadUrl={rawFileUrl(filePath, baseDir, true)}
+      fileName={fileName}
+      resetKey={filePath}
+      loadingLabel="Loading PDF..."
+    />
+  );
+}
+
+/* ── Office Rendered View (server-side LibreOffice conversion to PDF) ── */
+
+function OfficeRenderedView({ filePath, baseDir }: { filePath: string; baseDir?: string }) {
+  const fileName = filePath.split("/").pop() || "document";
+  return (
+    <PdfJsRenderedView
+      sourceUrl={officePreviewUrl(filePath, baseDir)}
+      downloadUrl={rawFileUrl(filePath, baseDir, true)}
+      fileName={fileName}
+      resetKey={filePath}
+      loadingLabel="Creating preview..."
+      unavailableTitle="Office preview unavailable"
+      unavailableFallback="This file could not be converted for preview."
+    />
+  );
+}
+
+function PdfJsRenderedView({
+  sourceUrl,
+  downloadUrl,
+  fileName,
+  resetKey,
+  loadingLabel,
+  unavailableTitle = "PDF preview unavailable",
+  unavailableFallback = "This PDF could not be rendered for preview.",
+}: {
+  sourceUrl: string;
+  downloadUrl: string;
+  fileName: string;
+  resetKey: string;
+  loadingLabel: string;
+  unavailableTitle?: string;
+  unavailableFallback?: string;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [containerWidth, setContainerWidth] = useState(() =>
+    typeof window === "undefined" ? 480 : Math.max(320, window.innerWidth),
+  );
+
+  useEffect(() => {
+    const updateWidth = () => {
+      const el = containerRef.current;
+      const nextWidth = el?.clientWidth || window.innerWidth || 480;
+      setContainerWidth(Math.max(320, nextWidth));
+    };
+    updateWidth();
+
+    const observer = new ResizeObserver(updateWidth);
+    if (containerRef.current) observer.observe(containerRef.current);
+    window.addEventListener("resize", updateWidth);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateWidth);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let loadingTask: PdfLoadingTask | null = null;
+
+    async function loadPdf() {
+      setLoading(true);
+      setError(null);
+      setPdf(null);
+
+      try {
+        const pdfjs = await import("pdfjs-dist");
+        pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+          "pdfjs-dist/build/pdf.worker.mjs",
+          import.meta.url,
+        ).toString();
+
+        loadingTask = pdfjs.getDocument({
+          url: sourceUrl,
+          disableAutoFetch: false,
+          disableStream: false,
+        }) as PdfLoadingTask;
+
+        const loadedPdf = await loadingTask.promise;
+        if (!cancelled) setPdf(loadedPdf);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : unavailableFallback);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadPdf();
+
+    return () => {
+      cancelled = true;
+      loadingTask?.destroy().catch(() => {});
+    };
+  }, [sourceUrl, unavailableFallback]);
+
+  useEffect(() => {
+    return () => {
+      pdf?.destroy();
+    };
+  }, [pdf]);
+
+  if (loading) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+        <HugeiconsIcon icon={Loading02Icon} className="h-5 w-5 animate-spin text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">{loadingLabel}</p>
+      </div>
+    );
+  }
+
+  if (error || !pdf) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+        <div className="max-w-sm space-y-2">
+          <p className="text-sm font-medium text-foreground">{unavailableTitle}</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {error || unavailableFallback}
+          </p>
+        </div>
+        <Button asChild variant="secondary" size="sm" className="gap-1.5">
+          <a href={downloadUrl} download={fileName}>
+            <HugeiconsIcon icon={Download04Icon} className="h-3.5 w-3.5" />
+            Download
+          </a>
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <PinchZoomContainer iframeMode fill={false} originAnchor="top left" resetKey={resetKey}>
+      <div ref={containerRef} className="min-h-full bg-muted/35 px-3 py-4">
+        <div className="mx-auto flex w-full max-w-5xl flex-col items-center gap-4">
+          {Array.from({ length: pdf.numPages }, (_, idx) => (
+            <PdfCanvasPage
+              key={idx + 1}
+              pdf={pdf}
+              pageNumber={idx + 1}
+              containerWidth={containerWidth}
+            />
+          ))}
+        </div>
+      </div>
     </PinchZoomContainer>
+  );
+}
+
+function PdfCanvasPage({
+  pdf,
+  pageNumber,
+  containerWidth,
+}: {
+  pdf: PDFDocumentProxy;
+  pageNumber: number;
+  containerWidth: number;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [pageSize, setPageSize] = useState<{ width: number; height: number } | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const currentCanvas = canvas;
+
+    let cancelled = false;
+    let renderTask: { cancel: () => void; promise: Promise<void> } | null = null;
+
+    async function renderPage() {
+      const page = await pdf.getPage(pageNumber);
+      if (cancelled) return;
+
+      const baseViewport = page.getViewport({ scale: 1 });
+      const availableWidth = containerWidth || window.innerWidth || 480;
+      const targetWidth = Math.max(220, Math.min(availableWidth - 24, 980));
+      const scale = targetWidth / baseViewport.width;
+      const viewport = page.getViewport({ scale });
+      const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      const context = currentCanvas.getContext("2d");
+      if (!context) return;
+
+      currentCanvas.width = Math.floor(viewport.width * ratio);
+      currentCanvas.height = Math.floor(viewport.height * ratio);
+      currentCanvas.style.width = `${Math.floor(viewport.width)}px`;
+      currentCanvas.style.height = `${Math.floor(viewport.height)}px`;
+      setPageSize({ width: viewport.width, height: viewport.height });
+
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      context.clearRect(0, 0, viewport.width, viewport.height);
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, viewport.width, viewport.height);
+
+      renderTask = page.render({
+        canvasContext: context,
+        viewport,
+      });
+      await renderTask.promise;
+    }
+
+    renderPage().catch((err) => {
+      if (!cancelled && err?.name !== "RenderingCancelledException") {
+        console.error("PDF page render failed:", err);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      renderTask?.cancel();
+    };
+  }, [containerWidth, pageNumber, pdf]);
+
+  return (
+    <div
+      className="overflow-hidden rounded-sm bg-background shadow-sm ring-1 ring-border/70"
+      style={pageSize ? { width: pageSize.width, height: pageSize.height } : undefined}
+    >
+      <canvas ref={canvasRef} className="block max-w-full" />
+    </div>
   );
 }

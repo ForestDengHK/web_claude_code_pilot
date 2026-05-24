@@ -55,6 +55,8 @@ const PREVIEWABLE_EXTENSIONS = new Set([
   "mp4", "webm", "mov", "m4v",
   // Audio
   "mp3", "wav", "ogg", "aac", "flac",
+  // Office documents (converted to PDF for preview when LibreOffice is available)
+  "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp",
   // Code
   "js", "jsx", "ts", "tsx", "mjs", "cjs",
   "py", "rb", "go", "rs", "java", "kt", "swift", "c", "cpp", "h", "hpp", "cs",
@@ -199,7 +201,10 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
   const [collapsedRoots, setCollapsedRoots] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [gitBranch, setGitBranch] = useState<string | null>(null);
+  // Branch per root. Primary cwd's branch drives the top-header selector;
+  // additional roots get their own selector inside the section header.
+  const [gitBranchByRoot, setGitBranchByRoot] = useState<Record<string, string | null>>({});
+  const gitBranch = gitBranchByRoot[workingDirectory] ?? null;
   const [attachedPaths, setAttachedPaths] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -323,16 +328,35 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
         }
         return { ...prev, [baseDir]: mergeAt(cur) };
       });
-      // Update git status for new nodes
+      // Update git status for new nodes, and propagate 'M' up through the
+      // lazy-loaded dir's ancestors. Server-side annotation only runs over the
+      // newly-fetched subtree, so ancestor dirs that had empty children at
+      // initial scan won't have their status set otherwise — files would show
+      // a dot but every folder above them wouldn't.
       setGitStatusMap(prev => {
         const newMap = new Map(prev);
+        let anyStatus = false;
         function walkNewNodes(ns: FileTreeNode[]) {
           for (const n of ns) {
-            if (n.gitStatus) newMap.set(n.path, n.gitStatus);
+            if (n.gitStatus) {
+              newMap.set(n.path, n.gitStatus);
+              anyStatus = true;
+            }
             if (n.children) walkNewNodes(n.children);
           }
         }
         walkNewNodes(children);
+        if (anyStatus) {
+          // Mark the lazy-loaded dir and walk up to (but not past) baseDir.
+          let current = dirPath;
+          while (current.length >= baseDir.length) {
+            if (!newMap.has(current)) newMap.set(current, 'M');
+            if (current === baseDir) break;
+            const slash = current.lastIndexOf('/');
+            if (slash <= 0) break;
+            current = current.slice(0, slash);
+          }
+        }
         return newMap;
       });
     } finally {
@@ -380,7 +404,7 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
     if (roots.length === 0) {
       setTreesByRoot({});
       setGitStatusMap(new Map());
-      setGitBranch(null);
+      setGitBranchByRoot({});
       setExpandedPaths(new Set());
       return;
     }
@@ -415,26 +439,27 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
 
       const next: Record<string, FileTreeNode[]> = {};
       const combinedGitMap = new Map<string, string>();
+      const branchMap: Record<string, string | null> = {};
       for (const { root, tree, gitBranch: rb } of results) {
         next[root] = tree;
+        branchMap[root] = rb;
         for (const [k, v] of buildGitStatusMap(tree)) combinedGitMap.set(k, v);
-        // Branch selector at the top reflects the primary cwd's branch only.
-        if (root === workingDirectory) setGitBranch(rb);
       }
       setTreesByRoot(next);
       setGitStatusMap(combinedGitMap);
+      setGitBranchByRoot(branchMap);
       setExpandedPaths(prev => prev.size === 0 ? new Set() : prev);
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") return;
       setTreesByRoot({});
       setGitStatusMap(new Map());
-      setGitBranch(null);
+      setGitBranchByRoot({});
     } finally {
       if (!controller.signal.aborted) {
         setLoading(false);
       }
     }
-  }, [roots, workingDirectory, showHidden]);
+  }, [roots, showHidden]);
 
   useEffect(() => {
     fetchTree();
@@ -784,7 +809,7 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
                 gitBranch={gitBranch}
                 sessionId={sessionId}
                 onBranchChanged={(newBranch) => {
-                  setGitBranch(newBranch);
+                  setGitBranchByRoot(prev => ({ ...prev, [workingDirectory]: newBranch }));
                   fetchTree();
                 }}
               />
@@ -947,34 +972,49 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
                 const isPrimary = root === workingDirectory;
                 const collapsed = collapsedRoots.has(root);
                 const rootTree = treesByRoot[root] || [];
+                const rootBranch = gitBranchByRoot[root] ?? null;
                 return (
                   <div key={root} className="border-b last:border-b-0">
-                    <button
-                      type="button"
-                      onClick={() => toggleRootCollapsed(root)}
+                    <div
                       className={cn(
-                        "flex w-full items-center gap-1.5 px-3 py-1.5 text-left",
+                        "flex w-full items-center gap-1.5 px-3 py-1.5",
                         "hover:bg-accent/40 transition-colors"
                       )}
                       title={root}
                     >
-                      <span
-                        className={cn(
-                          "inline-block w-3 text-[10px] text-muted-foreground transition-transform",
-                          collapsed ? "rotate-0" : "rotate-90"
-                        )}
+                      <button
+                        type="button"
+                        onClick={() => toggleRootCollapsed(root)}
+                        className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                       >
-                        ▶
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                        {getDirectoryLabel(root)}
-                      </span>
+                        <span
+                          className={cn(
+                            "inline-block w-3 text-[10px] text-muted-foreground transition-transform",
+                            collapsed ? "rotate-0" : "rotate-90"
+                          )}
+                        >
+                          ▶
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                          {getDirectoryLabel(root)}
+                        </span>
+                      </button>
                       {!isPrimary && (
-                        <span className="rounded border border-border/60 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
+                        <span className="rounded border border-border/60 px-1 py-px text-[9px] font-medium uppercase tracking-wide text-muted-foreground shrink-0">
                           linked
                         </span>
                       )}
-                    </button>
+                      {!isPrimary && rootBranch && (
+                        <BranchSelector
+                          workingDirectory={root}
+                          gitBranch={rootBranch}
+                          onBranchChanged={(newBranch) => {
+                            setGitBranchByRoot(prev => ({ ...prev, [root]: newBranch }));
+                            fetchTree();
+                          }}
+                        />
+                      )}
+                    </div>
                     {!collapsed && (
                       rootTree.length === 0 ? (
                         <p className="px-4 py-2 text-[11px] text-muted-foreground/70">

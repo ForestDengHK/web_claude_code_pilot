@@ -9,18 +9,22 @@
   "description": "A web GUI for Claude Code",
   "scripts": {
     "dev": "cross-env HOSTNAME=0.0.0.0 next dev --turbopack",
+    "dev:ccr": "cross-env HOSTNAME=0.0.0.0 PORT=4007 CLAUDE_GUI_DATA_DIR=$HOME/.codepilot-ccr next dev --turbopack",
     "build": "next build && node scripts/prepare-server.mjs",
     "server": "node .next/standalone/codepilot-server.js",
     "start": "npm run server",
     "lint": "eslint",
+    "test": "node --import tsx --test src/__tests__/unit/*.test.ts",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper 2>/dev/null || true",
     "terminal-ws": "TERMINAL_WS_PORT=4003 tsx --watch scripts/terminal-ws-server.ts",
     "dev:all": "concurrently \"npm run dev\" \"npm run terminal-ws\""
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.138",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.144",
+    "@anthropic-ai/sdk": "^0.96.0",
     "@hugeicons/core-free-icons": "^3.1.1",
     "@hugeicons/react": "^1.1.4",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@radix-ui/react-use-controllable-state": "^1.2.2",
     "@shikijs/markdown-it": "^3.23.0",
     "@streamdown/cjk": "^1.0.1",
@@ -46,6 +50,7 @@
     "next": "16.1.6",
     "next-themes": "^0.4.6",
     "node-pty": "^1.1.0",
+    "pdfjs-dist": "^4.10.38",
     "playwright": "^1.58.2",
     "radix-ui": "^1.4.3",
     "react": "19.2.3",
@@ -61,7 +66,8 @@
     "tailwind-merge": "^3.4.0",
     "uuid": "^13.0.0",
     "web-push": "^3.6.7",
-    "ws": "^8.20.0"
+    "ws": "^8.20.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.1",

@@ -432,7 +432,7 @@ export const FileTreeFile = ({
   children,
   ...props
 }: FileTreeFileProps) => {
-  const { selectedPath, onSelect, onAdd, onRemove, onDownload, onDelete, onDiff, attachedPaths, gitStatusMap, selectionMode, selectedPaths, onToggleSelect } = useContext(FileTreeContext);
+  const { selectedPath, onSelect, onPreview, onAdd, onRemove, onDownload, onDelete, onDiff, attachedPaths, gitStatusMap, selectionMode, selectedPaths, onToggleSelect } = useContext(FileTreeContext);
   const isSelected = selectedPath === path;
   const isAttached = attachedPaths?.has(path) ?? false;
   const isChecked = selectedPaths?.has(path) ?? false;
@@ -454,16 +454,26 @@ export const FileTreeFile = ({
       onToggleSelect?.(path);
       return;
     }
+    if (onPreview) {
+      onPreview(path);
+      return;
+    }
     onSelect?.(path);
-  }, [onSelect, path, longPress, selectionMode, onToggleSelect]);
+  }, [onPreview, onSelect, path, longPress, selectionMode, onToggleSelect]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter" || e.key === " ") {
-        onSelect?.(path);
+        if (selectionMode) {
+          onToggleSelect?.(path);
+        } else if (onPreview) {
+          onPreview(path);
+        } else {
+          onSelect?.(path);
+        }
       }
     },
-    [onSelect, path]
+    [onPreview, onSelect, onToggleSelect, path, selectionMode]
   );
 
   const handleAdd = useCallback(
