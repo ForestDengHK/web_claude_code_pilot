@@ -266,6 +266,16 @@ export function ChatListPanel({ open, width, onClose }: ChatListPanelProps) {
     const title = sessionTitle?.trim() || "Untitled";
     if (!confirm(`Delete this conversation?\n\n"${title}"`)) return;
     setDeletingSession(sessionId);
+    // Channels-backend sessions keep a long-lived claude PTY subprocess alive
+    // for reuse. Tear it down on delete so it doesn't linger until idle-reaping.
+    // Best-effort: fire-and-forget alongside the DELETE.
+    if (sessions.find((s) => s.id === sessionId)?.backend === "channels") {
+      fetch("/api/channels/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      }).catch(() => {});
+    }
     try {
       const res = await fetch(`/api/chat/sessions/${sessionId}`, {
         method: "DELETE",

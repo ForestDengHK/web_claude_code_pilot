@@ -27,8 +27,9 @@ export interface ChatSession {
   mode?: ClaudeUiPermissionMode;
   skip_permissions?: number;
   needs_approval?: boolean;
-  backend: 'claude' | 'codex';
+  backend: 'claude' | 'codex' | 'channels';
   codex_thread_id?: string | null;
+  channel_session_id?: string | null;
   last_claude_bridged_msg_id?: string | null;
   last_codex_bridged_msg_id?: string | null;
   advisor_model?: string | null;
@@ -238,7 +239,7 @@ export interface CreateSessionRequest {
   system_prompt?: string;
   working_directory?: string;
   mode?: string;
-  backend?: 'claude' | 'codex';
+  backend?: 'claude' | 'codex' | 'channels';
   branch_summary?: string;
   branch_source_session_id?: string;
 }
@@ -443,8 +444,10 @@ export type SSEEventType =
   | 'permission_request' // permission approval needed
   | 'input_request'      // AskUserQuestion mid-stream prompt
   | 'rate_limit'         // rate limit info from Claude
+  | 'tier_exhausted'    // tier hit usage limit; client should prompt to switch
   | 'heartbeat'          // keepalive signal for connection health
   | 'session_reset'      // stale SDK session cleared, retry in progress
+  | 'turn_complete'      // channels: assistant turn ended (terminal stop_reason); consumed internally by streamChannels
   | 'done';              // stream complete
 
 export interface SSEEvent {

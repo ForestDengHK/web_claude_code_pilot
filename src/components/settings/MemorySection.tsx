@@ -39,7 +39,7 @@ export function MemorySection() {
       const res = await fetch("/api/settings/app");
       if (res.ok) {
         const data = await res.json();
-        setGlobalEnabled(data.settings?.memory_enabled === "true");
+        setGlobalEnabled(data.settings?.memory_enabled !== "false");
       }
     } catch {
       // ignore
@@ -77,7 +77,7 @@ export function MemorySection() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          settings: { memory_enabled: checked ? "true" : "" },
+          settings: { memory_enabled: checked ? "true" : "false" },
         }),
       });
     } catch {

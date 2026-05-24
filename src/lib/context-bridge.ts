@@ -135,7 +135,7 @@ export function formatMessagesForContext(messages: SimpleMessage[]): string {
  */
 export async function buildContextBridge(
   sessionId: string,
-  sourceBackend: 'claude' | 'codex',
+  sourceBackend: 'claude' | 'codex' | 'channels',
   options?: { maxRecentTurns?: number }
 ): Promise<string> {
   const maxRecentTurns = options?.maxRecentTurns ?? 10;
@@ -157,7 +157,8 @@ export async function buildContextBridge(
   const oldMessages = simple.slice(0, splitIndex);
   const recentMessages = simple.slice(splitIndex);
 
-  const sourceName = sourceBackend === 'claude' ? 'Claude' : 'Codex';
+  // 'channels' is Claude-family (T1), so it gets labelled "Claude" — not "Codex".
+  const sourceName = sourceBackend === 'codex' ? 'Codex' : 'Claude';
   const parts: string[] = [];
 
   parts.push(`[Continuing from a previous conversation with ${sourceName}]`);
@@ -206,17 +207,31 @@ export async function buildContextBridge(
  *
  * Rules:
  * - Only Claude↔Codex switches need a bridge (cross-vendor).
- * - Same-vendor model changes (e.g. Sonnet→Opus) need no bridge.
+ * - Same-vendor switches need no bridge. That includes both the obvious
+ *   case (Sonnet→Opus within one backend) and T1↔T2 — Channels and the
+ *   SDK are both Claude-family and already share the same `.jsonl`
+ *   transcript via sdk_session_id reuse (`seedSdkResumeFromChannel`), so
+ *   the model has the full history from `--resume` and a bridge prompt
+ *   would duplicate it AND label it "Codex".
  * - If there are no previous assistant messages, no bridge needed.
  */
 export function detectBackendSwitch(
   sessionId: string,
   targetBackend: 'claude' | 'codex',
-): 'claude' | 'codex' | null {
+): 'claude' | 'codex' | 'channels' | null {
   const lastBackend = getLastAssistantBackend(sessionId);
   if (!lastBackend) return null; // No previous assistant messages
-  if (lastBackend === targetBackend) return null; // Same vendor
+  if (isSameVendor(lastBackend, targetBackend)) return null;
   return lastBackend; // Cross-vendor switch detected
+}
+
+/** Channels(T1) and Claude SDK(T2) are both Claude-family; Codex stands alone. */
+function isSameVendor(
+  a: 'claude' | 'codex' | 'channels',
+  b: 'claude' | 'codex' | 'channels',
+): boolean {
+  const family = (x: string) => (x === 'channels' ? 'claude' : x);
+  return family(a) === family(b);
 }
 
 /**
@@ -233,7 +248,7 @@ export function detectBackendSwitch(
 export function buildIncrementalBridge(
   sessionId: string,
   targetBackend: 'claude' | 'codex',
-  sourceBackend: 'claude' | 'codex',
+  sourceBackend: 'claude' | 'codex' | 'channels',
   options?: { maxRecentTurns?: number },
 ): string {
   const maxRecentTurns = options?.maxRecentTurns ?? 10;
@@ -271,7 +286,9 @@ export function buildIncrementalBridge(
   const oldMessages = simple.slice(0, splitIndex);
   const recentMessages = simple.slice(splitIndex);
 
-  const sourceName = sourceBackend === 'claude' ? 'Claude' : 'Codex';
+  // 'channels' is Claude-family (T1), so when the bridge legitimately fires
+  // (T1 → Codex), label the source "Claude" — not "Codex".
+  const sourceName = sourceBackend === 'codex' ? 'Codex' : 'Claude';
   const parts: string[] = [];
 
   parts.push(`[Context from recent conversation with ${sourceName} that you haven't seen]`);

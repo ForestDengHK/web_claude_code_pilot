@@ -37,7 +37,7 @@ function usageToTurnMetrics(usage: TokenUsage, turnIndex: number): TurnMetrics {
  * Aggregates SSE turn data and evaluates context health rules.
  * Only active for Claude backend. Loads rule config from app settings.
  */
-export function useContextHealth(backend: 'claude' | 'codex') {
+export function useContextHealth(backend: 'claude' | 'codex' | 'channels') {
   const [alerts, setAlerts] = useState<HealthAlert[]>([]);
   const [turnAlerts, setTurnAlerts] = useState<Map<number, HealthAlert[]>>(new Map());
   const sessionRef = useRef<SessionMetrics>(createEmptySession());

@@ -1,0 +1,145 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { encodeProjectPath } from '../claude-session-shared';
+import type { SSEEvent } from '@/types';
+
+/** Resolve the on-disk transcript path for a given cwd + claude session id. */
+export function transcriptPath(cwd: string, claudeSessionId: string): string {
+  return path.join(os.homedir(), '.claude', 'projects',
+    encodeProjectPath(cwd), `${claudeSessionId}.jsonl`);
+}
+
+interface TranscriptEntry {
+  type?: string;
+  isMeta?: boolean;
+  error?: string;
+  message?: {
+    content?: Array<Record<string, unknown>>;
+    usage?: Record<string, number>;
+    model?: string;
+    stop_reason?: string;
+  };
+}
+
+/**
+ * Pure: convert raw transcript entries into SSEEvents.
+ * Assistant entries are processed fully (text / thinking / tool_use).
+ * User entries are processed for tool_result blocks only — their text blocks
+ * are CodePilot-side echoes of the prompt and are ignored.
+ */
+export function transcriptEntriesToEvents(entries: TranscriptEntry[]): SSEEvent[] {
+  const out: SSEEvent[] = [];
+  for (const entry of entries) {
+    if (entry.type !== 'assistant' && entry.type !== 'user') continue;
+    // Drop SDK-internal recovery messages. When `claude --resume` loads a
+    // transcript whose last turn ended on a tool_result from a non-built-in
+    // tool (the `mcp__codepilot__reply` we always use), it treats the turn as
+    // interrupted and synthesises a pair: a `{user "Continue from where you
+    // left off.", isMeta:true}` and an `{assistant model:"<synthetic>",
+    // stop_reason:"stop_sequence", "No response requested."}`. The pair is
+    // CLI bookkeeping — never sent to the model — but `stop_sequence` is a
+    // terminal stop reason, so without this filter the tailer surfaces the
+    // synthetic text as the turn's response and fires turn_complete, closing
+    // the stream before the real reply arrives.
+    if (entry.isMeta) continue;
+    if (entry.type === 'assistant' && entry.message?.model === '<synthetic>') continue;
+    const isAssistant = entry.type === 'assistant';
+    if (isAssistant && entry.error && /rate.?limit|usage.?limit/i.test(entry.error)) {
+      out.push({ type: 'rate_limit', data: JSON.stringify({ tier: 'channels' }) });
+    }
+    const content = entry.message?.content ?? [];
+    for (const block of content) {
+      const t = block.type as string;
+      if (t === 'tool_result') {
+        // tool_result blocks arrive on user-type entries in Claude Code's
+        // transcript; emit them for both entry kinds.
+        out.push({ type: 'tool_result', data: JSON.stringify({
+          tool_use_id: block.tool_use_id, content: block.content,
+        }) });
+      } else if (!isAssistant) {
+        // User entries: only tool_result blocks are relevant; skip text/etc.
+        continue;
+      } else if (t === 'text') {
+        out.push({ type: 'text', data: String(block.text ?? '') });
+      } else if (t === 'thinking') {
+        out.push({ type: 'thinking', data: String(block.thinking ?? '') });
+      } else if (t === 'tool_use') {
+        out.push({ type: 'tool_use', data: JSON.stringify({
+          id: block.id, name: block.name, input: block.input,
+        }) });
+      }
+    }
+    // Surface per-message token usage so the UI can show the same
+    // `model · N tokens` badge it shows for the SDK backend. streamChannels
+    // accumulates these across the turn into a single final result event.
+    if (isAssistant && entry.message?.usage) {
+      const u = entry.message.usage;
+      out.push({ type: 'result', data: JSON.stringify({ usage: {
+        input_tokens: u.input_tokens ?? 0,
+        output_tokens: u.output_tokens ?? 0,
+        cache_read_input_tokens: u.cache_read_input_tokens ?? 0,
+        cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0,
+        model: entry.message.model,
+      } }) });
+    }
+    // The channel protocol carries no turn-end signal, and the model does not
+    // reliably call the `reply` tool after agentic (tool-using) turns — it
+    // simply ends the turn the normal way. A terminal `stop_reason` (anything
+    // other than `tool_use`, which means "paused to call a tool") is the
+    // reliable signal that the assistant turn is over.
+    const stopReason = entry.message?.stop_reason;
+    if (isAssistant && stopReason && stopReason !== 'tool_use') {
+      out.push({ type: 'turn_complete', data: '' });
+    }
+  }
+  return out;
+}
+
+export type TailHandle = { stop: () => void };
+
+/**
+ * Tail a transcript file, emitting SSEEvents for each newly-appended entry.
+ * Starts from the current EOF (only new content). Caller stops it on turn end.
+ */
+export function tailTranscript(
+  filePath: string,
+  onEvents: (events: SSEEvent[]) => void,
+): TailHandle {
+  let offset = 0;
+  try { offset = fs.statSync(filePath).size; } catch { offset = 0; }
+  let stopped = false;
+  // Carry-over for a JSON line split across two poll reads (no trailing \n yet).
+  let leftover = '';
+
+  const readNew = () => {
+    if (stopped) return;
+    let size = 0;
+    // TOCTOU: the file may grow/shrink between statSync and openSync; an
+    // accepted limitation of a polling tailer — the next tick reconciles.
+    try { size = fs.statSync(filePath).size; } catch { return; }
+    if (size <= offset) return;
+    const fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(size - offset);
+    fs.readSync(fd, buf, 0, buf.length, offset);
+    fs.closeSync(fd);
+    offset = size;
+    const chunk = leftover + buf.toString('utf8');
+    const lines = chunk.split('\n');
+    // The last element is the unterminated tail (or '' if chunk ended in \n);
+    // keep it for the next tick.
+    leftover = lines.pop() ?? '';
+    const entries: TranscriptEntry[] = [];
+    for (const line of lines) {
+      if (!line) continue;
+      try { entries.push(JSON.parse(line)); } catch { /* malformed line; ignored */ }
+    }
+    if (entries.length) onEvents(transcriptEntriesToEvents(entries));
+  };
+
+  // Poll fairly tight so tool calls / thinking surface responsively. The
+  // final answer still arrives in one piece via the reply tool — that part
+  // is not incremental regardless of poll rate.
+  const interval = setInterval(readNew, 120);
+  return { stop: () => { stopped = true; clearInterval(interval); } };
+}

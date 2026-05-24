@@ -21,6 +21,8 @@ import { normalizeModeForBackend } from '@/lib/permission-modes';
 import { useContextHealth } from '@/hooks/useContextHealth';
 import { ContextHealthToast } from './ContextHealthToast';
 import type { HealthAction } from '@/lib/context-health';
+import type { Tier } from '@/lib/channels/tiers';
+import { TierSwitchPrompt } from './TierSwitchPrompt';
 
 interface ToolUseInfo {
   id: string;
@@ -102,7 +104,7 @@ interface ChatViewProps {
   initialHasMore?: boolean;
   modelName?: string;
   initialMode?: string;
-  backend?: 'claude' | 'codex';
+  backend?: 'claude' | 'codex' | 'channels';
   advisorModel?: string | null;
   branchSummary?: string | null;
   branchSourceSessionId?: string | null;
@@ -130,7 +132,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [mode, setMode] = useState(() =>
     normalizeModeForBackend(initialMode, backend || 'claude'),
   );
-  const [currentBackend, setCurrentBackendRaw] = useState<'claude' | 'codex'>(backend || 'claude');
+  const [currentBackend, setCurrentBackendRaw] = useState<'claude' | 'codex' | 'channels'>(backend || 'claude');
   const [currentModel, setCurrentModelRaw] = useState(modelName || '');
   const [currentEffort, setCurrentEffort] = useState<string | undefined>();
   const [currentAdvisorModel, setCurrentAdvisorModelRaw] = useState<string | null>(advisorModel || null);
@@ -203,7 +205,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         }
       }
       if (settingsData?.settings) {
-        setMemoryGlobalDefault(settingsData.settings.memory_enabled === 'true');
+        setMemoryGlobalDefault(settingsData.settings.memory_enabled !== 'false');
         let contextHealthConfig = {};
         if (settingsData.settings.context_health_config) {
           try {
@@ -320,6 +322,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
 
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
+  const [pendingTierSwitch, setPendingTierSwitch] = useState<{ from: Tier; to: Tier } | null>(null);
   const [pendingInputRequest, setPendingInputRequest] = useState<InputRequestEvent | null>(null);
   // Codex /goal state — populated by `thread/goal/updated` SSE events
   // during a live stream, and seeded from `/api/codex/goal` on mount so
@@ -390,8 +393,10 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     }
   }, [sessionId]);
 
-  const setCurrentBackend = useCallback((newBackend: 'claude' | 'codex') => {
+  const setCurrentBackend = useCallback((newBackend: 'claude' | 'codex' | 'channels') => {
+    if (newBackend === currentBackend) return;
     setCurrentBackendRaw(newBackend);
+    window.dispatchEvent(new CustomEvent('session-backend-changed', { detail: { id: sessionId, backend: newBackend } }));
     // Renormalize mode for the new backend's vocabulary. Values that don't
     // belong (e.g. Claude 'acceptEdits' when switching to Codex) fall back to
     // the new backend's default; user-chosen values in the right vocabulary
@@ -420,7 +425,19 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         }
       }).catch(() => { /* silent */ });
     }
-  }, [sessionId, mode]);
+  }, [sessionId, mode, currentBackend]);
+
+  // Manual tier switch initiated from the title-bar TierIndicator. The page
+  // already persisted the backend server-side; here we just sync currentBackend
+  // so future messages route to the new tier's endpoint.
+  useEffect(() => {
+    function handleTierSwitchRequested(e: Event) {
+      const detail = (e as CustomEvent<{ id: string; backend: 'claude' | 'codex' | 'channels' }>).detail;
+      if (detail.id === sessionId) setCurrentBackend(detail.backend);
+    }
+    window.addEventListener('tier-switch-requested', handleTierSwitchRequested);
+    return () => window.removeEventListener('tier-switch-requested', handleTierSwitchRequested);
+  }, [sessionId, setCurrentBackend]);
 
   const setCurrentAdvisorModel = useCallback((newAdvisorModel: string | null) => {
     setCurrentAdvisorModelRaw(newAdvisorModel);
@@ -456,6 +473,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
 
   // Ref to keep accumulated streaming content in sync regardless of React batching
   const accumulatedRef = useRef('');
+  // Ref to track the last user message content for tier-switch resend
+  const lastUserContentRef = useRef('');
+  // Holds the message to resend once a tier switch has actually committed to
+  // currentBackend (see the effect below). Avoids racing the React re-render.
+  const pendingTierResendRef = useRef<string | null>(null);
   // Ref for accumulated thinking content (same purpose as accumulatedRef)
   const accumulatedThinkingRef = useRef('');
   // Ref for sendMessage to allow self-referencing in timeout auto-retry without circular deps
@@ -941,12 +963,24 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     });
 
     try {
-      const permEndpoint = currentBackend === 'codex' ? '/api/codex/permission' : '/api/chat/permission';
-      await fetch(permEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+      if (currentBackend === 'channels') {
+        await fetch('/api/channels/permission', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId,
+            requestId: pendingPermission.permissionRequestId,
+            allow: decision !== 'deny',
+          }),
+        });
+      } else {
+        const permEndpoint = currentBackend === 'codex' ? '/api/codex/permission' : '/api/chat/permission';
+        await fetch(permEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      }
     } catch {
       // Best effort - the stream will handle timeout
     }
@@ -956,7 +990,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       setPendingPermission(null);
       setPermissionResolved(null);
     }, 1000);
-  }, [pendingPermission, setPendingApprovalSessionId, currentBackend]);
+  }, [pendingPermission, setPendingApprovalSessionId, currentBackend, sessionId]);
 
   const handleInputResponse = useCallback(async (answers: Record<string, string>) => {
     if (!pendingInputRequest) return;
@@ -998,6 +1032,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const sendMessage = useCallback(
     async (content: string, files?: FileAttachment[], skillInfo?: { name: string; content: string }, codexSkills?: Array<{ name: string; path: string }>) => {
       if (isStreaming) return;
+
+      // Track last user message for tier-switch resend
+      lastUserContentRef.current = content;
 
       // Bump generation: any in-flight recovery polls from the previous stream
       // will see a generation mismatch and bail out, preventing them from
@@ -1082,7 +1119,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       let toolCount = 0;
 
       try {
-        const chatEndpoint = currentBackend === 'codex' ? '/api/codex/chat' : '/api/chat';
+        const chatEndpoint = currentBackend === 'codex' ? '/api/codex/chat' : currentBackend === 'channels' ? '/api/channels/chat' : '/api/chat';
         const response = await fetch(chatEndpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1231,6 +1268,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           onRateLimit: (info) => {
             const key = info.rateLimitType || 'default';
             rateLimitsRef.current.set(key, info);
+          },
+          onTierExhausted: (from, to) => {
+            setPendingTierSwitch({ from, to });
           },
           onHeartbeat: () => {
             lastSseDataRef.current = Date.now();
@@ -1424,6 +1464,18 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
 
   // Keep sendMessageRef in sync so timeout auto-retry can call it
   sendMessageRef.current = sendMessage;
+
+  // Resend the queued message once a tier switch has committed to currentBackend.
+  // sendMessage reads currentBackend from its closure to pick the chat endpoint,
+  // so the resend must wait until after the re-render that applies the new tier —
+  // this effect runs exactly then, making the endpoint selection deterministic.
+  useEffect(() => {
+    const msg = pendingTierResendRef.current;
+    if (msg && currentBackend !== 'channels') {
+      pendingTierResendRef.current = null;
+      sendMessageRef.current?.(msg);
+    }
+  }, [currentBackend]);
 
   // Edit-and-resend (Codex only): roll the Codex thread back to before the
   // edited user message, drop those messages locally, then re-send the new
@@ -1762,6 +1814,38 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         onDismissHealthAlert={dismissAlert}
         onEditMessage={currentBackend === 'codex' ? editAndResendCodex : undefined}
       />
+      {/* Tier-switch confirmation prompt */}
+      {pendingTierSwitch && (
+        <div className="mx-auto w-full max-w-3xl px-4 py-2">
+          <TierSwitchPrompt
+            from={pendingTierSwitch.from}
+            to={pendingTierSwitch.to}
+            onCancel={() => setPendingTierSwitch(null)}
+            onConfirm={async () => {
+              setPendingTierSwitch(null);
+              try {
+                const res = await fetch('/api/channels/switch-tier', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ sessionId }),
+                });
+                const { newTier } = await res.json() as { newTier: Tier };
+                const msgToResend = lastUserContentRef.current;
+                // switch-tier dropped the exhausted turn server-side; refetch
+                // so the UI clears it before the resend re-adds the message.
+                await recoverMessages();
+                // Queue the resend, then switch the backend. The effect that
+                // watches currentBackend fires the resend after the re-render
+                // commits, so sendMessage picks the new tier's chat endpoint.
+                pendingTierResendRef.current = msgToResend || null;
+                setCurrentBackend(newTier);
+              } catch {
+                // Tier switch failed — dismiss prompt silently; user can retry manually
+              }
+            }}
+          />
+        </div>
+      )}
       {/* Advisor Mode Bar — Claude backend only */}
       {currentBackend === 'claude' && (() => {
         const hasMessages = messages.length > 0;

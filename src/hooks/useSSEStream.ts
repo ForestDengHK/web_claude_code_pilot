@@ -1,5 +1,6 @@
 import { useRef, useCallback } from 'react';
 import type { SSEEvent, TokenUsage, PermissionRequestEvent, InputRequestEvent } from '@/types';
+import type { Tier } from '@/lib/channels/tiers';
 
 interface ToolUseInfo {
   id: string;
@@ -48,6 +49,8 @@ export interface SSECallbacks {
   /** Codex `/goal` lifecycle update. Payload mirrors `thread/goal/updated`
    *  notifications from the app-server. `null` means goal cleared. */
   onGoalUpdate?: (goal: CodexGoalState | null) => void;
+  /** Fired when a Channels tier usage limit is hit and the next tier is ready. */
+  onTierExhausted?: (from: Tier, to: Tier) => void;
   onError: (accumulated: string) => void;
 }
 
@@ -221,6 +224,16 @@ function handleSSEEvent(
       return accumulated;
     }
 
+    case 'tier_exhausted': {
+      try {
+        const { from, to } = JSON.parse(event.data) as { from: Tier; to: Tier };
+        callbacks.onTierExhausted?.(from, to);
+      } catch {
+        // skip malformed tier_exhausted data
+      }
+      return accumulated;
+    }
+
     case 'session_reset': {
       // Server detected a stale session (e.g. thinking block signature error
       // after switching providers). Discard the error text accumulated so far
@@ -345,6 +358,7 @@ export function useSSEStream() {
         onHeartbeat: () => callbacksRef.current?.onHeartbeat?.(),
         onCompact: (t, p) => callbacksRef.current?.onCompact?.(t, p),
         onGoalUpdate: (g) => callbacksRef.current?.onGoalUpdate?.(g),
+        onTierExhausted: (f, t) => callbacksRef.current?.onTierExhausted?.(f, t),
         onError: (a) => callbacksRef.current?.onError(a),
       };
 

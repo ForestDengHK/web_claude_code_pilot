@@ -92,8 +92,8 @@ interface MessageInputProps {
   workingDirectory?: string;
   mode?: string;
   onModeChange?: (mode: string) => void;
-  backend?: 'claude' | 'codex';
-  onBackendChange?: (backend: 'claude' | 'codex') => void;
+  backend?: 'claude' | 'codex' | 'channels';
+  onBackendChange?: (backend: 'claude' | 'codex' | 'channels') => void;
   effort?: string;
   onEffortChange?: (effort: string) => void;
 }
@@ -588,8 +588,13 @@ export function MessageInput({
         const preferred = allModels.find((model) => model.value === preferredValue);
         if (preferred) {
           onModelChange?.(preferred.value);
-          // Auto-set backend based on model group
-          const newBackend = preferred.group === 'codex' ? 'codex' : 'claude';
+          // Auto-set backend based on model group. Claude-family models work
+          // with both 'claude' (T2 SDK) and 'channels' (T1) backends, so don't
+          // demote 'channels' to 'claude' here — only switch when the model
+          // group disagrees with the current backend.
+          const newBackend = preferred.group === 'codex'
+            ? 'codex'
+            : (backend === 'channels' ? 'channels' : 'claude');
           if (newBackend !== backend) onBackendChange?.(newBackend);
           // Auto-set default effort
           if (!effort) {
@@ -1449,6 +1454,21 @@ export function MessageInput({
                             </button>
                           );
                         })}
+                        {/* Channels backend option */}
+                        <div className="px-2 py-0.5 text-[9px] font-medium text-muted-foreground/50 uppercase tracking-wider border-t border-border/50 mt-0.5 pt-1">Subscription</div>
+                        <button
+                          type="button"
+                          className={cn(
+                            "flex w-full items-center px-2 py-[5px] text-left transition-colors",
+                            backend === 'channels' ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
+                          )}
+                          onClick={() => {
+                            if (backend !== 'channels') onBackendChange?.('channels');
+                            setModelMenuOpen(false);
+                          }}
+                        >
+                          <span className="font-mono text-[11px]">Claude · Channels</span>
+                        </button>
                       </div>
 
                       {/* Reasoning effort selector — pinned at bottom, always visible */}

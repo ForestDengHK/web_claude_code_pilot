@@ -41,11 +41,12 @@ export default function NewChatPage() {
   const [workingDir, setWorkingDir] = useState('');
   const [mode, setMode] = useState('acceptEdits');
   const [currentModel, setCurrentModel] = useState('sonnet');
-  const [selectedBackend, setSelectedBackend] = useState<'claude' | 'codex'>('claude');
+  const [selectedBackend, setSelectedBackend] = useState<'claude' | 'codex' | 'channels'>('channels');
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
   const [streamingToolOutput, setStreamingToolOutput] = useState('');
   const abortControllerRef = useRef<AbortController | null>(null);
+  const currentSessionIdRef = useRef<string>('');
 
   // Favorites & Recent
   const [favorites, setFavorites] = useState<FavoriteDir[]>([]);
@@ -124,12 +125,24 @@ export default function NewChatPage() {
     setPendingApprovalSessionId('');
 
     try {
-      const permEndpoint = selectedBackend === 'codex' ? '/api/codex/permission' : '/api/chat/permission';
-      await fetch(permEndpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+      if (selectedBackend === 'channels') {
+        await fetch('/api/channels/permission', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId: currentSessionIdRef.current,
+            requestId: pendingPermission.permissionRequestId,
+            allow: decision !== 'deny',
+          }),
+        });
+      } else {
+        const permEndpoint = selectedBackend === 'codex' ? '/api/codex/permission' : '/api/chat/permission';
+        await fetch(permEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      }
     } catch {
       // Best effort
     }
@@ -198,6 +211,7 @@ export default function NewChatPage() {
 
         const { session }: SessionResponse = await createRes.json();
         sessionId = session.id;
+        currentSessionIdRef.current = sessionId;
 
         // Notify ChatListPanel to refresh immediately
         window.dispatchEvent(new CustomEvent('session-created'));
@@ -214,7 +228,7 @@ export default function NewChatPage() {
         setMessages([userMessage]);
 
         // Send the message via streaming API (prompt includes skill wrapper if applicable)
-        const chatEndpoint = selectedBackend === 'codex' ? '/api/codex/chat' : '/api/chat';
+        const chatEndpoint = selectedBackend === 'codex' ? '/api/codex/chat' : selectedBackend === 'channels' ? '/api/channels/chat' : '/api/chat';
         const response = await fetch(chatEndpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

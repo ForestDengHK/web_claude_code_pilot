@@ -10,6 +10,8 @@ import { DownloadMenu } from '@/components/chat/DownloadMenu';
 import { Input } from '@/components/ui/input';
 import { usePanel } from '@/hooks/usePanel';
 import { normalizeClaudeMode } from '@/lib/permission-modes';
+import { TierIndicator } from '@/components/chat/TierIndicator';
+import type { Tier } from '@/lib/channels/tiers';
 
 interface ChatSessionPageProps {
   params: Promise<{ id: string }>;
@@ -24,7 +26,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const [sessionTitle, setSessionTitle] = useState<string>('');
   const [sessionModel, setSessionModel] = useState<string>('');
   const [sessionMode, setSessionMode] = useState<string>('');
-  const [sessionBackend, setSessionBackend] = useState<'claude' | 'codex'>('claude');
+  const [sessionBackend, setSessionBackend] = useState<'claude' | 'codex' | 'channels'>('claude');
   // Gate ChatView mounting on session info being loaded — otherwise a Codex session
   // briefly mounts with backend='claude' (the initial default) and recovery polling
   // can mislabel the backend (e.g. "Claude is running..." on a Codex session).
@@ -80,6 +82,35 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
       titleInputRef.current.select();
     }
   }, [isEditingTitle]);
+
+  // Listen for live tier-switch events emitted by ChatView
+  useEffect(() => {
+    function handleBackendChanged(e: Event) {
+      const detail = (e as CustomEvent<{ id: string; backend: Tier }>).detail;
+      if (detail.id === id) {
+        setSessionBackend(detail.backend);
+      }
+    }
+    window.addEventListener('session-backend-changed', handleBackendChanged);
+    return () => window.removeEventListener('session-backend-changed', handleBackendChanged);
+  }, [id]);
+
+  // Manual tier switch from the TierIndicator menu: persist the backend
+  // server-side, update the indicator, and tell ChatView to route future
+  // messages to the new tier. Unlike the exhaustion flow, nothing is resent.
+  const handleSelectTier = useCallback(async (target: Tier) => {
+    try {
+      await fetch('/api/channels/switch-tier', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: id, targetTier: target }),
+      });
+      setSessionBackend(target);
+      window.dispatchEvent(new CustomEvent('tier-switch-requested', {
+        detail: { id, backend: target },
+      }));
+    } catch { /* silent — user can retry from the menu */ }
+  }, [id]);
 
   // Load session info and set working directory
   useEffect(() => {
@@ -190,6 +221,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
               <span className="text-xs text-muted-foreground shrink-0">/</span>
             </>
           )}
+          <TierIndicator tier={sessionBackend as Tier} onSelectTier={handleSelectTier} />
           {isEditingTitle ? (
             <div>
               <Input

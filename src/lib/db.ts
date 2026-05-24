@@ -235,6 +235,9 @@ function migrateDb(db: Database.Database): void {
   if (!colNames.includes('codex_thread_id')) {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN codex_thread_id TEXT");
   }
+  if (!colNames.includes('channel_session_id')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN channel_session_id TEXT");
+  }
 
   // Context bridge: track which backend's context window ends where
   if (!colNames.includes('last_claude_bridged_msg_id')) {
@@ -506,7 +509,7 @@ export function createSession(
   systemPrompt?: string,
   workingDirectory?: string,
   mode?: string,
-  backend?: 'claude' | 'codex',
+  backend?: 'claude' | 'codex' | 'channels',
   branchSummary?: string | null,
   branchSourceSessionId?: string | null,
 ): ChatSession {
@@ -559,7 +562,12 @@ export function updateCodexThreadId(id: string, codexThreadId: string): void {
   db.prepare('UPDATE chat_sessions SET codex_thread_id = ? WHERE id = ?').run(codexThreadId, id);
 }
 
-export function updateSessionBackend(id: string, backend: 'claude' | 'codex'): void {
+export function updateChannelSessionId(sessionId: string, channelSessionId: string): void {
+  const db = getDb();
+  db.prepare('UPDATE chat_sessions SET channel_session_id = ? WHERE id = ?').run(channelSessionId, sessionId);
+}
+
+export function updateSessionBackend(id: string, backend: 'claude' | 'codex' | 'channels'): void {
   const db = getDb();
   db.prepare('UPDATE chat_sessions SET backend = ? WHERE id = ?').run(backend, id);
 }
@@ -651,7 +659,7 @@ export function addMessage(
   role: 'user' | 'assistant',
   content: string,
   tokenUsage?: string | null,
-  backend?: 'claude' | 'codex' | null,
+  backend?: 'claude' | 'codex' | 'channels' | null,
 ): Message {
   const db = getDb();
   const id = crypto.randomBytes(16).toString('hex');
@@ -679,7 +687,7 @@ export function addMessage(
 export function addDraftMessage(
   sessionId: string,
   content: string,
-  backend?: 'claude' | 'codex' | null,
+  backend?: 'claude' | 'codex' | 'channels' | null,
 ): Message {
   const db = getDb();
   const id = crypto.randomBytes(16).toString('hex');
@@ -859,14 +867,19 @@ export function updateLastBridgedMsgId(sessionId: string, backend: 'claude' | 'c
 /**
  * Get the backend that handled the last assistant message in a session.
  * Returns null if there are no assistant messages or no backend is recorded.
+ *
+ * The return type includes 'channels' because T1 messages are stored with
+ * that value; callers compare against the runtime string, so casting to a
+ * narrower union here used to silently mis-route Channels(T1)↔SDK(T2)
+ * transitions through the cross-vendor bridge path.
  */
-export function getLastAssistantBackend(sessionId: string): 'claude' | 'codex' | null {
+export function getLastAssistantBackend(sessionId: string): 'claude' | 'codex' | 'channels' | null {
   const db = getDb();
   const row = db.prepare(
     "SELECT backend FROM messages WHERE session_id = ? AND role = 'assistant' ORDER BY rowid DESC LIMIT 1"
   ).get(sessionId) as { backend: string | null } | undefined;
   if (!row?.backend) return null;
-  return row.backend as 'claude' | 'codex';
+  return row.backend as 'claude' | 'codex' | 'channels';
 }
 
 export function clearSessionMessages(sessionId: string): void {
@@ -1586,9 +1599,11 @@ export function isMemoryEnabled(sessionId: string): boolean {
     return session.memory_enabled === 1;
   }
 
-  // Global default from settings
+  // Global default from settings. Stored as 'false' when the user explicitly
+  // disables it; absence (or 'true') reads as enabled — so memory is on by
+  // default for new installs and only off when the user opts out.
   const globalSetting = getSetting('memory_enabled');
-  return globalSetting === 'true';
+  return globalSetting !== 'false';
 }
 
 export function hasSessionInjectedMemory(sessionId: string): boolean {
