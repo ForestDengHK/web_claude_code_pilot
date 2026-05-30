@@ -38,10 +38,9 @@ export function transcriptEntriesToEvents(entries: TranscriptEntry[]): SSEEvent[
     // interrupted and synthesises a pair: a `{user "Continue from where you
     // left off.", isMeta:true}` and an `{assistant model:"<synthetic>",
     // stop_reason:"stop_sequence", "No response requested."}`. The pair is
-    // CLI bookkeeping — never sent to the model — but `stop_sequence` is a
-    // terminal stop reason, so without this filter the tailer surfaces the
-    // synthetic text as the turn's response and fires turn_complete, closing
-    // the stream before the real reply arrives.
+    // CLI bookkeeping — never sent to the model — so without this filter the
+    // tailer would surface the synthetic "No response requested." text as the
+    // turn's response.
     if (entry.isMeta) continue;
     if (entry.type === 'assistant' && entry.message?.model === '<synthetic>') continue;
     const isAssistant = entry.type === 'assistant';
@@ -83,15 +82,14 @@ export function transcriptEntriesToEvents(entries: TranscriptEntry[]): SSEEvent[
         model: entry.message.model,
       } }) });
     }
-    // The channel protocol carries no turn-end signal, and the model does not
-    // reliably call the `reply` tool after agentic (tool-using) turns — it
-    // simply ends the turn the normal way. A terminal `stop_reason` (anything
-    // other than `tool_use`, which means "paused to call a tool") is the
-    // reliable signal that the assistant turn is over.
-    const stopReason = entry.message?.stop_reason;
-    if (isAssistant && stopReason && stopReason !== 'tool_use') {
-      out.push({ type: 'turn_complete', data: '' });
-    }
+    // NOTE: turn-end is intentionally NOT inferred here. In T1 (the interactive
+    // `claude --channels` PTY) every assistant entry — including tool_use ones —
+    // is stamped with stop_reason='end_turn', so the transcript carries no
+    // reliable per-entry "the turn is over" signal (unlike T2's stream-json,
+    // where tool_use entries report stop_reason='tool_use'). A single entry can
+    // never tell us the turn ended. streamChannels decides turn-end instead,
+    // from signals only it has: the model's `reply` channel event and the PTY
+    // going quiet. See channels-client.ts.
   }
   return out;
 }

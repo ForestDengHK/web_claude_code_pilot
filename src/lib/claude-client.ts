@@ -968,6 +968,18 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
                   break;
                 }
               }
+
+              // The SDK's `result` message is the turn's terminal signal. Stop
+              // reading here instead of letting the `for await` wait for the
+              // async generator to end on its own — it occasionally hangs after
+              // `result` (blocked on subprocess teardown) and never yields again.
+              // That would leave this ReadableStream open forever: the client
+              // never sees the stream close (button stuck in the streaming
+              // state), and collectStreamResponse never finalizes the draft or
+              // clears the stream buffer, so /status reports isProcessing=true
+              // indefinitely and recovery polling can't resolve. Breaking runs
+              // the iterator's return() to tear the subprocess down cleanly.
+              if (gotResult) break;
             }
 
             // Detect stale thinking block signature errors (common after provider

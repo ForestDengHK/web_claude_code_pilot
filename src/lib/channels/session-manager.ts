@@ -198,6 +198,13 @@ export async function ensureSession(input: EnsureInput): Promise<ChannelSession>
       CODEPILOT_INTERNAL_URL: input.internalUrl,
     } as Record<string, string>,
   });
+  // Drain PTY output. We read state from the on-disk transcript, not from
+  // the PTY (the CLI's interactive UI — spinner, status bar, ANSI escapes —
+  // is not useful here). Without a listener, node-pty's libuv reader still
+  // allocates Buffers for every chunk that arrives from the CLI's stdout/
+  // stderr; over long-lived sessions this generates real GC pressure. A
+  // no-op sink lets V8 collect each chunk as soon as the callback returns.
+  proc.onData(() => { /* drain — see comment above */ });
 
   const session: ChannelSession = {
     codepilotSessionId: input.codepilotSessionId,

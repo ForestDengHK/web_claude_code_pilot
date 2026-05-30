@@ -70,19 +70,41 @@ export interface ChannelsStreamOptions {
    * AbortSignal that, when triggered, immediately fails the turn AND kills the
    * underlying PTY process. Required for the user's Stop button: without this,
    * killing the PTY externally still leaves the stream hanging until
-   * STALL_TIMEOUT_MS (~150s) of transcript silence elapses.
+   * STALL_TIMEOUT_MS of transcript silence elapses.
    */
   abortSignal?: AbortSignal;
 }
 
-const TURN_TIMEOUT_MS = 10 * 60_000;
+// Absolute per-turn cap. Agentic T1 turns can legitimately run long (many
+// tool calls, some taking a minute each), so this is generous — it only exists
+// to reap a turn that is genuinely wedged, not to bound normal work.
+const TURN_TIMEOUT_MS = 30 * 60_000;
 
-// After a terminal `turn_complete` is tailed, wait this long for the transcript
-// to settle before closing the stream. The turn's final message is often
-// tailed as separate `thinking` then `text` entries; this debounce window lets
-// any trailing entries arrive (the poll interval is 120ms) so the answer text
-// is not cut off. Each new `turn_complete` resets the timer.
-const TURN_SETTLE_MS = 700;
+// Heartbeat cadence. The client aborts the stream if it sees no SSE data for
+// ~30s (mobile sockets die silently). During a long tool call or a long
+// thinking gap T1 emits nothing for the whole duration, so without a heartbeat
+// the client wrongly concludes the connection dropped. Mirror T2, which sends
+// a heartbeat on this cadence.
+const HEARTBEAT_INTERVAL_MS = 10_000;
+
+// Turn-end detection for T1 is PTY-driven (see the heartbeat below). The
+// interactive `claude --channels` process emits PTY output continuously while
+// it works — streaming text, thinking spinners, tool status — and goes silent
+// once the turn ends and it waits for the next input. Empirically the gap is
+// stark: during a turn the PTY is never quiet for more than ~0.6s, while an
+// idle turn produces no PTY output for tens of seconds. So a quiet PTY is a
+// reliable end-of-turn signal — unlike the transcript's stop_reason, which is
+// always 'end_turn' in T1 even mid-tool-use.
+//
+// This is the SOLE turn-end trigger. We deliberately do NOT close early when
+// the model calls the `reply` tool: the model sometimes calls `reply` mid-turn
+// and then keeps working (more thinking / a second reply / a final text block),
+// so a reply-triggered early close truncated the real answer. Waiting for the
+// PTY to actually go quiet costs a few seconds of extra spinner after each
+// turn but never cuts a turn short. PTY_IDLE_FINISH_MS is ~10x the observed
+// max in-turn idle, so normal activity never trips it; post-turn settling
+// redraws finish within a few seconds, then the PTY is silent.
+const PTY_IDLE_FINISH_MS = 6_000;
 
 // If the channel transcript produces no new activity for this long, the
 // underlying `claude --channels` process is considered stalled (the research-
@@ -90,8 +112,11 @@ const TURN_SETTLE_MS = 700;
 // process killed so the *next* message respawns a fresh one via --resume —
 // otherwise a single stall bricks the whole session, with every later message
 // queued behind the dead turn. Suspended while a permission prompt is pending
-// (the model is then legitimately idle, waiting on the user's verdict).
-const STALL_TIMEOUT_MS = 150_000;
+// (the model is then legitimately idle, waiting on the user's verdict), and
+// while any tool is actively executing — the transcript won't grow between a
+// tool_use and its tool_result, and that gap can be arbitrarily long for shell
+// commands, builds, network calls, or extended-thinking API responses.
+const STALL_TIMEOUT_MS = 300_000;
 
 export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<string> {
   return assembleStream({
@@ -99,9 +124,18 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
       void (async () => {
         try {
           const db = getDbSession(opts.sessionId);
-          const resuming = !!db?.channel_session_id;
-          const claudeSessionId = db?.channel_session_id ?? randomUUID();
-          if (!resuming) updateChannelSessionId(opts.sessionId, claudeSessionId);
+          // Prefer channel_session_id; fall back to sdk_session_id when T1 is
+          // entered for the first time after T2 has already been logging turns
+          // (channel_session_id is empty in that case). Both backends write
+          // their transcripts to the same `~/.claude/projects/{cwd}/{id}.jsonl`
+          // scheme, so reusing the SDK's id lets `--resume` pick up the full
+          // conversation. The seed normally happens at switch-time via
+          // seedChannelResumeFromSdk, but this safety net covers paths that
+          // don't go through switchToTier (e.g. backend changed externally).
+          const existingId = db?.channel_session_id || db?.sdk_session_id || null;
+          const resuming = !!existingId;
+          const claudeSessionId = existingId ?? randomUUID();
+          if (!db?.channel_session_id) updateChannelSessionId(opts.sessionId, claudeSessionId);
 
           // Load plugins + user/project MCP servers via the shared loader
           // so T1 sees the same set as T2. Done per turn (not cached) so the
@@ -140,33 +174,64 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
             model: undefined as string | undefined,
           };
           let sawUsage = false;
-          // Track whether the transcript already streamed natural text for
-          // this turn. The MCP `reply` tool's text argument is the model's
-          // full final answer — when the model writes natural text AND calls
-          // reply (the normal case, encouraged by the MCP server instructions),
-          // emitting ev.text in the reply handler appends the same answer a
-          // second time. Only fall back to ev.text when no transcript text
-          // arrived (model used only the reply tool).
+          // Track whether the transcript already streamed natural (pre-reply)
+          // text for this turn. The MCP `reply` tool's text argument is the
+          // model's full final answer — when the model writes natural text AND
+          // calls reply (the normal case), the reply text restates the same
+          // answer, so we drop it (finish passes '' when sawTextFromTranscript).
+          // Only fall back to ev.text when no natural text arrived (model used
+          // only the reply tool).
           let sawTextFromTranscript = false;
+          // Set once the model has called `reply` (its "answer sent" action).
+          // Any natural text the model writes AFTER that is a restatement /
+          // closing remark — e.g. it types "I'll note this", writes a file,
+          // then types "I've noted it" and also calls reply. Surfacing every
+          // such block produced a duplicated-looking answer. Once reply has
+          // fired we suppress further natural text blocks; tool work continues
+          // to stream so genuine post-reply actions aren't lost.
+          let sawReply = false;
           const tail = tailTranscript(
             transcriptPath(opts.workingDirectory, claudeSessionId),
             (events) => {
+              // Transcript grew → the process is producing output again. If a
+              // permission prompt was pending, the user's verdict has been
+              // applied and the model has resumed (the prompt itself writes no
+              // transcript entry), so clear the suspend flag before re-arming
+              // the watchdogs below.
+              if (permissionPending) permissionPending = false;
               bumpStall(); // transcript grew → the process is alive
               for (const e of events) {
                 if (e.type === 'text') {
+                  // Drop restatement text the model writes after it already
+                  // called reply — surfacing it duplicates the answer.
+                  if (sawReply) continue;
                   sawTextFromTranscript = true;
                 } else if (e.type === 'tool_use') {
                   try {
                     const d = JSON.parse(e.data);
                     if (d.name === 'mcp__codepilot__reply') {
                       replyToolUseIds.add(d.id);
+                      sawReply = true;
                       continue;
                     }
+                    // A tool is starting: the turn is definitely not over, so
+                    // cancel any pending PTY-idle finish and suspend both
+                    // watchdogs until the tool_result arrives (which can take
+                    // minutes for a shell command, build, or network call).
+                    activeToolCount++;
+                    clearTimeout(stallTimer);
+                    clearTimeout(finishTimer);
                   } catch { /* fall through and emit as-is */ }
                 } else if (e.type === 'tool_result') {
                   try {
                     const d = JSON.parse(e.data);
                     if (replyToolUseIds.has(d.tool_use_id)) continue;
+                    // Tool completed; re-arm watchdogs once all pending tools
+                    // finish so a quiet PTY can again signal turn-end.
+                    if (activeToolCount > 0) {
+                      activeToolCount--;
+                      if (activeToolCount === 0) { bumpStall(); armFinish(); }
+                    }
                   } catch { /* fall through and emit as-is */ }
                 } else if (e.type === 'result') {
                   try {
@@ -185,12 +250,6 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
                     }
                   } catch { /* ignore malformed usage */ }
                   continue; // accumulated, not forwarded per-message
-                } else if (e.type === 'turn_complete') {
-                  // The assistant turn ended (terminal stop_reason in the
-                  // transcript). Schedule the stream close; do not forward
-                  // this internal event to the client.
-                  scheduleFinish();
-                  continue;
                 }
                 emit(e);
               }
@@ -201,18 +260,31 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           let finishTimer: ReturnType<typeof setTimeout> | undefined;
           let stallTimer: ReturnType<typeof setTimeout> | undefined;
           let permissionPending = false;
+          // Count of non-reply tool_use blocks whose tool_result has not yet
+          // arrived. The stall + finish watchdogs are suspended while this is > 0.
+          let activeToolCount = 0;
+          // The text the model passed to the `reply` tool. Used only as a
+          // fallback answer when the model used ONLY reply and streamed no
+          // natural text — reply does NOT drive turn-end timing (see
+          // PTY_IDLE_FINISH_MS above for why).
+          let replyText = '';
 
-          // cleanup references timeout and unsub — both are declared below.
-          // cleanup is only ever *called* from callbacks that fire after all
-          // declarations have run, so the const TDZ is not a problem at runtime.
+          // cleanup references timeout, unsub, ptyHeartbeat, heartbeatPing,
+          // exitSub — all declared below. cleanup is only ever *called* from
+          // callbacks that fire after all declarations have run, so the const
+          // TDZ is not a problem at runtime.
           // eslint-disable-next-line prefer-const
           let timeout: ReturnType<typeof setTimeout>;
           // eslint-disable-next-line prefer-const
           let unsub: () => void;
+          let ptyHeartbeat: { dispose(): void } | undefined;
+          let exitSub: { dispose(): void } | undefined;
+          let heartbeatPing: ReturnType<typeof setInterval> | undefined;
 
           const cleanup = () => {
-            tail.stop(); unsub();
+            tail.stop(); unsub(); ptyHeartbeat?.dispose(); exitSub?.dispose();
             clearTimeout(timeout); clearTimeout(finishTimer); clearTimeout(stallTimer);
+            clearInterval(heartbeatPing);
           };
 
           // Fail the turn AND kill the channel process. Used for stalls /
@@ -229,9 +301,10 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
 
           // (Re)arm the stall watchdog. Called on every transcript poll that
           // sees activity; if the gap between two calls exceeds STALL_TIMEOUT_MS
-          // the process is wedged. Disabled once a permission prompt is pending.
+          // the process is wedged. Disabled once a permission prompt is pending
+          // or while any tool is actively executing.
           const bumpStall = () => {
-            if (done || permissionPending) return;
+            if (done || permissionPending || activeToolCount > 0) return;
             clearTimeout(stallTimer);
             stallTimer = setTimeout(
               () => failAndKill('channel turn stalled — no activity'),
@@ -239,23 +312,66 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
             );
           };
 
-          // Close the stream once the transcript reports the turn is over.
-          // Debounced (TURN_SETTLE_MS) so trailing thinking/text entries are
-          // tailed before we stop; a later turn_complete resets the timer.
-          // This is the primary turn terminator — the `reply` channel event
-          // below is a secondary signal the model only sometimes emits.
-          const scheduleFinish = () => {
+          // Close the stream. The answer text has already streamed to the
+          // client via the transcript tail, so pass '' to avoid emitting it
+          // twice — UNLESS the model used only the reply tool and never wrote
+          // natural text, in which case ev.text (captured in replyText) is the
+          // only copy of the answer.
+          const finishTurn = () => {
             if (done) return;
-            clearTimeout(finishTimer);
-            finishTimer = setTimeout(() => {
-              if (done) return;
-              done = true;
-              cleanup();
-              // The answer text already streamed via the transcript tail, so
-              // pass '' — finish() would otherwise emit it a second time.
-              finish('', sawUsage ? turnUsage : undefined);
-            }, TURN_SETTLE_MS);
+            done = true;
+            cleanup();
+            finish(
+              sawTextFromTranscript ? '' : replyText,
+              sawUsage ? turnUsage : undefined,
+            );
           };
+
+          // Primary (and sole) turn-end detector: the PTY has gone quiet. Re-armed
+          // on every PTY data chunk (the model is still working) and after a tool
+          // result; suspended while a tool is executing or a permission prompt is
+          // pending (the process is legitimately idle then). When the timer
+          // actually fires, the PTY has produced nothing for PTY_IDLE_FINISH_MS —
+          // the turn is over.
+          const armFinish = () => {
+            if (done || permissionPending || activeToolCount > 0) return;
+            clearTimeout(finishTimer);
+            finishTimer = setTimeout(finishTurn, PTY_IDLE_FINISH_MS);
+          };
+
+          // PTY output ⇒ the process is alive and the turn is still in progress.
+          // Re-arm both the stall watchdog (kill, long backstop) and the finish
+          // timer (close, short). Throttled to once per second: chunks arrive
+          // far faster than that during a turn, and the timers are seconds long,
+          // so a 1s reset cadence is plenty to keep them from firing mid-turn.
+          let lastHeartbeat = 0;
+          ptyHeartbeat = session.proc.onData(() => {
+            const now = Date.now();
+            if (now - lastHeartbeat < 1000) return;
+            lastHeartbeat = now;
+            bumpStall();
+            armFinish();
+          });
+
+          // If the PTY process exits unexpectedly mid-turn (crash, OOM, external
+          // kill), nothing else would close this stream: the stall + PTY-idle
+          // watchdogs are suspended whenever a tool is in flight (activeToolCount
+          // > 0), so a crash during a tool would hang until TURN_TIMEOUT_MS and
+          // leave the DB draft stuck in 'streaming' (→ recovery deadlock). React
+          // to the exit directly: flush any trailing transcript line, then close
+          // the stream so collectStreamResponse finalizes the draft.
+          exitSub = session.proc.onExit(() => {
+            if (done) return;
+            setTimeout(() => finishTurn(), 500);
+          });
+
+          // Keep the client's connection-health watchdog satisfied during long
+          // tool calls / thinking gaps, when T1 otherwise emits no SSE data for
+          // the tool's full duration. Without this the client wrongly aborts the
+          // stream after ~30s of silence and surfaces a spurious timeout.
+          heartbeatPing = setInterval(() => {
+            if (!done) emit({ type: 'heartbeat', data: '' });
+          }, HEARTBEAT_INTERVAL_MS);
 
           timeout = setTimeout(
             () => failAndKill('channel turn timed out'),
@@ -265,10 +381,13 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           unsub = subscribeChannelEvents(opts.sessionId, (ev) => {
             if (ev.kind === 'permission_request') {
               // The model is now legitimately idle, waiting on the user's
-              // verdict — suspend the stall watchdog so the wait isn't
-              // mistaken for a wedged process. The TURN_TIMEOUT_MS cap remains.
+              // verdict — suspend BOTH watchdogs so the wait isn't mistaken for
+              // a wedged process (stall) or a finished turn (the PTY goes quiet
+              // while waiting for the verdict, which would otherwise trip the
+              // PTY-idle finish). The TURN_TIMEOUT_MS cap remains.
               permissionPending = true;
               clearTimeout(stallTimer);
+              clearTimeout(finishTimer);
               emit({ type: 'permission_request', data: JSON.stringify({
                 permissionRequestId: ev.request.request_id,
                 toolName: ev.request.tool_name,
@@ -277,22 +396,19 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
                 description: ev.request.description,
               }) });
             } else if (ev.kind === 'reply') {
-              if (done) return; done = true;
-              setTimeout(() => {
-                cleanup();
-                // If the transcript already streamed the model's natural text
-                // for this turn, ev.text repeats the same content (the MCP
-                // server tells the model to put its full final answer in the
-                // reply tool's `text` arg, but the model also writes it as
-                // natural text first). Skip the re-emit in that case to avoid
-                // duplicating the answer in the saved message. When no
-                // transcript text arrived (model used only the reply tool),
-                // fall back to ev.text so the answer isn't lost.
-                finish(
-                  sawTextFromTranscript ? '' : ev.text,
-                  sawUsage ? turnUsage : undefined,
-                );
-              }, 400);
+              // Record the reply text as a fallback answer (used only if the
+              // model streamed no natural transcript text). Deliberately does
+              // NOT close the stream: the model sometimes calls reply mid-turn
+              // and keeps working (more thinking, a second reply, a final text
+              // block), so closing on reply truncated the real answer. The
+              // PTY-quiet timer is the only thing that ends the turn. Still arm
+              // it here in case reply arrives after the PTY already went quiet.
+              // Mark sawReply so post-reply restatement text is suppressed (the
+              // transcript tailer also sets this; whichever observes the reply
+              // first wins — this event can beat the tailed tool_use entry).
+              replyText = ev.text;
+              sawReply = true;
+              armFinish();
             }
           });
 

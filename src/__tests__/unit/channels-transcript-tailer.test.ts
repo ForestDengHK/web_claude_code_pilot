@@ -75,40 +75,39 @@ test('assistant entry with rate-limit error emits a rate_limit SSEEvent', () => 
   assert.equal(events[0].type, 'rate_limit');
 });
 
-test('assistant entry with terminal stop_reason end_turn emits turn_complete', () => {
-  // The channel protocol has no turn-end signal and the model does not
-  // reliably call the reply tool after agentic turns — it just ends the turn.
-  // A terminal stop_reason in the transcript is the only reliable signal.
+// Turn-end is NOT inferred from the transcript. In T1 every assistant entry —
+// including tool_use ones — carries stop_reason='end_turn', so no single entry
+// can signal the turn ended. streamChannels decides turn-end from the reply
+// event + PTY quiet instead. The tailer must therefore NEVER emit turn_complete,
+// regardless of stop_reason, so it can't prematurely close an agentic turn.
+test('end_turn text entry does NOT emit turn_complete (T1 stop_reason is unreliable)', () => {
   const entry = { type: 'assistant', message: {
     stop_reason: 'end_turn', content: [{ type: 'text', text: 'all done' }],
   } };
   const events = transcriptEntriesToEvents([entry]);
-  assert.ok(events.some((e) => e.type === 'turn_complete'),
-    'expected a turn_complete event');
-});
-
-test('assistant entry with stop_reason stop_sequence emits turn_complete', () => {
-  const entry = { type: 'assistant', message: {
-    stop_reason: 'stop_sequence', content: [{ type: 'text', text: 'done' }],
-  } };
-  const events = transcriptEntriesToEvents([entry]);
-  assert.ok(events.some((e) => e.type === 'turn_complete'));
-});
-
-test('assistant entry with stop_reason tool_use does NOT emit turn_complete', () => {
-  // tool_use means the turn continues (model paused to call a tool).
-  const entry = { type: 'assistant', message: {
-    stop_reason: 'tool_use',
-    content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }],
-  } };
-  const events = transcriptEntriesToEvents([entry]);
+  assert.ok(events.some((e) => e.type === 'text'), 'text is still surfaced');
   assert.ok(!events.some((e) => e.type === 'turn_complete'),
-    'tool_use is not a turn end');
+    'tailer must not infer turn-end');
 });
 
-test('assistant entry with no stop_reason does NOT emit turn_complete', () => {
+test('end_turn tool_use entry does NOT emit turn_complete (the bug: T1 stamps tool_use as end_turn)', () => {
+  // This is the exact entry shape that caused the truncation bug: a tool_use
+  // block written with stop_reason='end_turn'. The tailer must surface the
+  // tool_use for display but must NOT treat it as a turn end.
   const entry = { type: 'assistant', message: {
-    content: [{ type: 'text', text: 'partial' }],
+    stop_reason: 'end_turn',
+    content: [{ type: 'tool_use', id: 't1', name: 'ToolSearch', input: {} }],
+  } };
+  const events = transcriptEntriesToEvents([entry]);
+  assert.ok(events.some((e) => e.type === 'tool_use'), 'tool_use is still surfaced');
+  assert.ok(!events.some((e) => e.type === 'turn_complete'),
+    'a tool_use entry is never a turn end, even with stop_reason=end_turn');
+});
+
+test('thinking-only end_turn entry does NOT emit turn_complete', () => {
+  const entry = { type: 'assistant', message: {
+    stop_reason: 'end_turn',
+    content: [{ type: 'thinking', thinking: 'reasoning…' }],
   } };
   const events = transcriptEntriesToEvents([entry]);
   assert.ok(!events.some((e) => e.type === 'turn_complete'));
@@ -116,8 +115,8 @@ test('assistant entry with no stop_reason does NOT emit turn_complete', () => {
 
 test('synthetic assistant entry (model "<synthetic>") emits no events', () => {
   // `claude --resume` injects this when it classifies the prior turn as
-  // interrupted. Without filtering, its stop_sequence would fire turn_complete
-  // and close the stream before the real reply arrives.
+  // interrupted. Without filtering, its synthetic "No response requested."
+  // text would be surfaced as the turn's response.
   const entry = { type: 'assistant', message: {
     model: '<synthetic>',
     stop_reason: 'stop_sequence',

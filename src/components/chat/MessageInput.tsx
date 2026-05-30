@@ -1401,7 +1401,12 @@ export function MessageInput({
                               )}
                               onClick={() => {
                                 onModelChange?.(opt.value);
-                                if (backend !== 'claude') onBackendChange?.('claude');
+                                // Claude-family models run on BOTH T1 (channels) and
+                                // T2 (claude SDK). Only promote a non-Claude backend
+                                // (codex) to the SDK; preserve 'channels' so picking a
+                                // model doesn't silently demote T1 → T2. Mirrors the
+                                // auto-select logic in fetchModels above.
+                                if (backend === 'codex') onBackendChange?.('claude');
                                 // Set default effort for Claude model, or clear if not supported
                                 const nextEffort = getDefaultEffortForModel(
                                   opt.value,
