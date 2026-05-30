@@ -20,6 +20,7 @@ import {
   parseJsonRpcLine,
   type JsonRpcMessage,
 } from './codex-jsonrpc';
+import { getCodexExecutable } from './codex-binary';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -141,7 +142,9 @@ export class CodexProcessManager {
   // -------------------------------------------------------------------------
 
   private static async spawnAndInitialize(sessionId: string): Promise<CodexProcess> {
-    const proc = spawn('codex', ['app-server'], {
+    // Resolved via getCodexExecutable() so a self-healed fresh-inode copy is
+    // used when the installed binary's inode is hung (see codex-binary.ts).
+    const proc = spawn(getCodexExecutable(), ['app-server'], {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 

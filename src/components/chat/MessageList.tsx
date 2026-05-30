@@ -149,6 +149,9 @@ export function MessageList({
 }: MessageListProps) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const scrollerRef = useRef<HTMLElement | null>(null);
+  // Mirror of scrollerRef in state, so the user-input listener useEffect can
+  // attach/detach when Virtuoso (re)mounts the scroller element.
+  const [scrollerEl, setScrollerEl] = useState<HTMLElement | null>(null);
   const [atBottom, setAtBottom] = useState(true);
   const [atTop, setAtTop] = useState(true);
 
@@ -277,6 +280,42 @@ export function MessageList({
     }
   }, [isStreaming, streamingContent, toolUses.length, toolResults.length, statusText]);
 
+  // Detect user-initiated scroll-up during streaming so we stop forcing the
+  // viewport down. `atBottomStateChange` can't be trusted here: the Footer
+  // grows between scrolls and triggers spurious "left bottom" events. Wheel
+  // and touch events only fire from real user gestures, so they reliably
+  // distinguish intent. Re-engagement happens via atBottomStateChange when
+  // the user scrolls back to the bottom, or via the Scroll-to-Bottom button.
+  useEffect(() => {
+    if (!scrollerEl) return;
+    const disengage = () => {
+      if (isStreamingRef.current && followOutputRef.current) {
+        followOutputRef.current = false;
+      }
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) disengage();
+    };
+    let touchStartY = 0;
+    const onTouchStart = (e: TouchEvent) => {
+      touchStartY = e.touches[0]?.clientY ?? 0;
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      const currentY = e.touches[0]?.clientY ?? 0;
+      // Threshold filters out taps and accidental jitter — only swipe-down
+      // (which scrolls the content up) counts as scroll-up intent.
+      if (currentY - touchStartY > 5) disengage();
+    };
+    scrollerEl.addEventListener('wheel', onWheel, { passive: true });
+    scrollerEl.addEventListener('touchstart', onTouchStart, { passive: true });
+    scrollerEl.addEventListener('touchmove', onTouchMove, { passive: true });
+    return () => {
+      scrollerEl.removeEventListener('wheel', onWheel);
+      scrollerEl.removeEventListener('touchstart', onTouchStart);
+      scrollerEl.removeEventListener('touchmove', onTouchMove);
+    };
+  }, [scrollerEl]);
+
   if (messages.length === 0 && !isStreaming) {
     return (
       <div className="flex flex-1 items-center justify-center">
@@ -293,7 +332,10 @@ export function MessageList({
     <Conversation>
       <Virtuoso
         ref={virtuosoRef}
-        scrollerRef={(ref) => { scrollerRef.current = ref as HTMLElement; }}
+        scrollerRef={(ref) => {
+          scrollerRef.current = ref as HTMLElement;
+          setScrollerEl(ref as HTMLElement);
+        }}
         style={{ height: '100%' }}
         data={messages}
         context={virtuosoContext}
@@ -305,12 +347,16 @@ export function MessageList({
         }}
         atBottomStateChange={(bottom) => {
           setAtBottom(bottom);
-          // During streaming, Footer content grows between our scroll and the next
-          // Virtuoso layout pass, making Virtuoso think we left the bottom.
-          // Only let atBottomStateChange DISENGAGE follow when NOT streaming.
-          // Uses ref because Virtuoso may cache this callback closure.
+          // During streaming, Footer content grows between our scroll and the
+          // next Virtuoso layout pass, making Virtuoso think we left the bottom.
+          // So we ignore the "left bottom" signal here during streaming — real
+          // user-initiated scroll-up is detected via wheel/touchmove listeners.
+          // But "reached bottom" is always trustworthy: re-engage follow so the
+          // viewport tracks new content again after the user scrolls back down.
           if (!isStreamingRef.current) {
             followOutputRef.current = bottom;
+          } else if (bottom) {
+            followOutputRef.current = true;
           }
         }}
         atTopStateChange={(top) => {

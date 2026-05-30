@@ -61,6 +61,8 @@ next-env.d.ts
 
 # git worktrees
 .worktrees/
+.claude/
+.claire/
 
 # screenshots from testing
 *.png

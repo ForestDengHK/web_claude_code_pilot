@@ -26,6 +26,21 @@ export function seedSdkResumeFromChannel(sessionId: string): void {
 }
 
 /**
+ * Mirror of seedSdkResumeFromChannel for the reverse direction: copy the
+ * Agent SDK's session id into channel_session_id so the next `claude
+ * --channels --resume` reads the same .jsonl transcript T2 was writing to.
+ * Without this, switching from T2 back to T1 (or starting in T2 then moving
+ * to T1) loses every turn that was logged under the SDK session id.
+ */
+export function seedChannelResumeFromSdk(sessionId: string): void {
+  const s = getSession(sessionId);
+  if (s?.sdk_session_id && !s.channel_session_id) {
+    getDb().prepare(`UPDATE chat_sessions SET channel_session_id = ? WHERE id = ?`)
+      .run(s.sdk_session_id, sessionId);
+  }
+}
+
+/**
  * Manually switch a conversation to an explicit tier, any direction. Unlike
  * applyTierSwitch (driven by exhaustion, always the next tier, discards the
  * failed turn), this is driven by the user picking a tier and only changes
@@ -35,6 +50,8 @@ export function switchToTier(sessionId: string, target: Tier): void {
   const s = getSession(sessionId);
   if (s?.backend === 'channels' && target !== 'channels') {
     seedSdkResumeFromChannel(sessionId);
+  } else if (s?.backend !== 'channels' && target === 'channels') {
+    seedChannelResumeFromSdk(sessionId);
   }
   getDb().prepare(`UPDATE chat_sessions SET backend = ? WHERE id = ?`).run(target, sessionId);
 }
