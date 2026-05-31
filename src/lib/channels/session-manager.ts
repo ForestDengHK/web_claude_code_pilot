@@ -1,5 +1,6 @@
 import net from 'node:net';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import * as pty from 'node-pty';
 import { findClaudeBinary } from '../platform';
 import { sanitizeEffortLevel } from '../effort';
@@ -19,6 +20,7 @@ export interface ChannelSession {
   // ensureSession).
   spawnedMode?: string;
   spawnedSystemPrompt?: string;
+  spawnedModel?: string;
   spawnedEffort?: string;
   spawnedSkipPermissions?: boolean;
   spawnedPluginPathsKey?: string;  // serialized so we can equality-compare cheaply
@@ -155,6 +157,7 @@ export async function ensureSession(input: EnsureInput): Promise<ChannelSession>
     const configChanged =
       existing.spawnedMode !== input.mode ||
       existing.spawnedSystemPrompt !== input.systemPrompt ||
+      existing.spawnedModel !== input.model ||
       existing.spawnedEffort !== wantedEffort ||
       existing.spawnedSkipPermissions !== wantedSkipPermissions ||
       existing.spawnedPluginPathsKey !== wantedPluginPathsKey ||
@@ -213,6 +216,7 @@ export async function ensureSession(input: EnsureInput): Promise<ChannelSession>
     state: 'starting', lastUsedAt: Date.now(),
     spawnedMode: input.mode,
     spawnedSystemPrompt: input.systemPrompt,
+    spawnedModel: input.model,
     spawnedEffort: wantedEffort,
     spawnedSkipPermissions: wantedSkipPermissions,
     spawnedPluginPathsKey: wantedPluginPathsKey,
@@ -271,6 +275,53 @@ export function reapIdle(maxIdleMs = 30 * 60_000): void {
   for (const [id, s] of registry()) {
     if (s.state === 'exited' || now - s.lastUsedAt > maxIdleMs) killSession(id);
   }
+}
+
+/**
+ * Kill stray `claude --channels` PTYs left over from a PREVIOUS server instance.
+ *
+ * reapIdle only knows sessions in THIS process's registry. When the server
+ * restarts — `launchctl kickstart`, a rebuild, an HMR full reload, or a crash —
+ * the old next-server process can survive (reparented to PID 1) and keep its
+ * channel-PTY children alive forever; the new instance's registry never sees
+ * them, so they leak across restarts (observed: 6-day-old orphans). At boot the
+ * registry is empty, so ANY live process whose argv carries THIS project's MCP
+ * server path is necessarily such a leftover and is safe to SIGKILL — the
+ * conversation is on disk and resumes via `--resume` on the next message.
+ *
+ * Scoped to MCP_SERVER_PATH, an absolute path that embeds this project's cwd, so
+ * a parallel CodePilot running from a different checkout — e.g. a git worktree
+ * on another port — is never touched. Never kills a registered session's PID or
+ * our own PID (defensive; the registry is empty at boot but this keeps the
+ * function safe to call at any time).
+ *
+ * Returns the number of processes killed.
+ */
+export function reapOrphanChannelProcs(): number {
+  const protectedPids = new Set<number>([process.pid]);
+  for (const s of registry().values()) {
+    if (s.proc?.pid) protectedPids.add(s.proc.pid);
+  }
+  let pids: number[];
+  try {
+    // pgrep -f matches the full command line. MCP_SERVER_PATH appears both in
+    // the channel PTY's --mcp-config argv and in the MCP server child's script
+    // path; at boot both belong to a dead instance, so killing both is correct
+    // and complete. pgrep exits non-zero (throws) when nothing matches.
+    const out = execFileSync('pgrep', ['-f', MCP_SERVER_PATH], { encoding: 'utf8' });
+    pids = out.split('\n').map((l) => parseInt(l.trim(), 10)).filter(Number.isInteger);
+  } catch {
+    return 0; // no matches (or pgrep unavailable) — nothing to reap
+  }
+  let killed = 0;
+  for (const pid of pids) {
+    if (protectedPids.has(pid)) continue;
+    try { process.kill(pid, 'SIGKILL'); killed++; } catch { /* already gone */ }
+  }
+  if (killed > 0) {
+    console.log(`[channels] reaped ${killed} orphaned channel process(es) from a previous instance`);
+  }
+  return killed;
 }
 
 export { MCP_SERVER_PATH };

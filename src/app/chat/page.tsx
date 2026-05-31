@@ -41,6 +41,10 @@ export default function NewChatPage() {
   const [workingDir, setWorkingDir] = useState('');
   const [mode, setMode] = useState('acceptEdits');
   const [currentModel, setCurrentModel] = useState('sonnet');
+  // Reasoning effort for the first message. MessageInput auto-fills the model's
+  // default via onEffortChange; without this the first T1 turn spawned with no
+  // --effort flag (CLI default) and only later turns (via ChatView) honored it.
+  const [currentEffort, setCurrentEffort] = useState<string | undefined>();
   const [selectedBackend, setSelectedBackend] = useState<'claude' | 'codex' | 'channels'>('channels');
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
   const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
@@ -238,6 +242,7 @@ export default function NewChatPage() {
             ...(apiContent !== content ? { prompt: apiContent } : {}),
             mode,
             model: currentModel,
+            ...(currentEffort ? { effort: currentEffort } : {}),
           }),
           signal: controller.signal,
         });
@@ -409,7 +414,7 @@ export default function NewChatPage() {
         abortControllerRef.current = null;
       }
     },
-    [isStreaming, router, workingDir, mode, currentModel, setPendingApprovalSessionId, selectedBackend]
+    [isStreaming, router, workingDir, mode, currentModel, currentEffort, setPendingApprovalSessionId, selectedBackend]
   );
 
   const handleCommand = useCallback(async (command: string, arg?: string) => {
@@ -634,6 +639,8 @@ export default function NewChatPage() {
         isStreaming={isStreaming}
         modelName={currentModel}
         onModelChange={setCurrentModel}
+        effort={currentEffort}
+        onEffortChange={setCurrentEffort}
         workingDirectory={workingDir}
         mode={mode}
         onModeChange={setMode}

@@ -3,6 +3,7 @@ import { getSession as getDbSession, updateChannelSessionId } from './db';
 import { ensureSession, killSession } from './channels/session-manager';
 import { tailTranscript, transcriptPath } from './channels/transcript-tailer';
 import { subscribeChannelEvents } from './channels/event-bus';
+import { resolveFinalReplyText } from './channels/reply-dedup';
 import { loadEnabledPluginPaths, loadMergedMcpServers } from './claude-config-loader';
 import type { SSEEvent } from '@/types';
 
@@ -174,14 +175,16 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
             model: undefined as string | undefined,
           };
           let sawUsage = false;
-          // Track whether the transcript already streamed natural (pre-reply)
-          // text for this turn. The MCP `reply` tool's text argument is the
-          // model's full final answer — when the model writes natural text AND
-          // calls reply (the normal case), the reply text restates the same
-          // answer, so we drop it (finish passes '' when sawTextFromTranscript).
-          // Only fall back to ev.text when no natural text arrived (model used
-          // only the reply tool).
-          let sawTextFromTranscript = false;
+          // Accumulate the natural (pre-reply) text streamed to the UI this
+          // turn. The MCP `reply` tool's text argument is the model's full final
+          // answer; whether that answer was ALSO already streamed as natural
+          // text varies turn to turn — sometimes the model types the answer then
+          // restates it into reply, sometimes the natural text is only
+          // working-notes ("Let me load the reply tool…") and the answer lives
+          // ONLY in reply. resolveFinalReplyText() compares this accumulator
+          // against the reply text at finish to decide whether reply still needs
+          // delivering (avoids both the duplicate AND the dropped-answer bug).
+          let streamedText = '';
           // Set once the model has called `reply` (its "answer sent" action).
           // Any natural text the model writes AFTER that is a restatement /
           // closing remark — e.g. it types "I'll note this", writes a file,
@@ -205,7 +208,7 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
                   // Drop restatement text the model writes after it already
                   // called reply — surfacing it duplicates the answer.
                   if (sawReply) continue;
-                  sawTextFromTranscript = true;
+                  streamedText += e.data;
                 } else if (e.type === 'tool_use') {
                   try {
                     const d = JSON.parse(e.data);
@@ -312,17 +315,19 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
             );
           };
 
-          // Close the stream. The answer text has already streamed to the
-          // client via the transcript tail, so pass '' to avoid emitting it
-          // twice — UNLESS the model used only the reply tool and never wrote
-          // natural text, in which case ev.text (captured in replyText) is the
-          // only copy of the answer.
+          // Close the stream. The model's full final answer is the `reply`
+          // text (captured in replyText). resolveFinalReplyText decides whether
+          // it still needs emitting: if the same answer already streamed as
+          // natural text it returns '' (avoid a duplicate); if the streamed text
+          // was only working-notes / narration it returns replyText so the
+          // answer isn't dropped (the recurring truncation bug). See
+          // reply-dedup.ts for the full rationale.
           const finishTurn = () => {
             if (done) return;
             done = true;
             cleanup();
             finish(
-              sawTextFromTranscript ? '' : replyText,
+              resolveFinalReplyText(streamedText, replyText),
               sawUsage ? turnUsage : undefined,
             );
           };
