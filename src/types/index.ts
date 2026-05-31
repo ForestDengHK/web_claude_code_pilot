@@ -448,6 +448,7 @@ export type SSEEventType =
   | 'heartbeat'          // keepalive signal for connection health
   | 'session_reset'      // stale SDK session cleared, retry in progress
   | 'turn_complete'      // channels: assistant turn ended (terminal stop_reason); consumed internally by streamChannels
+  | 'channel_queue'      // channels: CLI enqueue/dequeue of a pushed message; consumed internally by streamChannels (wedge detection)
   | 'done';              // stream complete
 
 export interface SSEEvent {

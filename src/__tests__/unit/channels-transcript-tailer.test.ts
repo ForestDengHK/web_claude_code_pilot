@@ -134,3 +134,19 @@ test('isMeta user entry ("Continue from where you left off.") emits no events', 
   };
   assert.deepEqual(transcriptEntriesToEvents([entry]), []);
 });
+
+test('queue-operation dequeue becomes a channel_queue event (turn-started signal)', () => {
+  // Surfaced internally so streamChannels can disarm the pre-dequeue wedge
+  // watchdog once the CLI accepts a pushed message. See t1-session-wedged-no-reply.
+  const entry = { type: 'queue-operation', operation: 'dequeue',
+    timestamp: '2026-05-31T20:24:02.631Z' };
+  assert.deepEqual(transcriptEntriesToEvents([entry]),
+    [{ type: 'channel_queue', data: JSON.stringify({ op: 'dequeue' }) }]);
+});
+
+test('queue-operation enqueue becomes a channel_queue event', () => {
+  const entry = { type: 'queue-operation', operation: 'enqueue',
+    timestamp: '2026-05-31T20:28:41.386Z', content: 'hi' };
+  assert.deepEqual(transcriptEntriesToEvents([entry]),
+    [{ type: 'channel_queue', data: JSON.stringify({ op: 'enqueue' }) }]);
+});

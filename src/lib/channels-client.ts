@@ -120,6 +120,18 @@ const PTY_IDLE_FINISH_MS = 6_000;
 // commands, builds, network calls, or extended-thinking API responses.
 const STALL_TIMEOUT_MS = 300_000;
 
+// Pre-dequeue wedge watchdog (fix B'). After we push a message, a HEALTHY
+// `claude --channels` dequeues it within ~15ms to start the turn. When the CLI
+// has wedged mid-turn (upstream research-preview instability), it never
+// dequeues — the message just sits in its queue and the user gets total silence
+// (the t1-session-wedged-no-reply incident). So if no dequeue AND no transcript
+// progress happens within this window, the CLI is wedged → reap it (next message
+// respawns via --resume). Deferred by real progress so a message legitimately
+// QUEUED behind a long-running prior turn isn't reaped. Unlike STALL_TIMEOUT_MS
+// this is safe to keep short: nothing legitimately delays a dequeue, and the
+// model can't be "thinking" yet — the turn hasn't started.
+const DEQUEUE_WEDGE_MS = 90_000;
+
 export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<string> {
   return assembleStream({
     onStart: (emit, finish, fail) => {
@@ -195,17 +207,46 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           // fired we suppress further natural text blocks; tool work continues
           // to stream so genuine post-reply actions aren't lost.
           let sawReply = false;
+
+          // Containment wrapper (fix A). Every PTY / timer / event callback runs
+          // OUTSIDE the surrounding try below (it has already returned by the time
+          // they fire), so a throw inside one escapes as a process-wide
+          // `uncaughtException`. Node then limps on in an undefined state and the
+          // watchdog timers stop firing — exactly the `replySeen` incident that
+          // bricked a session for good. `safe` logs and swallows so a bug fails
+          // only THIS turn (its own watchdogs still reap it); the whole server
+          // stays healthy and other sessions are untouched.
+          const safe = <A extends unknown[]>(label: string, fn: (...a: A) => void) =>
+            (...a: A): void => {
+              try { fn(...a); }
+              catch (err) {
+                console.error(`[channels:${opts.sessionId}] ${label} callback threw (turn isolated):`, err);
+              }
+            };
+
           const tail = tailTranscript(
             transcriptPath(opts.workingDirectory, claudeSessionId),
-            (events) => {
+            safe('transcript-tailer', (events) => {
               // Transcript grew → the process is producing output again. If a
-              // permission prompt was pending, the user's verdict has been
-              // applied and the model has resumed (the prompt itself writes no
-              // transcript entry), so clear the suspend flag before re-arming
-              // the watchdogs below.
+              // permission prompt was pending, the user's verdict has been applied
+              // and the model has resumed (the prompt itself writes no transcript
+              // entry), so clear the suspend flag before re-arming the watchdog.
               if (permissionPending) permissionPending = false;
               bumpStall(); // transcript grew → the process is alive
+              // Defer the pre-dequeue wedge watchdog on any real model output —
+              // covers a message legitimately queued behind a still-running turn.
+              if (events.some((e) => e.type !== 'channel_queue')) bumpWedge();
               for (const e of events) {
+                if (e.type === 'channel_queue') {
+                  // Internal signal from the transcript tailer (not forwarded to
+                  // the client). A `dequeue` means the CLI accepted our pushed
+                  // message and the turn has started → disarm the pre-dequeue
+                  // wedge watchdog (fix B'); from here the stall / PTY-idle
+                  // watchdogs govern the running turn.
+                  try { if (JSON.parse(e.data).op === 'dequeue') turnStarted(); }
+                  catch { /* ignore malformed */ }
+                  continue;
+                }
                 if (e.type === 'text') {
                   // Drop restatement text the model writes after it already
                   // called reply — surfacing it duplicates the answer.
@@ -258,12 +299,16 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
                 }
                 emit(e);
               }
-            },
+            }),
           );
 
           let done = false;
           let finishTimer: ReturnType<typeof setTimeout> | undefined;
           let stallTimer: ReturnType<typeof setTimeout> | undefined;
+          // Pre-dequeue wedge watchdog (fix B'): armed after the push, disarmed
+          // once the CLI dequeues our message (turn started). See DEQUEUE_WEDGE_MS.
+          let wedgeTimer: ReturnType<typeof setTimeout> | undefined;
+          let turnDequeued = false;
           let permissionPending = false;
           // Count of non-reply tool_use blocks whose tool_result has not yet
           // arrived. The stall + finish watchdogs are suspended while this is > 0.
@@ -282,13 +327,17 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           let timeout: ReturnType<typeof setTimeout>;
           // eslint-disable-next-line prefer-const
           let unsub: () => void;
+          // eslint-disable-next-line prefer-const
           let ptyHeartbeat: { dispose(): void } | undefined;
+          // eslint-disable-next-line prefer-const
           let exitSub: { dispose(): void } | undefined;
+          // eslint-disable-next-line prefer-const
           let heartbeatPing: ReturnType<typeof setInterval> | undefined;
 
           const cleanup = () => {
             tail.stop(); unsub(); ptyHeartbeat?.dispose(); exitSub?.dispose();
             clearTimeout(timeout); clearTimeout(finishTimer); clearTimeout(stallTimer);
+            clearTimeout(wedgeTimer);
             clearInterval(heartbeatPing);
           };
 
@@ -312,7 +361,7 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
             if (done || permissionPending || activeToolCount > 0) return;
             clearTimeout(stallTimer);
             stallTimer = setTimeout(
-              () => failAndKill('channel turn stalled — no activity'),
+              safe('stall-watchdog', () => failAndKill('channel turn stalled — no activity')),
               STALL_TIMEOUT_MS,
             );
           };
@@ -343,7 +392,27 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           const armFinish = () => {
             if (done || permissionPending || activeToolCount > 0) return;
             clearTimeout(finishTimer);
-            finishTimer = setTimeout(finishTurn, PTY_IDLE_FINISH_MS);
+            finishTimer = setTimeout(safe('finish-timer', finishTurn), PTY_IDLE_FINISH_MS);
+          };
+
+          // (Re)arm the pre-dequeue wedge watchdog (fix B'). Active only until the
+          // CLI dequeues our pushed message; deferred by any real transcript
+          // progress so a message queued behind a still-running prior turn is not
+          // reaped. Fires only when the CLI accepted nothing and produced nothing.
+          const bumpWedge = () => {
+            if (done || turnDequeued) return;
+            clearTimeout(wedgeTimer);
+            wedgeTimer = setTimeout(
+              safe('wedge-watchdog', () => failAndKill('channel never started the turn (no dequeue) — wedged')),
+              DEQUEUE_WEDGE_MS,
+            );
+          };
+          // The CLI dequeued our message → the turn is underway. Disarm the
+          // pre-dequeue wedge watchdog permanently; the stall / PTY-idle
+          // watchdogs govern the running turn from here.
+          const turnStarted = () => {
+            turnDequeued = true;
+            clearTimeout(wedgeTimer);
           };
 
           // PTY output ⇒ the process is alive and the turn is still in progress.
@@ -352,13 +421,13 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           // far faster than that during a turn, and the timers are seconds long,
           // so a 1s reset cadence is plenty to keep them from firing mid-turn.
           let lastHeartbeat = 0;
-          ptyHeartbeat = session.proc.onData(() => {
+          ptyHeartbeat = session.proc.onData(safe('pty-heartbeat', () => {
             const now = Date.now();
             if (now - lastHeartbeat < 1000) return;
             lastHeartbeat = now;
             bumpStall();
             armFinish();
-          });
+          }));
 
           // If the PTY process exits unexpectedly mid-turn (crash, OOM, external
           // kill), nothing else would close this stream: the stall + PTY-idle
@@ -367,25 +436,25 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           // leave the DB draft stuck in 'streaming' (→ recovery deadlock). React
           // to the exit directly: flush any trailing transcript line, then close
           // the stream so collectStreamResponse finalizes the draft.
-          exitSub = session.proc.onExit(() => {
+          exitSub = session.proc.onExit(safe('pty-exit', () => {
             if (done) return;
-            setTimeout(() => finishTurn(), 500);
-          });
+            setTimeout(safe('pty-exit-finish', () => finishTurn()), 500);
+          }));
 
           // Keep the client's connection-health watchdog satisfied during long
           // tool calls / thinking gaps, when T1 otherwise emits no SSE data for
           // the tool's full duration. Without this the client wrongly aborts the
           // stream after ~30s of silence and surfaces a spurious timeout.
-          heartbeatPing = setInterval(() => {
+          heartbeatPing = setInterval(safe('client-heartbeat', () => {
             if (!done) emit({ type: 'heartbeat', data: '' });
-          }, HEARTBEAT_INTERVAL_MS);
+          }), HEARTBEAT_INTERVAL_MS);
 
           timeout = setTimeout(
-            () => failAndKill('channel turn timed out'),
+            safe('turn-timeout', () => failAndKill('channel turn timed out')),
             TURN_TIMEOUT_MS,
           );
 
-          unsub = subscribeChannelEvents(opts.sessionId, (ev) => {
+          unsub = subscribeChannelEvents(opts.sessionId, safe('channel-event', (ev) => {
             if (ev.kind === 'permission_request') {
               // The model is now legitimately idle, waiting on the user's
               // verdict — suspend BOTH watchdogs so the wait isn't mistaken for
@@ -417,7 +486,7 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
               sawReply = true;
               armFinish();
             }
-          });
+          }));
 
           // Arm the stall watchdog now that the turn is underway. Covers the
           // case where the process produces no transcript output at all.
@@ -441,6 +510,10 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
             method: 'POST', body: opts.prompt,
           });
           if (!res.ok) failAndKill('failed to push message');
+          // Message handed to the channel server; start watching for the CLI to
+          // actually accept it (dequeue). If it never does, the CLI is wedged and
+          // bumpWedge's timer reaps it. (No-op if a dequeue already arrived.)
+          else bumpWedge();
         } catch (err) {
           try { killSession(opts.sessionId); } catch { /* best effort */ }
           fail(err instanceof Error ? err.message : String(err));

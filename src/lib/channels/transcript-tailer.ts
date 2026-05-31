@@ -12,6 +12,8 @@ export function transcriptPath(cwd: string, claudeSessionId: string): string {
 
 interface TranscriptEntry {
   type?: string;
+  /** For type 'queue-operation': 'enqueue' | 'dequeue'. */
+  operation?: string;
   isMeta?: boolean;
   error?: string;
   message?: {
@@ -31,6 +33,14 @@ interface TranscriptEntry {
 export function transcriptEntriesToEvents(entries: TranscriptEntry[]): SSEEvent[] {
   const out: SSEEvent[] = [];
   for (const entry of entries) {
+    // Surface queue-operations as an internal signal (consumed by streamChannels
+    // for wedge detection, never forwarded to the client). A `dequeue` means the
+    // CLI accepted a pushed message and started the turn; an un-dequeued
+    // `enqueue` left dangling is the wedge signature (see t1-session-wedged-no-reply).
+    if (entry.type === 'queue-operation') {
+      out.push({ type: 'channel_queue', data: JSON.stringify({ op: entry.operation }) });
+      continue;
+    }
     if (entry.type !== 'assistant' && entry.type !== 'user') continue;
     // Drop SDK-internal recovery messages. When `claude --resume` loads a
     // transcript whose last turn ended on a tool_result from a non-built-in
