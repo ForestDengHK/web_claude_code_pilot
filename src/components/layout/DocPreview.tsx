@@ -19,7 +19,7 @@ import {
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { Streamdown, defaultRemarkPlugins } from "streamdown";
+import { Streamdown, defaultRemarkPlugins, TableDownloadDropdown } from "streamdown";
 import { cjk } from "@streamdown/cjk";
 import { code } from "@streamdown/code";
 import { math } from "@streamdown/math";
@@ -181,6 +181,8 @@ function buildMarkdownComponents(mdFilePath: string, baseDir: string | null) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     p: ({ node: _node, ...props }: any) => <div {...props} />,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    table: MarkdownPreviewTable as any,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     img: ({ node: _node, src, alt, ...rest }: any) => {
       // The remark plugin replaced raw markdown URLs with a `/__md_asset__/`
       // sentinel so the URL pipeline can't strip leading `../`. Recover the
@@ -194,6 +196,102 @@ function buildMarkdownComponents(mdFilePath: string, baseDir: string | null) {
       return <ResolvedImg candidates={candidates} alt={alt ?? ""} {...rest} />;
     },
   };
+}
+
+function copyTextFallback(text: string) {
+  const copyFallback = () => {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textarea);
+  };
+
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).catch(copyFallback);
+    return;
+  }
+
+  copyFallback();
+}
+
+function extractTableRows(table: HTMLTableElement) {
+  const rows: string[][] = [];
+  for (const tr of table.querySelectorAll("tr")) {
+    const cells: string[] = [];
+    for (const cell of tr.querySelectorAll("th, td")) {
+      cells.push(cell.textContent?.trim() || "");
+    }
+    rows.push(cells);
+  }
+  return rows;
+}
+
+function MarkdownPreviewTable({
+  children,
+  className,
+  node: _node,
+  ...props
+}: {
+  children?: React.ReactNode;
+  className?: string;
+  node?: unknown;
+  [key: string]: unknown;
+}) {
+  void _node;
+
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  const handleCopy = useCallback(() => {
+    const table = wrapperRef.current?.querySelector("table") as HTMLTableElement | null;
+    if (!table) return;
+    copyTextFallback(extractTableRows(table).map((row) => row.join("\t")).join("\n"));
+    clearTimeout(timerRef.current);
+    setCopied(true);
+    timerRef.current = setTimeout(() => setCopied(false), 2000);
+  }, []);
+
+  useEffect(() => () => clearTimeout(timerRef.current), []);
+
+  return (
+    <div
+      ref={wrapperRef}
+      className="my-4 flex flex-col space-y-2"
+      data-streamdown="table-wrapper"
+    >
+      <div className="flex items-center justify-end gap-1">
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="inline-flex min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-md p-1 text-muted-foreground transition-all hover:bg-muted hover:text-foreground active:bg-muted/80"
+          title="Copy table"
+        >
+          <HugeiconsIcon
+            icon={copied ? Tick01Icon : Copy01Icon}
+            className={cn("h-4 w-4", copied && "text-green-500")}
+          />
+        </button>
+        <TableDownloadDropdown className="inline-flex min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-md p-1 text-muted-foreground transition-all hover:bg-muted hover:text-foreground active:bg-muted/80">
+          <HugeiconsIcon icon={Download04Icon} className="h-4 w-4" />
+        </TableDownloadDropdown>
+      </div>
+      <div className="overflow-x-auto">
+        <table
+          className={cn("w-full border-collapse border border-border", className)}
+          data-streamdown="table"
+          {...props}
+        >
+          {children}
+        </table>
+      </div>
+    </div>
+  );
 }
 
 /**
