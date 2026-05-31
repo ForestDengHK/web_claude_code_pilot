@@ -23,8 +23,8 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
-    const body: SendMessageRequest & { files?: FileAttachment[]; toolTimeout?: number; effort?: string; disable_tools?: boolean; max_turns?: number } = await request.json();
-    const { session_id, content, prompt, model, mode, files, toolTimeout, effort, disable_tools, max_turns } = body;
+    const body: SendMessageRequest & { files?: FileAttachment[]; toolTimeout?: number; effort?: string; fastMode?: boolean; disable_tools?: boolean; max_turns?: number } = await request.json();
+    const { session_id, content, prompt, model, mode, files, toolTimeout, effort, fastMode, disable_tools, max_turns } = body;
 
     if (!session_id || !content) {
       return new Response(JSON.stringify({ error: 'session_id and content are required' }), {
@@ -200,6 +200,7 @@ export async function POST(request: NextRequest) {
       skipPermissions: session.skip_permissions === 1,
       onQueryCreated: (q) => registerQuery(session_id, q as Query),
       effort,
+      fastMode,
       advisorModel: session.advisor_model || undefined,
       disableTools: disable_tools,
       maxTurns: max_turns,

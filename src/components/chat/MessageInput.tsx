@@ -10,6 +10,7 @@ import {
   HelpCircleIcon,
   ArrowDown01Icon,
   ArrowUp02Icon,
+  FlashIcon,
   CommandLineIcon,
   PlusSignIcon,
   Cancel01Icon,
@@ -68,6 +69,7 @@ import {
   normalizeEffortForModel,
   type CodexModelInfo,
   type ClaudeModelEffortInfo,
+  type ClaudeModelCapabilities,
 } from '@/lib/model-selection';
 
 import { MAX_UPLOAD_FILE_SIZE as MAX_FILE_SIZE } from '@/lib/config';
@@ -96,6 +98,8 @@ interface MessageInputProps {
   onBackendChange?: (backend: 'claude' | 'codex' | 'channels') => void;
   effort?: string;
   onEffortChange?: (effort: string) => void;
+  fastMode?: boolean;
+  onFastModeChange?: (fastMode: boolean) => void;
 }
 
 interface PopoverItem {
@@ -534,6 +538,8 @@ export function MessageInput({
   onBackendChange,
   effort,
   onEffortChange,
+  fastMode,
+  onFastModeChange,
 }: MessageInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -552,6 +558,7 @@ export function MessageInput({
   const [dynamicModels, setDynamicModels] = useState<Array<{ value: string; label: string; group?: 'claude' | 'codex' }> | null>(null);
   const [codexModelInfo, setCodexModelInfo] = useState<Map<string, CodexModelInfo>>(new Map());
   const [claudeEffortInfo, setClaudeEffortInfo] = useState<Map<string, ClaudeModelEffortInfo>>(new Map());
+  const [claudeCapabilities, setClaudeCapabilities] = useState<Map<string, ClaudeModelCapabilities>>(new Map());
   const skillsCacheRef = useRef<Map<string, string>>(new Map());
   /** Cache of Codex skill metadata (name → path), populated from /api/codex/skills */
   const codexSkillsCacheRef = useRef<Map<string, string>>(new Map());
@@ -580,6 +587,7 @@ export function MessageInput({
       const allModels = catalog.models;
       setDynamicModels(allModels);
       setClaudeEffortInfo(catalog.claudeEffortInfo);
+      setClaudeCapabilities(catalog.claudeCapabilities);
       setCodexModelInfo(catalog.codexModelInfo);
 
       // Auto-select default model if no explicit model set
@@ -1116,6 +1124,11 @@ export function MessageInput({
     codexModelInfo,
   );
 
+  // Fast mode is a Claude-only concept. Gate the toggle on the current model's
+  // capability flag — Codex models (and Claude models that don't support it)
+  // have supportsFastMode !== true, so the toggle simply doesn't render.
+  const supportsFastMode = claudeCapabilities.get(currentModelValue)?.supportsFastMode === true;
+
   /** Short effort label for the toolbar button (e.g. "Med", "Hi", "XHi") */
   const effortShortLabel = (val?: string) => {
     if (!val) return '';
@@ -1379,6 +1392,9 @@ export function MessageInput({
                         <span className="hidden sm:inline">{`\u00B7${effortShortLabel(currentEffort)}`}</span>
                       )}
                     </span>
+                    {supportsFastMode && fastMode && (
+                      <HugeiconsIcon icon={FlashIcon} className="h-2.5 w-2.5 shrink-0 text-primary" />
+                    )}
                     <HugeiconsIcon icon={ArrowDown01Icon} className={cn("h-2.5 w-2.5 shrink-0 transition-transform duration-200", modelMenuOpen && "rotate-180")} />
                   </PromptInputButton>
 
@@ -1497,6 +1513,32 @@ export function MessageInput({
                               </button>
                             ))}
                           </div>
+                        </div>
+                      )}
+
+                      {/* Fast mode toggle — pinned at bottom, only for models
+                          that support it (Claude only; Codex never has the flag).
+                          Faster output, no model downgrade. */}
+                      {supportsFastMode && (
+                        <div className="border-t px-2 py-1.5 shrink-0 flex items-center justify-between gap-2">
+                          <span className="text-[9px] text-muted-foreground flex items-center gap-1">
+                            <HugeiconsIcon icon={FlashIcon} className="h-3 w-3" />
+                            Fast mode
+                          </span>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={!!fastMode}
+                            className={cn(
+                              "px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors",
+                              fastMode
+                                ? "bg-primary text-primary-foreground"
+                                : "bg-muted text-muted-foreground hover:bg-accent"
+                            )}
+                            onClick={() => onFastModeChange?.(!fastMode)}
+                          >
+                            {fastMode ? 'On' : 'Off'}
+                          </button>
                         </div>
                       )}
                     </div>

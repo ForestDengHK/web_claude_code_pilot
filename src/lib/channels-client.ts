@@ -66,6 +66,7 @@ export interface ChannelsStreamOptions {
   mode?: string;                // permission mode for the channel session
   systemPrompt?: string;        // extra system prompt for the channel session
   effort?: string;              // reasoning effort level (low/medium/high/xhigh/max)
+  fastMode?: boolean;           // fast mode — adds --settings '{"fastMode":true}'
   skipPermissions?: boolean;    // shield toggle — adds --dangerously-skip-permissions
   /**
    * AbortSignal that, when triggered, immediately fails the turn AND kills the
@@ -155,6 +156,7 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
             mode: opts.mode,
             systemPrompt: opts.systemPrompt,
             effort: opts.effort,
+            fastMode: opts.fastMode,
             skipPermissions: opts.skipPermissions,
             extraMcpServers,
             pluginPaths,

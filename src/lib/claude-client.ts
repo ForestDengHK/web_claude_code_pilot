@@ -253,6 +253,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
     skipPermissions: skipPermissionsOption,
     onQueryCreated,
     effort,
+    fastMode,
     advisorModel,
     disableTools,
     maxTurns,
@@ -438,6 +439,17 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           queryOptions.settings = {
             ...(typeof queryOptions.settings === 'object' ? queryOptions.settings : {}),
             advisorModel,
+          };
+        }
+
+        // Fast mode: faster output serving on supported models (no model
+        // downgrade). `fastMode` is a Settings key, so mirror advisorModel and
+        // merge it in rather than setting a top-level option. The SDK ignores
+        // it on models that don't support it, so no per-model gating is needed.
+        if (fastMode) {
+          queryOptions.settings = {
+            ...(typeof queryOptions.settings === 'object' ? queryOptions.settings : {}),
+            fastMode: true,
           };
         }
 

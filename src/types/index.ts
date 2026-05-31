@@ -597,6 +597,7 @@ export interface ClaudeStreamOptions {
   skipPermissions?: boolean; // Per-session override for dangerously_skip_permissions
   onQueryCreated?: (query: unknown) => void; // Callback to register SDK Query for interrupt support
   effort?: string; // Effort level for Claude models (low/medium/high/max)
+  fastMode?: boolean; // Fast mode — faster output serving (Claude-only, no model downgrade)
   advisorModel?: string; // Advisor model for server-side review (Claude-only)
   disableTools?: boolean; // When true, pass tools: [] to disable all tool use
   maxTurns?: number; // Limit the number of agentic turns

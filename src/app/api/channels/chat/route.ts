@@ -21,8 +21,8 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
-    const body: SendMessageRequest & { files?: FileAttachment[]; effort?: string } = await request.json();
-    const { session_id, content, prompt, model, files, effort } = body;
+    const body: SendMessageRequest & { files?: FileAttachment[]; effort?: string; fastMode?: boolean } = await request.json();
+    const { session_id, content, prompt, model, files, effort, fastMode } = body;
 
     if (!session_id || !content) {
       return new Response(JSON.stringify({ error: 'session_id and content are required' }), {
@@ -188,6 +188,7 @@ export async function POST(request: NextRequest) {
       mode: session.mode || undefined,
       systemPrompt: session.system_prompt || undefined,
       effort,
+      fastMode,
       skipPermissions: session.skip_permissions === 1,
       abortSignal: abortController.signal,
     });

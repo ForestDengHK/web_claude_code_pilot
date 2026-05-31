@@ -74,6 +74,21 @@ test('buildSpawnArgs drops a malformed effort value', () => {
   assert.ok(!args.includes('--effort'));
 });
 
+test('buildSpawnArgs adds --settings {"fastMode":true} when fastMode is on', () => {
+  const args = buildSpawnArgs({
+    claudeSessionId: 'U-F1', mcpConfigJson: '{}', fastMode: true,
+  });
+  const i = args.indexOf('--settings');
+  assert.ok(i >= 0 && args[i + 1] === '{"fastMode":true}');
+});
+
+test('buildSpawnArgs omits --settings when fastMode is off', () => {
+  const args = buildSpawnArgs({
+    claudeSessionId: 'U-F2', mcpConfigJson: '{}', fastMode: false,
+  });
+  assert.ok(!args.includes('--settings'));
+});
+
 test('buildSpawnArgs adds --dangerously-skip-permissions when skipPermissions is true', () => {
   const args = buildSpawnArgs({
     claudeSessionId: 'U-7', mcpConfigJson: '{}', skipPermissions: true,

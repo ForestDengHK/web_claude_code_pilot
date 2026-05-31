@@ -22,6 +22,7 @@ export interface ChannelSession {
   spawnedSystemPrompt?: string;
   spawnedModel?: string;
   spawnedEffort?: string;
+  spawnedFastMode?: boolean;
   spawnedSkipPermissions?: boolean;
   spawnedPluginPathsKey?: string;  // serialized so we can equality-compare cheaply
   spawnedMcpConfigKey?: string;
@@ -74,6 +75,15 @@ export interface SpawnArgsInput {
    */
   skipPermissions?: boolean;
   /**
+   * When true, enable fast mode via `--settings '{"fastMode":true}'`. The CLI
+   * has no `--fast` launch flag (only the interactive `/fast` toggle), but
+   * `fastMode` is a first-class settings key, and `--settings` loads
+   * *additional* settings (merges over user/project sources, never clobbers
+   * them). Omitted when off so the CLI uses its default. Mirrors the T2 SDK's
+   * `queryOptions.settings.fastMode`.
+   */
+  fastMode?: boolean;
+  /**
    * Absolute paths to enabled Claude Code plugins, one `--plugin-dir` per
    * entry. Caller is responsible for symlink correction (use
    * `loadEnabledPluginPaths` from `claude-config-loader`).
@@ -102,6 +112,7 @@ export function buildSpawnArgs(input: SpawnArgsInput): string[] {
   if (input.systemPrompt) args.push('--append-system-prompt', input.systemPrompt);
   const sanitizedEffort = sanitizeEffortLevel(input.effort);
   if (sanitizedEffort) args.push('--effort', sanitizedEffort);
+  if (input.fastMode) args.push('--settings', JSON.stringify({ fastMode: true }));
   if (input.skipPermissions) args.push('--dangerously-skip-permissions');
   if (input.pluginPaths && input.pluginPaths.length > 0) {
     for (const p of input.pluginPaths) args.push('--plugin-dir', p);
@@ -126,6 +137,7 @@ export interface EnsureInput {
   mode?: string;
   systemPrompt?: string;
   effort?: string;
+  fastMode?: boolean;
   skipPermissions?: boolean;
   /**
    * Extra MCP servers to expose to Claude Code in addition to the built-in
@@ -144,6 +156,7 @@ export async function ensureSession(input: EnsureInput): Promise<ChannelSession>
   // Compare against the same sanitized value the spawned process actually saw,
   // so e.g. " high " and "bogus" don't trigger spurious respawns.
   const wantedEffort = sanitizeEffortLevel(input.effort);
+  const wantedFastMode = !!input.fastMode;
   const wantedSkipPermissions = !!input.skipPermissions;
   // Cheap deep-equality via JSON.stringify — pluginPaths is a string[] in a
   // stable order and extraMcpServers is a small object, so stringify is fine
@@ -159,6 +172,7 @@ export async function ensureSession(input: EnsureInput): Promise<ChannelSession>
       existing.spawnedSystemPrompt !== input.systemPrompt ||
       existing.spawnedModel !== input.model ||
       existing.spawnedEffort !== wantedEffort ||
+      existing.spawnedFastMode !== wantedFastMode ||
       existing.spawnedSkipPermissions !== wantedSkipPermissions ||
       existing.spawnedPluginPathsKey !== wantedPluginPathsKey ||
       existing.spawnedMcpConfigKey !== wantedMcpConfigKey;
@@ -189,6 +203,7 @@ export async function ensureSession(input: EnsureInput): Promise<ChannelSession>
     model: input.model, resume: input.resume,
     mode: input.mode, systemPrompt: input.systemPrompt,
     effort: input.effort,
+    fastMode: input.fastMode,
     skipPermissions: input.skipPermissions,
     pluginPaths: input.pluginPaths,
   });
@@ -218,6 +233,7 @@ export async function ensureSession(input: EnsureInput): Promise<ChannelSession>
     spawnedSystemPrompt: input.systemPrompt,
     spawnedModel: input.model,
     spawnedEffort: wantedEffort,
+    spawnedFastMode: wantedFastMode,
     spawnedSkipPermissions: wantedSkipPermissions,
     spawnedPluginPathsKey: wantedPluginPathsKey,
     spawnedMcpConfigKey: wantedMcpConfigKey,

@@ -135,6 +135,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [currentBackend, setCurrentBackendRaw] = useState<'claude' | 'codex' | 'channels'>(backend || 'claude');
   const [currentModel, setCurrentModelRaw] = useState(modelName || '');
   const [currentEffort, setCurrentEffort] = useState<string | undefined>();
+  // Fast mode — ephemeral per-view state, sent per turn (mirrors currentEffort,
+  // which is also not persisted to the DB). Defaults off.
+  const [currentFastMode, setCurrentFastMode] = useState(false);
   const [currentAdvisorModel, setCurrentAdvisorModelRaw] = useState<string | null>(advisorModel || null);
 
   // Context health monitoring
@@ -1131,6 +1134,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             model: branchMode ? branchModelOverride : currentModel,
             ...(files && files.length > 0 ? { files } : {}),
             ...(currentEffort ? { effort: currentEffort } : {}),
+            ...(currentFastMode ? { fastMode: true } : {}),
             ...(codexSkills && codexSkills.length > 0 ? { codexSkills } : {}),
             // disable_tools/max_turns are Claude-only knobs. Codex's app-server
             // doesn't accept them — for Codex /branch we rely on the prompt
@@ -1459,7 +1463,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         }
       }
     },
-    [sessionId, isStreaming, setStreamingSessionId, setPendingApprovalSessionId, mode, currentModel, stopRecovery, startRecovery, currentBackend, currentEffort]
+    [sessionId, isStreaming, setStreamingSessionId, setPendingApprovalSessionId, mode, currentModel, stopRecovery, startRecovery, currentBackend, currentEffort, currentFastMode]
   );
 
   // Keep sendMessageRef in sync so timeout auto-retry can call it
@@ -1984,6 +1988,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         onBackendChange={setCurrentBackend}
         effort={currentEffort}
         onEffortChange={setCurrentEffort}
+        fastMode={currentFastMode}
+        onFastModeChange={setCurrentFastMode}
       />
     </div>
   );
