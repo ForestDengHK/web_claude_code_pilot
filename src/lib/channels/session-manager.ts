@@ -104,6 +104,7 @@ export function buildSpawnArgs(input: SpawnArgsInput): string[] {
     '--mcp-config', input.mcpConfigJson,
     '--dangerously-load-development-channels', 'server:codepilot',
     '--allowedTools', 'mcp__codepilot__reply',
+    '--disallowedTools', 'AskUserQuestion',
   );
   if (input.model) args.push('--model', input.model);
   if (input.mode && VALID_PERMISSION_MODES.has(input.mode)) {

@@ -20,6 +20,22 @@ test('buildSpawnArgs includes channels + mcp-config + pre-approved reply tool', 
   assert.ok(!args.includes('--resume'));
 });
 
+test('buildSpawnArgs disallows the interactive AskUserQuestion tool', () => {
+  // T1 (the PTY-run CLI) has no UI to answer AskUserQuestion, so the model
+  // calling it would hang the turn forever. We disable it; the model falls
+  // back to the `reply` tool (plain text) instead. T2 (SDK) keeps the tool —
+  // it intercepts it via canUseTool and renders an input_request UI.
+  const args = buildSpawnArgs({
+    claudeSessionId: 'U-AUQ', mcpConfigJson: '{}', resume: false,
+  });
+  const d = args.indexOf('--disallowedTools');
+  assert.ok(d >= 0 && args[d + 1] === 'AskUserQuestion',
+    '--disallowedTools AskUserQuestion must be present');
+  // The reply-tool wiring must remain intact.
+  const a = args.indexOf('--allowedTools');
+  assert.ok(a >= 0 && args[a + 1] === 'mcp__codepilot__reply');
+});
+
 test('buildSpawnArgs adds --resume when resuming', () => {
   const args = buildSpawnArgs({
     claudeSessionId: 'U-2', mcpConfigJson: '{}', resume: true,
