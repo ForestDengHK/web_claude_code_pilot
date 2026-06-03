@@ -947,6 +947,17 @@ export function FileTree({ workingDirectory, sessionId, onFileSelect, onFileAdd,
                 a.click();
                 a.remove();
               }}
+              onDownloadFolder={(dirPath: string) => {
+                const baseDir = findBaseDirForPath(dirPath);
+                const params = new URLSearchParams({ path: dirPath });
+                if (baseDir) params.set("baseDir", baseDir);
+                const a = document.createElement("a");
+                a.href = `/api/files/archive?${params.toString()}`;
+                a.download = `${dirPath.split("/").pop() || "download"}.zip`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+              }}
               onDelete={(filePath: string) => setDeleteTarget(filePath)}
               onDiff={handleDiff}
               onUpload={handleUpload}

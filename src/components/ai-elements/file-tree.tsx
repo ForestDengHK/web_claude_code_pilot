@@ -52,6 +52,7 @@ interface FileTreeContextType {
   onRemove?: (path: string) => void;
   onPreview?: (path: string) => void;
   onDownload?: (path: string) => void;
+  onDownloadFolder?: (dirPath: string) => void;
   onDelete?: (path: string) => void;
   onDiff?: (path: string) => void;
   onUpload?: (dirPath: string) => void;
@@ -113,6 +114,7 @@ export type FileTreeProps = HTMLAttributes<HTMLDivElement> & {
   onRemove?: (path: string) => void;
   onPreview?: (path: string) => void;
   onDownload?: (path: string) => void;
+  onDownloadFolder?: (dirPath: string) => void;
   onDelete?: (path: string) => void;
   onDiff?: (path: string) => void;
   onUpload?: (dirPath: string) => void;
@@ -135,6 +137,7 @@ export const FileTree = ({
   onRemove,
   onPreview,
   onDownload,
+  onDownloadFolder,
   onDelete,
   onDiff,
   onUpload,
@@ -167,8 +170,8 @@ export const FileTree = ({
   );
 
   const contextValue = useMemo(
-    () => ({ attachedPaths, expandedPaths, gitStatusMap, onAdd, onCreateFolder, onDelete, onDiff, onDownload, onPreview, onRemove, onSelect, onToggleSelect, onUpload, selectedPath, selectedPaths, selectionMode, togglePath }),
-    [attachedPaths, expandedPaths, gitStatusMap, onAdd, onCreateFolder, onDelete, onDiff, onDownload, onPreview, onRemove, onSelect, onToggleSelect, onUpload, selectedPath, selectedPaths, selectionMode, togglePath]
+    () => ({ attachedPaths, expandedPaths, gitStatusMap, onAdd, onCreateFolder, onDelete, onDiff, onDownload, onDownloadFolder, onPreview, onRemove, onSelect, onToggleSelect, onUpload, selectedPath, selectedPaths, selectionMode, togglePath }),
+    [attachedPaths, expandedPaths, gitStatusMap, onAdd, onCreateFolder, onDelete, onDiff, onDownload, onDownloadFolder, onPreview, onRemove, onSelect, onToggleSelect, onUpload, selectedPath, selectedPaths, selectionMode, togglePath]
   );
 
   return (
@@ -211,7 +214,7 @@ export const FileTreeFolder = ({
   children,
   ...props
 }: FileTreeFolderProps) => {
-  const { expandedPaths, togglePath, onAdd, onRemove, onUpload, onCreateFolder, onDelete, attachedPaths, gitStatusMap, selectionMode, selectedPaths, onToggleSelect } =
+  const { expandedPaths, togglePath, onAdd, onRemove, onUpload, onCreateFolder, onDownloadFolder, onDelete, attachedPaths, gitStatusMap, selectionMode, selectedPaths, onToggleSelect } =
     useContext(FileTreeContext);
   const isExpanded = expandedPaths.has(path);
   const isAttached = attachedPaths?.has(path) ?? false;
@@ -254,6 +257,14 @@ export const FileTreeFolder = ({
       onCreateFolder?.(path);
     },
     [onCreateFolder, path]
+  );
+
+  const handleDownloadFolder = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onDownloadFolder?.(path);
+    },
+    [onDownloadFolder, path]
   );
 
   const handleDelete = useCallback(
@@ -327,9 +338,9 @@ export const FileTreeFolder = ({
               )}
             </FileTreeIcon>
             <FileTreeName>{name}</FileTreeName>
-            {(onUpload || onCreateFolder || onDelete || onAdd) && (
+            {(onUpload || onCreateFolder || onDownloadFolder || onDelete || onAdd) && (
               <span className="ml-auto flex shrink-0 items-center">
-                {(onUpload || onCreateFolder || onDelete) && (
+                {(onUpload || onCreateFolder || onDownloadFolder || onDelete) && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <button
@@ -352,6 +363,12 @@ export const FileTreeFolder = ({
                         <DropdownMenuItem onClick={handleCreateFolder}>
                           <FolderPlusIcon className="size-4" />
                           New folder
+                        </DropdownMenuItem>
+                      )}
+                      {onDownloadFolder && (
+                        <DropdownMenuItem onClick={handleDownloadFolder}>
+                          <DownloadIcon className="size-4" />
+                          Download as zip
                         </DropdownMenuItem>
                       )}
                       {onDelete && (

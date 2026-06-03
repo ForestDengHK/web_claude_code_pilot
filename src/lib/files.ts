@@ -179,6 +179,57 @@ async function scanDirectoryRecursive(
   return nodes;
 }
 
+export interface ArchiveEntry {
+  /** Absolute path of the source file on disk. */
+  absPath: string;
+  /** Zip entry name: posix-style, rooted at the folder's own basename (e.g. "myfolder/src/x.ts"). */
+  name: string;
+}
+
+/**
+ * Walk a directory tree and collect the files to include in a downloadable
+ * archive (zip). Returns absolute source paths paired with their zip entry
+ * names, rooted at the directory's own basename so the unzipped output lands
+ * in a single top-level folder.
+ *
+ * The same IGNORED_DIRS the file tree hides (node_modules, .git, .next, dist, …)
+ * are skipped, so "Download folder" never drags in gigabytes of dependencies or
+ * VCS history. Symlinks are not followed — Dirent.isDirectory()/isFile() are
+ * both false for them — which prevents escaping the folder and symlink loops.
+ * Empty directories are omitted (only files carry entries).
+ */
+export async function collectArchiveEntries(dir: string): Promise<ArchiveEntry[]> {
+  const resolvedDir = path.resolve(dir);
+  const rootName = path.basename(resolvedDir) || 'download';
+  const entries: ArchiveEntry[] = [];
+  await collectArchiveEntriesRecursive(resolvedDir, rootName, entries);
+  return entries;
+}
+
+async function collectArchiveEntriesRecursive(
+  absDir: string,
+  zipPrefix: string,
+  out: ArchiveEntry[],
+): Promise<void> {
+  let dirents: import('fs').Dirent[];
+  try {
+    dirents = await fs.readdir(absDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of dirents) {
+    const absPath = path.join(absDir, entry.name);
+    const name = `${zipPrefix}/${entry.name}`;
+    if (entry.isDirectory()) {
+      if (IGNORED_DIRS.has(entry.name)) continue;
+      await collectArchiveEntriesRecursive(absPath, name, out);
+    } else if (entry.isFile()) {
+      out.push({ absPath, name });
+    }
+  }
+}
+
 export async function readFilePreview(filePath: string, maxLines: number = 200): Promise<FilePreview> {
   const resolvedPath = path.resolve(filePath);
 
