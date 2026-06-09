@@ -3,6 +3,7 @@ import { getSession } from '@/lib/db';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
+import { getCodePilotDataDir } from '@/lib/data-dir';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -47,11 +48,14 @@ export async function GET(request: NextRequest) {
 
   const resolvedPath = path.resolve(rawPath);
   // Whitelist: session's working directory, plus Codex's default
-  // generated-images locations (used by the built-in image_gen tool).
+  // generated-images locations (used by the built-in image_gen tool), plus
+  // CodePilot's persisted image cache for chat history previews.
   const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+  const codePilotImageCache = path.join(getCodePilotDataDir(), 'codex-images');
   const allowedRoots = [
     path.resolve(session.working_directory),
     path.resolve(codexHome),
+    path.resolve(codePilotImageCache),
   ];
   const isUnderAllowed = allowedRoots.some((root) =>
     resolvedPath === root || resolvedPath.startsWith(root + path.sep),

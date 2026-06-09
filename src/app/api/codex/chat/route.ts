@@ -4,6 +4,7 @@ import { detectBackendSwitch, buildIncrementalBridge } from '@/lib/context-bridg
 import { addMessage, getSession, updateSessionTitle, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected } from '@/lib/db';
 import { normalizeCodexMode } from '@/lib/permission-modes';
 import { sendPushNotification } from '@/lib/push-notifications';
+import { getCodePilotDataDir } from '@/lib/data-dir';
 import { registerAbort, unregisterAbort } from '@/lib/abort-registry';
 import {
   initStreamBuffer,
@@ -16,6 +17,7 @@ import {
 import type { SendMessageRequest, SSEEvent, TokenUsage, MessageContentBlock, FileAttachment } from '@/types';
 import fs from 'fs/promises';
 import path from 'path';
+import crypto from 'crypto';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -235,6 +237,43 @@ export async function POST(request: NextRequest) {
   }
 }
 
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.heic', '.heif', '.avif']);
+
+async function persistCodexImage(imagePath: string, sessionId: string): Promise<string> {
+  try {
+    const session = getSession(sessionId);
+    const resolvedPath = path.isAbsolute(imagePath)
+      ? path.resolve(imagePath)
+      : path.resolve(session?.working_directory || process.cwd(), imagePath);
+    const ext = path.extname(resolvedPath).toLowerCase();
+    if (!IMAGE_EXTENSIONS.has(ext)) return imagePath;
+
+    const dataDir = getCodePilotDataDir();
+    const cacheRoot = path.join(dataDir, 'codex-images');
+    if (resolvedPath === cacheRoot || resolvedPath.startsWith(cacheRoot + path.sep)) {
+      return resolvedPath;
+    }
+
+    const stat = await fs.stat(resolvedPath);
+    if (!stat.isFile()) return imagePath;
+
+    const hash = crypto
+      .createHash('sha256')
+      .update(`${resolvedPath}\0${stat.size}\0${stat.mtimeMs}`)
+      .digest('hex')
+      .slice(0, 16);
+    const safeName = path.basename(resolvedPath).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const destDir = path.join(cacheRoot, sessionId);
+    const destPath = path.join(destDir, `${hash}-${safeName}`);
+
+    await fs.mkdir(destDir, { recursive: true });
+    await fs.copyFile(resolvedPath, destPath);
+    return destPath;
+  } catch {
+    return imagePath;
+  }
+}
+
 async function collectStreamResponse(stream: ReadableStream<string>, sessionId: string) {
   const reader = stream.getReader();
   const contentBlocks: MessageContentBlock[] = [];
@@ -345,12 +384,13 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
               try {
                 const imgData = JSON.parse(event.data);
                 if (typeof imgData.path === 'string') {
+                  const persistedPath = await persistCodexImage(imgData.path, sessionId);
                   // Flush accumulated text first so the image renders after it.
                   if (currentText.trim()) {
                     contentBlocks.push({ type: 'text', text: currentText });
                     currentText = '';
                   }
-                  contentBlocks.push({ type: 'image', path: imgData.path, ...(imgData.alt ? { alt: imgData.alt } : {}) });
+                  contentBlocks.push({ type: 'image', path: persistedPath, ...(imgData.alt ? { alt: imgData.alt } : {}) });
                 }
               } catch {
                 // skip malformed image data
