@@ -1990,6 +1990,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         onEffortChange={setCurrentEffort}
         fastMode={currentFastMode}
         onFastModeChange={setCurrentFastMode}
+        onSteered={(message) => setMessages((prev) => [...prev, message])}
       />
     </div>
   );

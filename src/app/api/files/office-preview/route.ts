@@ -114,15 +114,19 @@ async function resolveAuthorizedPath(request: NextRequest, filePath: string): Pr
   return resolved;
 }
 
+function computeCacheKey(resolvedPath: string, stat: { size: number; mtimeMs: number }): string {
+  return createHash('sha256')
+    .update(`${resolvedPath}\0${stat.size}\0${stat.mtimeMs}`)
+    .digest('hex');
+}
+
 async function convertOfficeToPdf(resolvedPath: string, stat: { size: number; mtimeMs: number }) {
   const soffice = await findSoffice();
   if (!soffice) {
     throw new Error('LibreOffice is required for Office previews. Install LibreOffice or set LIBREOFFICE_PATH to the soffice executable.');
   }
 
-  const cacheKey = createHash('sha256')
-    .update(`${resolvedPath}\0${stat.size}\0${stat.mtimeMs}`)
-    .digest('hex');
+  const cacheKey = computeCacheKey(resolvedPath, stat);
   const cacheDir = path.join(os.tmpdir(), 'codepilot-office-preview', cacheKey);
   await fsp.mkdir(cacheDir, { recursive: true });
 
@@ -191,6 +195,19 @@ export async function GET(request: NextRequest) {
     return jsonError('Not a file', 400);
   }
 
+  // The preview URL is identical no matter what the source file contains, so a
+  // plain max-age would let the browser keep serving a stale PDF after the user
+  // edits the document. Tie an ETag to size+mtime (the same identity the disk
+  // cache uses) and require revalidation: an unchanged file returns 304, while
+  // an edited one re-converts.
+  const etag = `"${computeCacheKey(resolved, sourceStat)}"`;
+  if (request.headers.get('if-none-match') === etag) {
+    return new Response(null, {
+      status: 304,
+      headers: { ETag: etag, 'Cache-Control': 'private, no-cache' },
+    });
+  }
+
   try {
     const pdfPath = await convertOfficeToPdf(resolved, sourceStat);
     const pdfStat = await fsp.stat(pdfPath);
@@ -201,7 +218,8 @@ export async function GET(request: NextRequest) {
         'Content-Type': 'application/pdf',
         'Content-Disposition': `inline; filename="${safePdfName}"`,
         'Content-Length': String(pdfStat.size),
-        'Cache-Control': 'private, max-age=3600',
+        'Cache-Control': 'private, no-cache',
+        ETag: etag,
       },
     });
   } catch (error) {

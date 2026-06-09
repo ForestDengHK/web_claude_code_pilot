@@ -55,6 +55,8 @@ const PREVIEWABLE_EXTENSIONS = new Set([
   "mp4", "webm", "mov", "m4v",
   // Audio
   "mp3", "wav", "ogg", "aac", "flac",
+  // PDF
+  "pdf",
   // Office documents (converted to PDF for preview when LibreOffice is available)
   "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp",
   // Code

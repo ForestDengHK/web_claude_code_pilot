@@ -123,6 +123,61 @@ export class CodexProcessManager {
   }
 
   /**
+   * Steer the active turn: inject additional user input into the turn that is
+   * currently running, without interrupting it. Requires a live process with a
+   * known thread and an active turn — `turn/steer` carries `expectedTurnId` as a
+   * precondition, so there is no "pending flush" path like interrupt has.
+   *
+   * Resolves with the active turn id on success, or null when there is no live
+   * process / no active turn to steer, or when the app-server rejects the steer
+   * (e.g. the turn ended in the race window) or does not acknowledge in time.
+   */
+  static steer(sessionId: string, text: string): Promise<string | null> {
+    const entry = getProcessMap().get(sessionId);
+    if (!entry || entry.proc.exitCode !== null) {
+      return Promise.resolve(null);
+    }
+    if (!entry.threadId || !entry.currentTurnId) {
+      return Promise.resolve(null);
+    }
+
+    return new Promise<string | null>((resolve) => {
+      const request = formatJsonRpcRequest('turn/steer', {
+        threadId: entry.threadId,
+        expectedTurnId: entry.currentTurnId,
+        input: [{ type: 'text', text }],
+      });
+      const requestId = getLastRequestId();
+
+      let settled = false;
+      const finish = (value: string | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        entry.offMessage(handler);
+        resolve(value);
+      };
+
+      const handler = (msg: JsonRpcMessage) => {
+        if (msg.type !== 'response' || msg.id !== requestId) return;
+        if (msg.error) {
+          finish(null);
+          return;
+        }
+        const turnId = msg.result?.turnId;
+        finish(typeof turnId === 'string' ? turnId : null);
+      };
+
+      // App-server should ack a steer near-instantly; cap the wait so the HTTP
+      // request can't hang if the process wedges.
+      const timer = setTimeout(() => finish(null), 5000);
+
+      entry.onMessage(handler);
+      entry.send(request);
+    });
+  }
+
+  /**
    * Kill all managed processes.
    */
   static async killAll(): Promise<void> {

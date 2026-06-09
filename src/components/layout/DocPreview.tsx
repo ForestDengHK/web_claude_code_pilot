@@ -1233,9 +1233,10 @@ function rawFileUrl(filePath: string, baseDir?: string, download = false): strin
   return `/api/files/raw?${params.toString()}`;
 }
 
-function officePreviewUrl(filePath: string, baseDir?: string): string {
+function officePreviewUrl(filePath: string, baseDir?: string, version?: string | number): string {
   const params = new URLSearchParams({ path: filePath });
   if (baseDir) params.set("baseDir", baseDir);
+  if (version !== undefined) params.set("v", String(version));
   return `/api/files/office-preview?${params.toString()}`;
 }
 
@@ -1309,9 +1310,16 @@ function PdfRenderedView({ filePath, baseDir }: { filePath: string; baseDir?: st
 
 function OfficeRenderedView({ filePath, baseDir }: { filePath: string; baseDir?: string }) {
   const fileName = filePath.split("/").pop() || "document";
+  // The office-preview URL is otherwise identical no matter what the file
+  // contains, so a browser that cached an earlier conversion keeps showing the
+  // stale PDF after the document is edited (the server's revalidation headers
+  // can't help once an entry is considered fresh). Version the URL per open so
+  // reopening always fetches the current conversion. LibreOffice output stays
+  // cached on disk by file mtime, so this only re-streams, never re-converts.
+  const cacheBust = useMemo(() => Date.now(), [filePath]);
   return (
     <PdfJsRenderedView
-      sourceUrl={officePreviewUrl(filePath, baseDir)}
+      sourceUrl={officePreviewUrl(filePath, baseDir, cacheBust)}
       downloadUrl={rawFileUrl(filePath, baseDir, true)}
       fileName={fileName}
       resetKey={filePath}

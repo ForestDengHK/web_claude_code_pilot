@@ -57,7 +57,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import type { ChatStatus } from 'ai';
-import type { FileAttachment } from '@/types';
+import type { FileAttachment, Message } from '@/types';
+import { toast } from 'sonner';
 import { nanoid } from 'nanoid';
 import { useVoiceInput } from '@/hooks/useVoiceInput';
 import { CodexReviewDialog, hasCachedCodexReview } from '@/components/chat/CodexReviewDialog';
@@ -100,6 +101,10 @@ interface MessageInputProps {
   onEffortChange?: (effort: string) => void;
   fastMode?: boolean;
   onFastModeChange?: (fastMode: boolean) => void;
+  /** Called after a steer message is successfully injected into the active
+   *  Codex turn, with the persisted message so it can be rendered into the
+   *  live conversation (Codex-only). */
+  onSteered?: (message: Message) => void;
 }
 
 interface PopoverItem {
@@ -540,6 +545,7 @@ export function MessageInput({
   onEffortChange,
   fastMode,
   onFastModeChange,
+  onSteered,
 }: MessageInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -676,6 +682,43 @@ export function MessageInput({
     setCodexReviewConfirmOpen(false);
     setCodexReviewOpen(true);
   }, []);
+
+  // Steer the active Codex turn: inject the input box text into the running turn
+  // without interrupting it. Codex-only; the row that calls this is gated on
+  // `backend === 'codex' && isStreaming`. On success the input box is cleared.
+  const [isSteering, setIsSteering] = useState(false);
+  const handleSteer = useCallback(async () => {
+    if (!sessionId || isSteering) return;
+    const text = inputValue.trim();
+    if (!text) return;
+    setIsSteering(true);
+    try {
+      const res = await fetch('/api/codex/steer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, content: text }),
+      });
+      if (res.ok) {
+        // Confirmed accepted by the app-server. Clear the box, surface the saved
+        // message into the live conversation, and confirm via toast.
+        const data = await res.json().catch(() => null);
+        setInputValue('');
+        if (data?.message) onSteered?.(data.message as Message);
+        toast.success('已插入当前回合');
+      } else if (res.status === 409) {
+        // No active turn (turn ended between render and click); keep the text so
+        // the user can send it normally instead.
+        toast.info('当前回合已结束，请直接发送');
+      } else {
+        toast.error('插入失败，请重试');
+      }
+    } catch {
+      // Network error — keep the text so nothing is lost.
+      toast.error('插入失败，请检查网络');
+    } finally {
+      setIsSteering(false);
+    }
+  }, [sessionId, isSteering, inputValue, onSteered]);
 
   // Fetch files for @ mention
   const fetchFiles = useCallback(async (filter: string) => {
@@ -1316,6 +1359,28 @@ export function MessageInput({
                   <span>{codexReviewRunning ? 'Review running' : 'Review changes'}</span>
                 </PromptInputButton>
               </div>
+            )}
+            {/* Steer row — only while a Codex turn is running. Full-width so it
+                never crowds the footer toolbar. Injects the input box text into
+                the active turn (turn/steer) without interrupting it. */}
+            {backend === 'codex' && sessionId && isStreaming && (
+              <button
+                type="button"
+                onClick={handleSteer}
+                disabled={isSteering || !inputValue.trim()}
+                className={cn(
+                  "flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium transition-colors",
+                  isSteering || !inputValue.trim()
+                    ? "text-muted-foreground/50"
+                    : "text-primary hover:bg-accent/50"
+                )}
+              >
+                <HugeiconsIcon
+                  icon={isSteering ? Loading02Icon : ArrowUp02Icon}
+                  className={cn("h-3.5 w-3.5", isSteering && "animate-spin")}
+                />
+                <span>{isSteering ? 'Steering…' : 'Insert into current turn'}</span>
+              </button>
             )}
             <PromptInputFooter>
               <PromptInputTools className="gap-0 sm:gap-1">
