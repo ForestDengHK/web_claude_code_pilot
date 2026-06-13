@@ -256,3 +256,20 @@ svg.hugeicons rect {
 }
 
 /* TTS highlight style injected via JS (Turbopack doesn't support ::highlight()) */
+
+/* xterm.js terminal — override vendor defaults that clash on mobile.
+   The default viewport is pure black (#000) with a permanently reserved
+   scrollbar gutter (overflow-y: scroll); against our zinc-950 (#09090b) theme
+   that black gutter/edge reads as a doubled inner border on narrow screens.
+   Match the theme background and only show the scrollbar when content overflows. */
+.xterm .xterm-viewport {
+  background-color: #09090b !important;
+  overflow-y: auto !important;
+}
+.xterm .xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+.xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}

@@ -45,10 +45,27 @@ export function TerminalPane({
   useEffect(() => {
     if (!containerRef.current) return;
 
+    // Slightly smaller glyphs on phones — 13px reads a touch large on a narrow
+    // screen; keep 13px on desktop.
+    const isMobile = typeof window !== 'undefined'
+      && window.matchMedia('(max-width: 640px)').matches;
+
+    // xterm measures cell width by rasterizing the font to a canvas, and the
+    // Canvas 2D `font` string cannot resolve a CSS `var(--font-geist-mono)` — it
+    // silently falls back to the system monospace, whose wider metrics make the
+    // cells too wide. The result on a phone: glyphs look spaced out, the prompt
+    // wraps early, and the first typed character gets pushed off the right edge
+    // (the "I can't see the p of pwd" report). Resolve the next/font variable to
+    // its real family name so measurement matches what is actually rendered.
+    const monoFont = typeof window !== 'undefined'
+      ? getComputedStyle(document.body).getPropertyValue('--font-geist-mono').trim()
+      : '';
+    const fontFamily = monoFont ? `${monoFont}, monospace` : 'monospace';
+
     const term = new Terminal({
       theme: { background: '#09090b' },  // matches zinc-950
-      fontFamily: 'var(--font-geist-mono), monospace',
-      fontSize: 13,
+      fontFamily,
+      fontSize: isMobile ? 12 : 13,
       cursorBlink: true,
     });
     const fitAddon = new FitAddon();
@@ -56,42 +73,61 @@ export function TerminalPane({
     term.loadAddon(fitAddon);
     term.loadAddon(linksAddon);
     term.open(containerRef.current);
-    fitAddon.fit();
+
     termRef.current = term;
     fitRef.current = fitAddon;
-
-    const { cols, rows } = term;
-    const sid = sessionId ?? 'new';
-    const url = `${wsBaseUrl}/terminal/${sid}?hostId=${encodeURIComponent(hostId)}&cols=${cols}&rows=${rows}`;
-
-    const ws = new WebSocket(url);
-    ws.binaryType = 'arraybuffer';
-    wsRef.current = ws;
-
-    ws.onmessage = (event) => {
-      if (event.data instanceof ArrayBuffer) {
-        // Raw PTY output — pass directly to xterm.js
-        term.write(new Uint8Array(event.data));
-      } else {
-        const msg = JSON.parse(event.data as string) as ServerMessage;
-        if (msg.type === 'ready') {
-          setStatus('ready');
-          onReady(msg.sessionId);
-        } else if (msg.type === 'error') {
-          setStatus('error');
-          setErrorMsg(msg.message);
-        } else if (msg.type === 'killed') {
-          ws.close();
-        }
-      }
-    };
-
-    ws.onerror = () => {
-      setStatus('error');
-      setErrorMsg('WebSocket connection failed. Is the terminal server running?');
-    };
-
     term.onData((data) => sendJson({ type: 'input', data }));
+
+    let disposed = false;
+
+    // Open the WebSocket only AFTER measuring the terminal with the real font
+    // loaded. xterm derives the column count from the glyph width; if it fits
+    // before Geist Mono (next/font, loaded asynchronously) is ready, it measures
+    // the fallback font, gets the wrong cols, and spawns the PTY at that wrong
+    // width. The shell then draws its prompt for a width that doesn't match what
+    // is rendered, so on a narrow phone the first typed characters land off the
+    // right edge / clipped until a later redraw. Waiting for the font makes the
+    // first fit — and the cols handed to the PTY — correct. Cap the wait so a
+    // slow/failed font load can't leave the terminal stuck on "Connecting…".
+    const connect = () => {
+      if (disposed || !containerRef.current) return;
+      fitAddon.fit();
+      const { cols, rows } = term;
+      const sid = sessionId ?? 'new';
+      const url = `${wsBaseUrl}/terminal/${sid}?hostId=${encodeURIComponent(hostId)}&cols=${cols}&rows=${rows}`;
+
+      const ws = new WebSocket(url);
+      ws.binaryType = 'arraybuffer';
+      wsRef.current = ws;
+
+      ws.onmessage = (event) => {
+        if (event.data instanceof ArrayBuffer) {
+          // Raw PTY output — pass directly to xterm.js
+          term.write(new Uint8Array(event.data));
+        } else {
+          const msg = JSON.parse(event.data as string) as ServerMessage;
+          if (msg.type === 'ready') {
+            setStatus('ready');
+            onReady(msg.sessionId);
+          } else if (msg.type === 'error') {
+            setStatus('error');
+            setErrorMsg(msg.message);
+          } else if (msg.type === 'killed') {
+            ws.close();
+          }
+        }
+      };
+
+      ws.onerror = () => {
+        setStatus('error');
+        setErrorMsg('WebSocket connection failed. Is the terminal server running?');
+      };
+    };
+
+    const fontsReady = (typeof document !== 'undefined' && document.fonts?.ready)
+      ? document.fonts.ready
+      : Promise.resolve();
+    Promise.race([fontsReady, new Promise((r) => setTimeout(r, 1500))]).then(connect);
 
     // Refit whenever the container resizes, then sync the PTY size
     const ro = new ResizeObserver(() => {
@@ -102,8 +138,9 @@ export function TerminalPane({
     ro.observe(containerRef.current);
 
     return () => {
+      disposed = true;
       ro.disconnect();
-      ws.close();
+      wsRef.current?.close();
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
@@ -124,6 +161,21 @@ export function TerminalPane({
     }, 50);
     return () => clearTimeout(t);
   }, [isVisible, isFocused, sendJson]);
+
+  // The terminal is opened and measured while its container is visibility:hidden
+  // (we need its size to open the WebSocket before the server sends 'ready').
+  // Once it becomes visible, refit and force a full repaint so the first frame
+  // is clean and the renderer's cached dimensions are correct.
+  useEffect(() => {
+    if (status !== 'ready') return;
+    const t = setTimeout(() => {
+      if (!fitRef.current || !termRef.current) return;
+      fitRef.current.fit();
+      termRef.current.refresh(0, termRef.current.rows - 1);
+      sendJson({ type: 'resize', cols: termRef.current.cols, rows: termRef.current.rows });
+    }, 50);
+    return () => clearTimeout(t);
+  }, [status, sendJson]);
 
   function handleClose() {
     sendJson({ type: 'kill' });
@@ -153,6 +205,7 @@ export function TerminalPane({
         <div
           ref={containerRef}
           className="h-full w-full p-1"
+          onClick={() => termRef.current?.focus()}
           style={{ visibility: status === 'ready' ? 'visible' : 'hidden' }}
         />
       </div>
