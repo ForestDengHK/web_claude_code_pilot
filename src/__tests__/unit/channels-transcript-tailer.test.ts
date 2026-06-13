@@ -126,6 +126,42 @@ test('synthetic assistant entry (model "<synthetic>") emits no events', () => {
   assert.deepEqual(transcriptEntriesToEvents([entry]), []);
 });
 
+test('synthetic API-error entry (isApiErrorMessage) surfaces an error event, not dropped', () => {
+  // The fable-paused bug: the CLI writes the API failure as a synthetic
+  // assistant entry. It must be surfaced (so the user sees it and an assistant
+  // row is persisted, breaking the "reconnecting" deadlock) BEFORE the
+  // '<synthetic>' drop swallows it. The human-readable reason comes from the
+  // text block; we keep the entry's own wording.
+  const entry = {
+    type: 'assistant', error: 'model_not_found', isApiErrorMessage: true,
+    message: {
+      model: '<synthetic>', stop_reason: 'stop_sequence',
+      content: [{ type: 'text', text: "There's an issue with the selected model (claude-fable-5[1m]). It may not exist or you may not have access to it. Run /model to pick a different model." }],
+    },
+  };
+  const events = transcriptEntriesToEvents([entry]);
+  const err = events.find((e) => e.type === 'error');
+  assert.ok(err, 'expected an error event');
+  assert.match(err.data, /claude-fable-5/);
+  // Must NOT also leak the text block as a plain text event.
+  assert.ok(!events.some((e) => e.type === 'text'), 'no stray text event');
+});
+
+test('synthetic API-error entry with rate_limit still maps to rate_limit', () => {
+  // A rate/usage limit also arrives as a synthetic API-error entry; it keeps the
+  // dedicated rate_limit event rather than a generic error.
+  const entry = {
+    type: 'assistant', error: 'rate_limit', isApiErrorMessage: true,
+    message: {
+      model: '<synthetic>', stop_reason: 'stop_sequence',
+      content: [{ type: 'text', text: "You've hit your limit" }],
+    },
+  };
+  const events = transcriptEntriesToEvents([entry]);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].type, 'rate_limit');
+});
+
 test('isMeta user entry ("Continue from where you left off.") emits no events', () => {
   // The other half of the synthetic recovery pair the SDK writes on resume.
   const entry = {

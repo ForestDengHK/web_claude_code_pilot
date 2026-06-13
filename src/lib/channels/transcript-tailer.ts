@@ -16,6 +16,9 @@ interface TranscriptEntry {
   operation?: string;
   isMeta?: boolean;
   error?: string;
+  /** Set by the CLI on synthetic assistant entries that report an API failure
+   * (model unavailable/not found, overloaded, rate limit, …). */
+  isApiErrorMessage?: boolean;
   message?: {
     content?: Array<Record<string, unknown>>;
     usage?: Record<string, number>;
@@ -52,6 +55,28 @@ export function transcriptEntriesToEvents(entries: TranscriptEntry[]): SSEEvent[
     // tailer would surface the synthetic "No response requested." text as the
     // turn's response.
     if (entry.isMeta) continue;
+    // Surface API-error messages (model unavailable/not found, overloaded, rate
+    // limit, …). The interactive CLI writes these as a synthetic assistant entry
+    // (model:'<synthetic>', isApiErrorMessage:true) whose text block carries the
+    // human-readable reason. They MUST be surfaced before the '<synthetic>' drop
+    // below — otherwise the whole entry is swallowed and the turn ends with no
+    // output (the fable-paused bug: no text, no error → PTY goes quiet → empty
+    // finish), and the unanswered user row keeps the session stuck "reconnecting".
+    // Rate/usage limits keep the dedicated rate_limit event; anything else
+    // becomes a generic error carrying the CLI's own message. The recovery-pair
+    // synthetic ("No response requested.") has no isApiErrorMessage, so it still
+    // falls through to the '<synthetic>' drop untouched.
+    if (entry.type === 'assistant' && entry.isApiErrorMessage) {
+      if (entry.error && /rate.?limit|usage.?limit/i.test(entry.error)) {
+        out.push({ type: 'rate_limit', data: JSON.stringify({ tier: 'channels' }) });
+      } else {
+        const textBlock = (entry.message?.content ?? []).find(
+          (b) => b.type === 'text' && typeof b.text === 'string',
+        );
+        out.push({ type: 'error', data: (textBlock?.text as string) || entry.error || 'API error' });
+      }
+      continue;
+    }
     if (entry.type === 'assistant' && entry.message?.model === '<synthetic>') continue;
     const isAssistant = entry.type === 'assistant';
     if (isAssistant && entry.error && /rate.?limit|usage.?limit/i.test(entry.error)) {
