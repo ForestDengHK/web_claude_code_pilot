@@ -105,19 +105,19 @@ export function ProjectSettingsDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-lg">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Project Settings</DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-4">
+          <div className="min-w-0 space-y-4">
             <div className="text-xs text-muted-foreground">
               <div className="font-medium text-foreground">{projectName || 'Project'}</div>
               <div className="truncate font-mono">{workingDirectory}</div>
             </div>
 
             <div>
-              <div className="mb-1.5 flex items-center justify-between">
+              <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
                 <label className="text-sm font-medium">Additional Directories</label>
                 <Button
                   size="sm"
@@ -155,7 +155,7 @@ export function ProjectSettingsDialog({
                           icon={Folder01Icon}
                           className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
                         />
-                        <span className="min-w-0 flex-1 truncate font-mono text-xs" title={dir}>
+                        <span className="min-w-0 flex-1 break-all font-mono text-xs" title={dir}>
                           {dir}
                         </span>
                         <Button
