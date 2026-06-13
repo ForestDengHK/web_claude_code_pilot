@@ -19,12 +19,25 @@ async function getWindowsDrives(): Promise<string[]> {
   return drives;
 }
 
-// List only directories for folder browsing (no safety restriction since user is choosing where to work)
+// Image extensions surfaced when `?images=1` is passed (matches /api/files/raw)
+const IMAGE_EXTS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.svg', '.bmp', '.ico',
+]);
+
+// List only directories for folder browsing (no safety restriction since user is choosing where to work).
+// With `?images=1`, also returns image files in the directory (for the image picker).
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
-  const dir = searchParams.get('dir') || os.homedir();
+  const rawDir = searchParams.get('dir') || os.homedir();
+  const wantImages = searchParams.get('images') === '1';
 
-  const resolvedDir = path.resolve(dir);
+  // Expand a leading `~` so users can paste `~/Desktop/…` paths directly.
+  const expanded = rawDir === '~'
+    ? os.homedir()
+    : rawDir.startsWith('~/')
+      ? path.join(os.homedir(), rawDir.slice(2))
+      : rawDir;
+  const resolvedDir = path.resolve(expanded);
 
   try {
     await fs.access(resolvedDir);
@@ -45,18 +58,37 @@ export async function GET(request: NextRequest) {
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
+    const files = wantImages
+      ? entries
+          .filter((e) => e.isFile() && !e.name.startsWith('.') && IMAGE_EXTS.has(path.extname(e.name).toLowerCase()))
+          .map((e) => ({
+            name: e.name,
+            path: path.join(resolvedDir, e.name),
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name))
+      : [];
+
     const drives = await getWindowsDrives();
 
     return NextResponse.json({
       current: resolvedDir,
       parent: path.dirname(resolvedDir) !== resolvedDir ? path.dirname(resolvedDir) : null,
       directories,
+      files,
       drives,
     });
-  } catch {
+  } catch (err) {
+    // macOS protects Desktop/Documents/Downloads — readdir fails with EPERM/EACCES
+    // unless the app has Full Disk Access. Make that actionable instead of cryptic.
+    const code = (err as NodeJS.ErrnoException)?.code;
+    const denied = code === 'EPERM' || code === 'EACCES';
     return NextResponse.json<ErrorResponse>(
-      { error: 'Cannot read directory' },
-      { status: 500 }
+      {
+        error: denied
+          ? "Permission denied — macOS protects this folder. Grant the app Full Disk Access, or paste the full path to a subfolder (e.g. ~/Desktop/your-folder) and press Enter."
+          : 'Cannot read directory',
+      },
+      { status: denied ? 403 : 500 }
     );
   }
 }

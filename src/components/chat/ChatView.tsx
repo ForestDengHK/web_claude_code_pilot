@@ -10,6 +10,7 @@ import { SearchIcon } from 'lucide-react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Bookmark02Icon, BrainIcon, Cancel01Icon, ViewIcon, ViewOffSlashIcon, DashboardSquare01Icon, Target02Icon, CheckmarkCircle02Icon, PauseIcon, AlertCircleIcon } from '@hugeicons/core-free-icons';
 import { RememberDialog } from './RememberDialog';
+import { ImagePicker } from './ImagePicker';
 import { usePanel } from '@/hooks/usePanel';
 import { consumeSSEStream } from '@/hooks/useSSEStream';
 import type { RateLimitInfo, CodexGoalState } from '@/hooks/useSSEStream';
@@ -156,6 +157,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [memoryEnabled, setMemoryEnabledRaw] = useState<boolean | null>(null);
   const [memoryGlobalDefault, setMemoryGlobalDefault] = useState(false);
   const [sessionRememberOpen, setSessionRememberOpen] = useState(false);
+  const [imagePickerOpen, setImagePickerOpen] = useState(false);
 
   // View mode: verbose | normal | summary
   const [viewMode, setViewModeRaw] = useState<ViewMode>('normal');
@@ -1512,6 +1514,43 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     await sendMessage(newContent);
   }, [currentBackend, isStreaming, sendMessage, sessionId]);
 
+  // Render a local image inline (from /img or the image picker) and persist it
+  // so it survives a refresh. Routes the path through /api/files/raw rather than
+  // emitting `![](~/…)` directly: Streamdown's rehype-harden blocks image URLs
+  // whose relative form doesn't start with `/`, `./` or `../` (a bare `~/…` path
+  // renders as "[Image blocked]"). A `/api/…` URL passes harden, and the server
+  // expands `~` / resolves relative paths against the session cwd.
+  const displayImage = useCallback((rawPath: string) => {
+    const path = rawPath.trim();
+    if (!path) return;
+    const imgParams = new URLSearchParams({ path });
+    if (sessionId) imgParams.set('session_id', sessionId);
+    const commandContent = `/img ${path}`;
+    const imageContent = `![](/api/files/raw?${imgParams.toString()})`;
+    const now = Date.now();
+    // Optimistic render: the command (so the user sees what they ran) + result.
+    setMessages(prev => [...prev,
+      { id: 'cmd-u-' + now, session_id: sessionId, role: 'user', content: commandContent, created_at: new Date().toISOString(), token_usage: null },
+      { id: 'cmd-a-' + now, session_id: sessionId, role: 'assistant', content: imageContent, created_at: new Date().toISOString(), token_usage: null },
+    ]);
+    // Persist both (best-effort; local copies already render this session even
+    // if persistence fails). Sequential so the command precedes the image.
+    if (sessionId) {
+      (async () => {
+        try {
+          const post = (role: 'user' | 'assistant', content: string) =>
+            fetch(`/api/chat/sessions/${sessionId}/messages`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ role, content }),
+            });
+          await post('user', commandContent);
+          await post('assistant', imageContent);
+        } catch { /* keep the local copy */ }
+      })();
+    }
+  }, [sessionId]);
+
   const handleCommand = useCallback(async (command: string, arg?: string) => {
     switch (command) {
       case '/schedule': {
@@ -1525,18 +1564,13 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       }
       case '/img': {
         const path = arg?.trim();
-        const content = path
-          ? `![](${path})`
-          : '**Usage:** `/img <path>` — display a local image inline.\n\nExample: `/img /tmp/cat.webp` or `/img ~/Downloads/photo.png`';
-        const imgMessage: Message = {
-          id: 'cmd-' + Date.now(),
-          session_id: sessionId,
-          role: 'assistant',
-          content,
-          created_at: new Date().toISOString(),
-          token_usage: null,
-        };
-        setMessages(prev => [...prev, imgMessage]);
+        // No path → open the image picker so the user can browse & pick a file
+        // instead of typing the full path.
+        if (!path) {
+          setImagePickerOpen(true);
+          break;
+        }
+        displayImage(path);
         break;
       }
       case '/help': {
@@ -1714,7 +1748,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         // This shouldn't be reached since non-immediate commands are handled via badge
         sendMessage(command);
     }
-  }, [sessionId, sendMessage, messages, currentBackend, isStreaming]);
+  }, [sessionId, sendMessage, messages, currentBackend, isStreaming, displayImage]);
 
   return (
     <div className="flex h-full min-h-0 flex-col relative">
@@ -1991,6 +2025,12 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         fastMode={currentFastMode}
         onFastModeChange={setCurrentFastMode}
         onSteered={(message) => setMessages((prev) => [...prev, message])}
+      />
+      {/* Image picker for `/img` with no path — browse & pick an image file. */}
+      <ImagePicker
+        open={imagePickerOpen}
+        onOpenChange={setImagePickerOpen}
+        onSelect={displayImage}
       />
     </div>
   );

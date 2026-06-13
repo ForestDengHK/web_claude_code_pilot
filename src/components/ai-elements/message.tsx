@@ -34,6 +34,7 @@ import {
 } from "react";
 import { Streamdown } from "streamdown";
 import { LoadingImage } from "@/components/chat/LoadingImage";
+import { ImageLightbox } from "@/components/chat/ImageLightbox";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
@@ -559,14 +560,39 @@ function rewriteImageSrc(rawSrc: string | undefined, sessionId: string | null): 
 const MarkdownImage = ({ src, alt, node: _node, className, ...rest }: any) => {
   const sessionId = useContext(MessageSessionContext);
   const finalSrc = rewriteImageSrc(typeof src === 'string' ? src : undefined, sessionId);
+  const altText = typeof alt === 'string' ? alt : '';
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   return (
-    <LoadingImage
-      src={finalSrc}
-      alt={typeof alt === 'string' ? alt : ''}
-      inline
-      className={cn('max-w-full rounded-md', className)}
-      {...rest}
-    />
+    <>
+      {/* Click to open a zoomable preview (pinch / wheel / +- like file preview). */}
+      <span
+        role="button"
+        tabIndex={0}
+        aria-label="Open image preview"
+        className="inline-block cursor-zoom-in align-bottom"
+        onClick={() => setLightboxOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setLightboxOpen(true);
+          }
+        }}
+      >
+        <LoadingImage
+          src={finalSrc}
+          alt={altText}
+          inline
+          className={cn('max-w-full rounded-md', className)}
+          {...rest}
+        />
+      </span>
+      <ImageLightbox
+        images={[{ src: finalSrc, alt: altText }]}
+        initialIndex={0}
+        open={lightboxOpen}
+        onOpenChange={setLightboxOpen}
+      />
+    </>
   );
 };
 
