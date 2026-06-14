@@ -132,7 +132,53 @@ const STALL_TIMEOUT_MS = 300_000;
 // model can't be "thinking" yet — the turn hasn't started.
 const DEQUEUE_WEDGE_MS = 90_000;
 
-export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<string> {
+/**
+ * Tracks which non-reply tools are mid-flight during a turn, so the stall +
+ * PTY-idle finish watchdogs can be suspended while a tool runs (the PTY is
+ * legitimately idle then). Matched by tool_use id — NOT a bare counter —
+ * because the CLI sometimes writes a tool_result transcript line BEFORE its
+ * matching tool_use line (same-instant pair; file/line order isn't guaranteed).
+ * A bare counter swallows the early decrement at zero and then never cancels
+ * the late increment, pinning `inFlight` true forever and wedging the turn
+ * until TURN_TIMEOUT (the session-stuck-streaming incident). Id sets are
+ * order-independent: a tool is done once BOTH its use and result are seen, in
+ * either order.
+ */
+export class ToolFlightTracker {
+  private readonly started = new Set<string>();
+  private readonly finished = new Set<string>();
+  startTool(id: string): void { this.started.add(id); }
+  finishTool(id: string): void { this.finished.add(id); }
+  /** True while some started tool has not yet seen its matching result. */
+  get inFlight(): boolean {
+    for (const id of this.started) if (!this.finished.has(id)) return true;
+    return false;
+  }
+}
+
+/**
+ * On a watchdog-forced turn teardown (timeout / stall), the turn-end detector
+ * failed — but the model may already have produced a real answer this turn (it
+ * called `reply` → `sawReply`, or streamed natural-language text). When this is
+ * true the turn should be FINISHED with that answer (preserving it) rather than
+ * failed with the watchdog's error message, so the user never loses an answer
+ * the model actually delivered (the session-stuck-then-timed-out incident: the
+ * reply was 'sent' to the channel but the timeout discarded it as an error).
+ */
+export function turnHasDeliverableAnswer(args: {
+  sawReply: boolean;
+  streamedText: string;
+}): boolean {
+  return args.sawReply || args.streamedText.trim().length > 0;
+}
+
+/**
+ * Run a single channels turn. On an expired/invalid auth token it emits a
+ * terminal `auth_error` event (instead of a generic `error`) and kills the PTY,
+ * so the `streamChannels` wrapper can respawn + retry. All other terminal
+ * conditions go through `finish`/`fail` as before.
+ */
+function runChannelsTurn(opts: ChannelsStreamOptions): ReadableStream<string> {
   return assembleStream({
     onStart: (emit, finish, fail) => {
       void (async () => {
@@ -247,6 +293,14 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
                   catch { /* ignore malformed */ }
                   continue;
                 }
+                if (e.type === 'auth_error') {
+                  // Expired/invalid OAuth token (this long-lived PTY held an access
+                  // token past its ~8h refresh boundary). Tear the turn down and
+                  // signal the retry wrapper; killing the PTY makes the next
+                  // ensureSession spawn a fresh `claude` that re-mints the token.
+                  failAuth(e.data);
+                  return;
+                }
                 if (e.type === 'text') {
                   // Drop restatement text the model writes after it already
                   // called reply — surfacing it duplicates the answer.
@@ -264,9 +318,13 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
                     // cancel any pending PTY-idle finish and suspend both
                     // watchdogs until the tool_result arrives (which can take
                     // minutes for a shell command, build, or network call).
-                    activeToolCount++;
-                    clearTimeout(stallTimer);
-                    clearTimeout(finishTimer);
+                    // Guarded by inFlight so an out-of-order pair (this tool's
+                    // result already seen) doesn't re-suspend an idle turn.
+                    toolFlight.startTool(d.id);
+                    if (toolFlight.inFlight) {
+                      clearTimeout(stallTimer);
+                      clearTimeout(finishTimer);
+                    }
                   } catch { /* fall through and emit as-is */ }
                 } else if (e.type === 'tool_result') {
                   try {
@@ -274,10 +332,8 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
                     if (replyToolUseIds.has(d.tool_use_id)) continue;
                     // Tool completed; re-arm watchdogs once all pending tools
                     // finish so a quiet PTY can again signal turn-end.
-                    if (activeToolCount > 0) {
-                      activeToolCount--;
-                      if (activeToolCount === 0) { bumpStall(); armFinish(); }
-                    }
+                    toolFlight.finishTool(d.tool_use_id);
+                    if (!toolFlight.inFlight) { bumpStall(); armFinish(); }
                   } catch { /* fall through and emit as-is */ }
                 } else if (e.type === 'result') {
                   try {
@@ -310,9 +366,9 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           let wedgeTimer: ReturnType<typeof setTimeout> | undefined;
           let turnDequeued = false;
           let permissionPending = false;
-          // Count of non-reply tool_use blocks whose tool_result has not yet
-          // arrived. The stall + finish watchdogs are suspended while this is > 0.
-          let activeToolCount = 0;
+          // Tracks non-reply tools that are mid-flight; the stall + finish
+          // watchdogs are suspended while any tool is in flight.
+          const toolFlight = new ToolFlightTracker();
           // The text the model passed to the `reply` tool. Used only as a
           // fallback answer when the model used ONLY reply and streamed no
           // natural text — reply does NOT drive turn-end timing (see
@@ -345,11 +401,25 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           // timeouts / transport errors: the process is in an unknown state,
           // so killing it lets the next message respawn a clean one (--resume
           // continues the transcript) instead of queueing behind a dead turn.
-          const failAndKill = (msg: string) => {
+          //
+          // preserveAnswer: for the watchdog kills (timeout / stall) the turn-end
+          // DETECTOR failed, not the turn — if the model already delivered an
+          // answer (called `reply`, or streamed natural text) we still kill the
+          // PTY but FINISH with that answer (same path as finishTurn) instead of
+          // surfacing `msg`, so a real reply isn't discarded as an error. Genuine
+          // failures (wedge / push error / user stop) pass false.
+          const failAndKill = (msg: string, preserveAnswer = false) => {
             if (done) return;
             done = true;
             cleanup();
             try { killSession(opts.sessionId); } catch { /* best effort */ }
+            if (preserveAnswer && turnHasDeliverableAnswer({ sawReply, streamedText })) {
+              finish(
+                resolveFinalReplyText(streamedText, replyText),
+                sawUsage ? turnUsage : undefined,
+              );
+              return;
+            }
             fail(msg);
           };
 
@@ -358,10 +428,10 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           // the process is wedged. Disabled once a permission prompt is pending
           // or while any tool is actively executing.
           const bumpStall = () => {
-            if (done || permissionPending || activeToolCount > 0) return;
+            if (done || permissionPending || toolFlight.inFlight) return;
             clearTimeout(stallTimer);
             stallTimer = setTimeout(
-              safe('stall-watchdog', () => failAndKill('channel turn stalled — no activity')),
+              safe('stall-watchdog', () => failAndKill('channel turn stalled — no activity', true)),
               STALL_TIMEOUT_MS,
             );
           };
@@ -383,6 +453,21 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
             );
           };
 
+          // Auth token expired/invalid. Tear the turn down, kill the PTY (so the
+          // next ensureSession respawns a fresh `claude` that re-mints the token),
+          // then close the stream with a dedicated `auth_error` event. The retry
+          // wrapper (streamChannels) consumes that event and re-runs the turn
+          // transparently — the user never sees "Please run /login". The empty
+          // finish('') only emits the terminal `done`, carrying no answer text.
+          const failAuth = (errorText: string) => {
+            if (done) return;
+            done = true;
+            cleanup();
+            try { killSession(opts.sessionId); } catch { /* best effort */ }
+            emit({ type: 'auth_error', data: errorText });
+            finish('');
+          };
+
           // Primary (and sole) turn-end detector: the PTY has gone quiet. Re-armed
           // on every PTY data chunk (the model is still working) and after a tool
           // result; suspended while a tool is executing or a permission prompt is
@@ -390,7 +475,7 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           // actually fires, the PTY has produced nothing for PTY_IDLE_FINISH_MS —
           // the turn is over.
           const armFinish = () => {
-            if (done || permissionPending || activeToolCount > 0) return;
+            if (done || permissionPending || toolFlight.inFlight) return;
             clearTimeout(finishTimer);
             finishTimer = setTimeout(safe('finish-timer', finishTurn), PTY_IDLE_FINISH_MS);
           };
@@ -431,8 +516,9 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
 
           // If the PTY process exits unexpectedly mid-turn (crash, OOM, external
           // kill), nothing else would close this stream: the stall + PTY-idle
-          // watchdogs are suspended whenever a tool is in flight (activeToolCount
-          // > 0), so a crash during a tool would hang until TURN_TIMEOUT_MS and
+          // watchdogs are suspended whenever a tool is in flight
+          // (toolFlight.inFlight), so a crash during a tool would hang until
+          // TURN_TIMEOUT_MS and
           // leave the DB draft stuck in 'streaming' (→ recovery deadlock). React
           // to the exit directly: flush any trailing transcript line, then close
           // the stream so collectStreamResponse finalizes the draft.
@@ -450,7 +536,7 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           }), HEARTBEAT_INTERVAL_MS);
 
           timeout = setTimeout(
-            safe('turn-timeout', () => failAndKill('channel turn timed out')),
+            safe('turn-timeout', () => failAndKill('channel turn timed out', true)),
             TURN_TIMEOUT_MS,
           );
 
@@ -519,6 +605,107 @@ export function streamChannels(opts: ChannelsStreamOptions): ReadableStream<stri
           fail(err instanceof Error ? err.message : String(err));
         }
       })();
+    },
+  });
+}
+
+/**
+ * Public channels stream: runs a turn and, on an expired/invalid auth token,
+ * transparently respawns the session and retries once.
+ *
+ * Why this exists: a long-lived T1 `claude` PTY caches the OAuth access token at
+ * spawn and does NOT refresh it across the token's ~8h boundary — so after that
+ * boundary every send 401s ("Please run /login") until something re-mints the
+ * token. A freshly spawned `claude` always re-mints, which is exactly why the
+ * manual workaround ("open a terminal, run claude") fixed it. This wrapper
+ * automates that: `runChannelsTurn` kills the stale PTY and ends the turn with a
+ * dedicated `auth_error` event; we swallow it, tell the collector to reset, and
+ * re-run the turn — `ensureSession` then spawns a fresh `claude` with a valid
+ * token. Capped at one retry: if it still fails the token is genuinely
+ * invalid/revoked, so we surface "Please run /login" rather than loop.
+ */
+export function streamChannels(
+  opts: ChannelsStreamOptions,
+  // Seam for tests: how to run a single turn. Production always uses the real
+  // PTY-backed turn machine; tests inject a fake to exercise the retry plumbing
+  // without spawning `claude`.
+  runTurn: (o: ChannelsStreamOptions) => ReadableStream<string> = runChannelsTurn,
+): ReadableStream<string> {
+  const MAX_ATTEMPTS = 2; // original turn + one auth-refresh retry
+  // Downstream-teardown flag. The route tees this stream; if every branch goes
+  // away (client gone AND collector done) our source is cancelled and the
+  // controller closes. Guard all controller ops so a late enqueue/close can't
+  // throw ERR_INVALID_STATE → uncaughtException (which degrades the whole server
+  // — see assembleStream's own `if (!closed)` guard).
+  let closed = false;
+  let currentReader: ReadableStreamDefaultReader<string> | null = null;
+  const safeEnqueue = (chunk: string, controller: ReadableStreamDefaultController<string>) => {
+    if (closed) return;
+    try { controller.enqueue(chunk); } catch { closed = true; }
+  };
+  return new ReadableStream<string>({
+    async start(controller) {
+      try {
+        for (let attempt = 0; attempt < MAX_ATTEMPTS && !closed; attempt++) {
+          const reader = runTurn(opts).getReader();
+          currentReader = reader;
+          let authErrorText: string | null = null;
+          // Track whether the failed attempt streamed any real content. Auth-401
+          // always fails on the first API call (before any output), but if a turn
+          // somehow streamed content before failing, retrying would duplicate it —
+          // so in that case we surface the error instead of retrying.
+          let forwardedContent = false;
+          try {
+            while (!closed) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              let forwardChunk = true;
+              for (const line of value.split('\n')) {
+                if (!line.startsWith('data: ')) continue;
+                let evt: SSEEvent | undefined;
+                try { evt = JSON.parse(line.slice(6)) as SSEEvent; } catch { continue; }
+                if (evt.type === 'auth_error') {
+                  authErrorText = evt.data;
+                  forwardChunk = false; // swallow — the wrapper decides what to do
+                } else if (evt.type === 'text' || evt.type === 'tool_use'
+                  || evt.type === 'tool_result' || evt.type === 'thinking') {
+                  forwardedContent = true;
+                }
+              }
+              if (authErrorText !== null) break; // stop before the trailing `done`
+              if (forwardChunk) safeEnqueue(value, controller);
+            }
+          } finally {
+            try { reader.releaseLock(); } catch { /* noop */ }
+            currentReader = null;
+          }
+
+          if (closed || authErrorText === null) return; // cancelled, or finished/failed normally
+
+          const canRetry = attempt + 1 < MAX_ATTEMPTS
+            && !forwardedContent
+            && !opts.abortSignal?.aborted;
+          if (canRetry) {
+            // Discard any partial draft + reset the recovery buffer, then retry.
+            safeEnqueue(sse({ type: 'session_reset', data: 'Authentication token refreshed — retrying…' }), controller);
+            continue;
+          }
+          // Out of retries (or unsafe to retry): surface it like any failed turn
+          // so the user sees it and an assistant row is persisted.
+          safeEnqueue(sse({ type: 'error', data: authErrorText }), controller);
+          safeEnqueue(sse({ type: 'done', data: '' }), controller);
+          return;
+        }
+      } catch (err) {
+        safeEnqueue(sse({ type: 'error', data: err instanceof Error ? err.message : String(err) }), controller);
+      } finally {
+        if (!closed) { try { controller.close(); } catch { /* already closed */ } }
+      }
+    },
+    async cancel() {
+      // Downstream cancelled (all tee branches gone). Stop pulling the inner turn.
+      closed = true;
+      if (currentReader) { try { await currentReader.cancel(); } catch { /* noop */ } }
     },
   });
 }

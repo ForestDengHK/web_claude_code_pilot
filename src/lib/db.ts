@@ -1669,6 +1669,12 @@ function registerShutdownHandlers(): void {
   const shutdown = (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
+    // Only a process that actually opened a connection has anything to close or
+    // report. Next.js dev spawns short-lived jest-worker children that import
+    // this module (so these handlers register) but never call getDb(); without
+    // this guard each worker exit floods service.log with a "[db] Received
+    // exit…" line (~1.5/s under load → hundreds of MB of pure noise).
+    if (!db) return;
     console.log(`[db] Received ${signal}, closing database...`);
     closeDb();
   };

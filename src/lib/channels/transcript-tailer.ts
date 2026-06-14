@@ -19,6 +19,9 @@ interface TranscriptEntry {
   /** Set by the CLI on synthetic assistant entries that report an API failure
    * (model unavailable/not found, overloaded, rate limit, …). */
   isApiErrorMessage?: boolean;
+  /** HTTP status on a synthetic api-error entry (e.g. 401 for an expired OAuth
+   * token). Used to route auth failures to the self-healing retry path. */
+  apiErrorStatus?: number;
   message?: {
     content?: Array<Record<string, unknown>>;
     usage?: Record<string, number>;
@@ -67,13 +70,20 @@ export function transcriptEntriesToEvents(entries: TranscriptEntry[]): SSEEvent[
     // synthetic ("No response requested.") has no isApiErrorMessage, so it still
     // falls through to the '<synthetic>' drop untouched.
     if (entry.type === 'assistant' && entry.isApiErrorMessage) {
+      const textBlock = (entry.message?.content ?? []).find(
+        (b) => b.type === 'text' && typeof b.text === 'string',
+      );
+      const text = (textBlock?.text as string) || entry.error || 'API error';
       if (entry.error && /rate.?limit|usage.?limit/i.test(entry.error)) {
         out.push({ type: 'rate_limit', data: JSON.stringify({ tier: 'channels' }) });
+      } else if (entry.apiErrorStatus === 401 || entry.error === 'authentication_failed') {
+        // Expired/invalid auth token — emit a DISTINCT auth_error so streamChannels
+        // respawns the session (a fresh `claude` re-mints the OAuth access token,
+        // which a long-lived PTY can hold stale past its ~8h refresh boundary) and
+        // retries once, instead of surfacing "Please run /login" to the user.
+        out.push({ type: 'auth_error', data: text });
       } else {
-        const textBlock = (entry.message?.content ?? []).find(
-          (b) => b.type === 'text' && typeof b.text === 'string',
-        );
-        out.push({ type: 'error', data: (textBlock?.text as string) || entry.error || 'API error' });
+        out.push({ type: 'error', data: text });
       }
       continue;
     }

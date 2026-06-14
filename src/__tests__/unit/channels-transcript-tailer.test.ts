@@ -162,6 +162,28 @@ test('synthetic API-error entry with rate_limit still maps to rate_limit', () =>
   assert.equal(events[0].type, 'rate_limit');
 });
 
+test('synthetic API-error entry with 401 maps to auth_error (drives auto-respawn retry)', () => {
+  // The OAuth access token crosses its ~8h refresh boundary while a long-lived
+  // T1 PTY holds a stale copy → the CLI writes a synthetic assistant entry with
+  // apiErrorStatus 401 / error "authentication_failed". It must surface as a
+  // DISTINCT auth_error (not a generic error) so streamChannels can respawn the
+  // session — a fresh `claude` re-mints the token — and retry transparently
+  // instead of dumping "Please run /login" on the user.
+  const entry = {
+    type: 'assistant', error: 'authentication_failed', isApiErrorMessage: true, apiErrorStatus: 401,
+    message: {
+      model: '<synthetic>', stop_reason: 'stop_sequence',
+      content: [{ type: 'text', text: 'Please run /login · API Error: 401 Invalid authentication credentials' }],
+    },
+  };
+  const events = transcriptEntriesToEvents([entry]);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].type, 'auth_error');
+  assert.match(events[0].data, /Please run \/login/);
+  // Must NOT also leak the text block as a plain text event.
+  assert.ok(!events.some((e) => e.type === 'text'), 'no stray text event');
+});
+
 test('isMeta user entry ("Continue from where you left off.") emits no events', () => {
   // The other half of the synthetic recovery pair the SDK writes on resume.
   const entry = {
