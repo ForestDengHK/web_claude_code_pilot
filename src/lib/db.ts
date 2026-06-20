@@ -175,6 +175,29 @@ function initDb(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON chat_sessions(updated_at);
     CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id);
     CREATE INDEX IF NOT EXISTS idx_organize_session_cache_fingerprint ON organize_session_cache(content_fingerprint);
+
+    CREATE TABLE IF NOT EXISTS artifacts (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      favicon TEXT NOT NULL DEFAULT '📄',
+      current_version INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS artifact_versions (
+      artifact_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      path TEXT NOT NULL,
+      label TEXT,
+      byte_size INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (artifact_id, version),
+      FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_artifacts_project_id ON artifacts(project_id);
   `);
 
   // FTS5 full-text search index for messages (standalone storage)
