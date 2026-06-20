@@ -10,6 +10,7 @@ import { ChatListPanel } from "./ChatListPanel";
 import { RightPanel } from "./RightPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { DocPreview } from "./DocPreview";
+import { ArtifactView } from "./ArtifactView";
 import { DiffViewer } from "@/components/project/DiffViewer";
 import { PanelContext, type PanelContent, type PreviewViewMode, type DiffTarget, type StreamingSessionInfo } from "@/hooks/usePanel";
 import { TTSProvider } from "@/contexts/TTSContext";
@@ -268,6 +269,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [previewFile, setPreviewFileRaw] = useState<string | null>(null);
   const [previewLine, setPreviewLine] = useState<number | null>(null);
   const [previewViewMode, setPreviewViewMode] = useState<PreviewViewMode>("source");
+  const [artifactPreview, setArtifactPreview] = useState<{ id: string; version: number } | null>(null);
   const [docPreviewWidth, setDocPreviewWidth] = useState(() => {
     if (typeof window === "undefined") return 480;
     return parseInt(localStorage.getItem("codepilot_docpreview_width") || "480");
@@ -377,12 +379,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       setPreviewViewMode,
       diffTarget,
       setDiffTarget,
+      artifactPreview,
+      setArtifactPreview,
       streamingSessions,
       addStreamingSession,
       updateStreamingSession,
       removeStreamingSession,
     }),
-    [panelOpen, setPanelOpen, panelContent, workingDirectory, sessionId, sessionTitle, streamingSessionId, pendingApprovalSessionId, previewFile, setPreviewFile, previewLine, previewViewMode, diffTarget, setDiffTarget, streamingSessions]
+    [panelOpen, setPanelOpen, panelContent, workingDirectory, sessionId, sessionTitle, streamingSessionId, pendingApprovalSessionId, previewFile, setPreviewFile, previewLine, previewViewMode, diffTarget, setDiffTarget, artifactPreview, streamingSessions]
   );
 
   return (
@@ -403,7 +407,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
             <main className="relative flex-1 overflow-hidden">{children}</main>
           </div>
-          {isChatDetailRoute && (previewFile || diffTarget) && (
+          {isChatDetailRoute && (previewFile || diffTarget || artifactPreview) && (
             <div className="hidden md:block">
               <ResizeHandle side="right" onResize={handleDocPreviewResize} onResizeEnd={handleDocPreviewResizeEnd} />
             </div>
@@ -417,7 +421,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               width={docPreviewWidth}
             />
           )}
-          {isChatDetailRoute && !diffTarget && previewFile && (
+          {isChatDetailRoute && !diffTarget && artifactPreview && (
+            <ArtifactView
+              artifactId={artifactPreview.id}
+              version={artifactPreview.version}
+              width={docPreviewWidth}
+              onUpdate={() =>
+                window.dispatchEvent(new CustomEvent("artifact:update", { detail: artifactPreview.id }))
+              }
+              onClose={() => setArtifactPreview(null)}
+            />
+          )}
+          {isChatDetailRoute && !diffTarget && !artifactPreview && previewFile && (
             <DocPreview
               filePath={previewFile}
               viewMode={previewViewMode}

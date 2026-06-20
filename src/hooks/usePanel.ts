@@ -42,6 +42,8 @@ export interface PanelContextValue {
   setPreviewViewMode: (mode: PreviewViewMode) => void;
   diffTarget: DiffTarget | null;
   setDiffTarget: (target: DiffTarget | null) => void;
+  artifactPreview: { id: string; version: number } | null;
+  setArtifactPreview: (target: { id: string; version: number } | null) => void;
   streamingSessions: Map<string, StreamingSessionInfo>;
   addStreamingSession: (info: StreamingSessionInfo) => void;
   updateStreamingSession: (sessionId: string, updates: Partial<Omit<StreamingSessionInfo, 'sessionId'>>) => void;

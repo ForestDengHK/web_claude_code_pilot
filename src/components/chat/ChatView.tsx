@@ -112,7 +112,7 @@ interface ChatViewProps {
 }
 
 export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, initialMode, backend = 'claude', advisorModel, branchSummary, branchSourceSessionId }: ChatViewProps) {
-  const { setStreamingSessionId, workingDirectory, setWorkingDirectory, setPanelOpen, setPendingApprovalSessionId, sessionTitle, addStreamingSession, updateStreamingSession, removeStreamingSession } = usePanel();
+  const { setStreamingSessionId, workingDirectory, setWorkingDirectory, setPanelOpen, setArtifactPreview, setPendingApprovalSessionId, sessionTitle, addStreamingSession, updateStreamingSession, removeStreamingSession } = usePanel();
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -1280,6 +1280,10 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           },
           onHeartbeat: () => {
             lastSseDataRef.current = Date.now();
+          },
+          onArtifactPublished: (data) => {
+            setArtifactPreview({ id: data.artifactId, version: data.version });
+            setPanelOpen(true);
           },
           onError: (acc) => {
             accumulated = acc;
