@@ -27,6 +27,7 @@ import { wasInterrupted } from './abort-registry';
 import { findClaudeBinary, findGitBash, getExpandedPath } from './platform';
 import { sanitizeEffortLevel } from './effort';
 import { createSpawnSubagentsMcp, SPAWN_SUBAGENTS_PROMPT_FRAGMENT } from './spawn-subagents-mcp';
+import { createArtifactsMcp, ARTIFACTS_PROMPT_FRAGMENT } from './artifacts-mcp';
 import { loadEnabledPlugins, loadMergedMcpServers } from './claude-config-loader';
 import os from 'os';
 import fs from 'fs';
@@ -465,8 +466,11 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // tool is disabled, omit the fragment so the agent doesn't reference
         // a tool it can't call.
         const wantSpawnSubagents = getSetting('enable_spawn_subagents') !== 'false';
+        const wantArtifacts = getSetting('enable_artifacts') !== 'false';
         const appendedSystemPrompt =
-          (systemPrompt ?? '') + (wantSpawnSubagents ? SPAWN_SUBAGENTS_PROMPT_FRAGMENT : '');
+          (systemPrompt ?? '') +
+          (wantSpawnSubagents ? SPAWN_SUBAGENTS_PROMPT_FRAGMENT : '') +
+          (wantArtifacts ? ARTIFACTS_PROMPT_FRAGMENT : '');
         if (appendedSystemPrompt) {
           queryOptions.systemPrompt = {
             type: 'preset',
@@ -524,6 +528,24 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           queryOptions.allowedTools = [
             ...(queryOptions.allowedTools ?? []),
             'mcp__codepilot-subagents__spawn_subagents',
+          ];
+        }
+
+        // Inject the in-process `publish_artifact` MCP server unless disabled.
+        // It lets `/artifact` publish a self-contained HTML page to the
+        // versioned artifact store and is auto-allowed (we own and trust it).
+        if (wantArtifacts) {
+          const artifactsMcp = createArtifactsMcp({
+            cwd: (queryOptions.cwd as string) ?? workingDirectory,
+            projectId: workingDirectory,
+          });
+          queryOptions.mcpServers = {
+            ...(queryOptions.mcpServers ?? {}),
+            'codepilot-artifacts': artifactsMcp,
+          };
+          queryOptions.allowedTools = [
+            ...(queryOptions.allowedTools ?? []),
+            'mcp__codepilot-artifacts__publish_artifact',
           ];
         }
 
