@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -28,26 +29,26 @@ describe('artifacts store', () => {
       favicon: '🚨',
       projectId: '/proj',
     });
-    expect(version).toBe(1);
-    expect(artifactId).toBe('incident-report');
-    expect(getArtifactHtml(artifactId, 1)).toContain('hello');
+    assert.equal(version, 1);
+    assert.equal(artifactId, 'incident-report');
+    assert.match(getArtifactHtml(artifactId, 1) ?? '', /hello/);
   });
 
   it('appends a new version when given an existing artifact_id', async () => {
     const { publishArtifact, listVersions } = await import('../../lib/artifacts');
     const first = publishArtifact({ html: '<p>a</p>', title: 'Run Digest', favicon: '📊', projectId: '/proj' });
     const second = publishArtifact({ html: '<p>b</p>', title: 'Run Digest', favicon: '📊', projectId: '/proj', artifactId: first.artifactId });
-    expect(second.artifactId).toBe(first.artifactId);
-    expect(second.version).toBe(2);
-    expect(listVersions(first.artifactId).map(v => v.version)).toEqual([1, 2]);
+    assert.equal(second.artifactId, first.artifactId);
+    assert.equal(second.version, 2);
+    assert.deepEqual(listVersions(first.artifactId).map(v => v.version), [1, 2]);
   });
 
   it('disambiguates slugs for distinct artifacts with the same title', async () => {
     const { publishArtifact } = await import('../../lib/artifacts');
     const a = publishArtifact({ html: '<p>a</p>', title: 'Report', favicon: '📄', projectId: '/proj' });
     const b = publishArtifact({ html: '<p>b</p>', title: 'Report', favicon: '📄', projectId: '/proj' });
-    expect(a.artifactId).toBe('report');
-    expect(b.artifactId).toBe('report-2');
+    assert.equal(a.artifactId, 'report');
+    assert.equal(b.artifactId, 'report-2');
   });
 
   it('lists artifacts for a project, newest first', async () => {
@@ -55,6 +56,6 @@ describe('artifacts store', () => {
     publishArtifact({ html: '<p>x</p>', title: 'One', favicon: '📄', projectId: '/proj' });
     publishArtifact({ html: '<p>y</p>', title: 'Two', favicon: '📄', projectId: '/other' });
     const list = listArtifacts('/proj');
-    expect(list.map(a => a.title)).toEqual(['One']);
+    assert.deepEqual(list.map(a => a.title), ['One']);
   });
 });

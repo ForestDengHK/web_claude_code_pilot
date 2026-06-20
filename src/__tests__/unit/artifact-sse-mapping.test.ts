@@ -1,28 +1,37 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 import { handleSSEEvent } from '../../hooks/useSSEStream';
 import type { SSECallbacks } from '../../hooks/useSSEStream';
 
+function spy<T extends unknown[] = unknown[]>() {
+  const calls: T[] = [];
+  const fn = (...args: T) => {
+    calls.push(args);
+  };
+  return { fn, calls };
+}
+
 function noopCallbacks(overrides: Partial<SSECallbacks> = {}): SSECallbacks {
   return {
-    onText: vi.fn(),
-    onThinking: vi.fn(),
-    onToolUse: vi.fn(),
-    onToolResult: vi.fn(),
-    onToolOutput: vi.fn(),
-    onToolProgress: vi.fn(),
-    onStatus: vi.fn(),
-    onResult: vi.fn(),
-    onPermissionRequest: vi.fn(),
-    onInputRequest: vi.fn(),
-    onToolTimeout: vi.fn(),
-    onError: vi.fn(),
+    onText: () => {},
+    onThinking: () => {},
+    onToolUse: () => {},
+    onToolResult: () => {},
+    onToolOutput: () => {},
+    onToolProgress: () => {},
+    onStatus: () => {},
+    onResult: () => {},
+    onPermissionRequest: () => {},
+    onInputRequest: () => {},
+    onToolTimeout: () => {},
+    onError: () => {},
     ...overrides,
   };
 }
 
 describe('artifact_published SSE mapping', () => {
   it('parses the payload and invokes onArtifactPublished', () => {
-    const onArtifactPublished = vi.fn();
+    const onArtifactPublished = spy<[Parameters<NonNullable<SSECallbacks['onArtifactPublished']>>[0]]>();
     handleSSEEvent(
       {
         type: 'artifact_published',
@@ -35,22 +44,22 @@ describe('artifact_published SSE mapping', () => {
         }),
       },
       '',
-      noopCallbacks({ onArtifactPublished }),
+      noopCallbacks({ onArtifactPublished: onArtifactPublished.fn }),
     );
-    expect(onArtifactPublished).toHaveBeenCalledWith(
-      expect.objectContaining({ artifactId: 'run-digest', version: 2 }),
-    );
+    assert.equal(onArtifactPublished.calls.length, 1);
+    assert.equal(onArtifactPublished.calls[0][0].artifactId, 'run-digest');
+    assert.equal(onArtifactPublished.calls[0][0].version, 2);
   });
 
   it('does not throw on malformed artifact_published data', () => {
-    const onArtifactPublished = vi.fn();
-    expect(() =>
+    const onArtifactPublished = spy<[Parameters<NonNullable<SSECallbacks['onArtifactPublished']>>[0]]>();
+    assert.doesNotThrow(() =>
       handleSSEEvent(
         { type: 'artifact_published', data: 'not json' },
         '',
-        noopCallbacks({ onArtifactPublished }),
+        noopCallbacks({ onArtifactPublished: onArtifactPublished.fn }),
       ),
-    ).not.toThrow();
-    expect(onArtifactPublished).not.toHaveBeenCalled();
+    );
+    assert.equal(onArtifactPublished.calls.length, 0);
   });
 });

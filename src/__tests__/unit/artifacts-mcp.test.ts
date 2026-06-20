@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -28,16 +29,16 @@ describe('publish_artifact tool', () => {
       { file_path: 'digest.html', title: 'Run Digest', favicon: '📊' },
     );
     const payload = JSON.parse(out.text);
-    expect(out.isError).toBeUndefined();
-    expect(payload.artifact_id).toBe('run-digest');
-    expect(payload.version).toBe(1);
-    expect(payload.internal_url).toBe('/api/artifacts/run-digest?version=1');
+    assert.equal(out.isError, undefined);
+    assert.equal(payload.artifact_id, 'run-digest');
+    assert.equal(payload.version, 1);
+    assert.equal(payload.internal_url, '/api/artifacts/run-digest?version=1');
   });
 
   it('returns an error result when the file is missing', async () => {
     const { runPublishArtifact } = await import('../../lib/artifacts-mcp');
     const out = await runPublishArtifact({ cwd, projectId: cwd }, { file_path: 'nope.html', title: 'X', favicon: '📄' });
-    expect(out.isError).toBe(true);
-    expect(out.text).toContain('cannot read');
+    assert.equal(out.isError, true);
+    assert.match(out.text, /cannot read/);
   });
 });

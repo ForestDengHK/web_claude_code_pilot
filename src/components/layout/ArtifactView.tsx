@@ -18,6 +18,7 @@ export interface ArtifactViewProps {
   /** The version to show initially; bumps when a new version is published. */
   version: number;
   width: number;
+  onVersionChange: (version: number) => void;
   onUpdate: () => void;
   onClose: () => void;
 }
@@ -28,16 +29,11 @@ export interface ArtifactViewProps {
  * HTML is fetched as text and passed via `srcDoc` — never loaded same-origin.
  * Mirrors DocPreview's responsive shell (mobile overlay / desktop side panel).
  */
-export function ArtifactView({ artifactId, version, width, onUpdate, onClose }: ArtifactViewProps) {
-  const [displayVersion, setDisplayVersion] = useState(version);
+export function ArtifactView({ artifactId, version, width, onVersionChange, onUpdate, onClose }: ArtifactViewProps) {
   const [versions, setVersions] = useState<VersionMeta[]>([]);
   const [title, setTitle] = useState("Artifact");
-  const [html, setHtml] = useState<string | null>(null);
-
-  // A new publish bumps the `version` prop — jump to it.
-  useEffect(() => {
-    setDisplayVersion(version);
-  }, [version]);
+  const [htmlState, setHtmlState] = useState<{ key: string; html: string } | null>(null);
+  const htmlKey = `${artifactId}:${version}`;
 
   // Load metadata (title + version list for the picker); refetch on new publish.
   useEffect(() => {
@@ -58,20 +54,21 @@ export function ArtifactView({ artifactId, version, width, onUpdate, onClose }: 
   // Load the selected version's HTML.
   useEffect(() => {
     let cancelled = false;
-    setHtml(null);
-    fetch(`/api/artifacts/${artifactId}?version=${displayVersion}`)
+    const requestKey = `${artifactId}:${version}`;
+    fetch(`/api/artifacts/${artifactId}?version=${version}`)
       .then((r) => (r.ok ? r.text() : Promise.reject(new Error("not found"))))
       .then((t) => {
-        if (!cancelled) setHtml(t);
+        if (!cancelled) setHtmlState({ key: requestKey, html: t });
       })
       .catch(() => {
-        if (!cancelled) setHtml("<p>Failed to load artifact.</p>");
+        if (!cancelled) setHtmlState({ key: requestKey, html: "<p>Failed to load artifact.</p>" });
       });
     return () => {
       cancelled = true;
     };
-  }, [artifactId, displayVersion]);
+  }, [artifactId, version]);
 
+  const html = htmlState?.key === htmlKey ? htmlState.html : null;
   const srcDoc = useMemo(() => (html == null ? null : withCsp(html)), [html]);
 
   return (
@@ -89,8 +86,8 @@ export function ArtifactView({ artifactId, version, width, onUpdate, onClose }: 
 
         {versions.length > 1 && (
           <select
-            value={displayVersion}
-            onChange={(e) => setDisplayVersion(parseInt(e.target.value, 10))}
+            value={version}
+            onChange={(e) => onVersionChange(parseInt(e.target.value, 10))}
             className="h-6 rounded border border-border/40 bg-background px-1 text-xs"
             aria-label="Artifact version"
           >
@@ -118,7 +115,7 @@ export function ArtifactView({ artifactId, version, width, onUpdate, onClose }: 
             Loading…
           </div>
         ) : (
-          <PinchZoomContainer iframeMode resetKey={`${artifactId}:${displayVersion}`}>
+          <PinchZoomContainer iframeMode resetKey={`${artifactId}:${version}`}>
             <iframe
               srcDoc={srcDoc}
               sandbox={ARTIFACT_SANDBOX}

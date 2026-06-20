@@ -426,6 +426,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               artifactId={artifactPreview.id}
               version={artifactPreview.version}
               width={docPreviewWidth}
+              onVersionChange={(version) => setArtifactPreview({ id: artifactPreview.id, version })}
               onUpdate={() =>
                 window.dispatchEvent(new CustomEvent("artifact:update", { detail: artifactPreview.id }))
               }

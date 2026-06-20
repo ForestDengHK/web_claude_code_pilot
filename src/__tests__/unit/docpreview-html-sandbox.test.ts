@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 import fs from 'fs';
 import path from 'path';
 import { ARTIFACT_SANDBOX } from '../../lib/artifact-sandbox';
@@ -16,12 +17,12 @@ describe('html sandbox invariants', () => {
   );
 
   it('generic user .html preview stays the same-origin /api/preview iframe', () => {
-    expect(docPreviewSrc).toContain('/api/preview');
-    expect(docPreviewSrc).toMatch(/sandbox="allow-scripts allow-same-origin/);
+    assert.match(docPreviewSrc, /\/api\/preview/);
+    assert.match(docPreviewSrc, /sandbox="allow-scripts allow-same-origin/);
   });
 
   it('the artifact sandbox never allows same-origin', () => {
-    expect(ARTIFACT_SANDBOX).toContain('allow-scripts');
-    expect(ARTIFACT_SANDBOX).not.toContain('allow-same-origin');
+    assert.match(ARTIFACT_SANDBOX, /allow-scripts/);
+    assert.doesNotMatch(ARTIFACT_SANDBOX, /allow-same-origin/);
   });
 });
