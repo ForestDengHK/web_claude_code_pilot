@@ -449,6 +449,7 @@ export type SSEEventType =
   | 'session_reset'      // stale SDK session cleared, retry in progress
   | 'turn_complete'      // channels: assistant turn ended (terminal stop_reason); consumed internally by streamChannels
   | 'channel_queue'      // channels: CLI enqueue/dequeue of a pushed message; consumed internally by streamChannels (wedge detection)
+  | 'artifact_published' // model published an artifact via the publish_artifact MCP tool
   | 'done';              // stream complete
 
 export interface SSEEvent {
@@ -509,6 +510,14 @@ export interface InputRequestEvent {
 export interface InputResponseRequest {
   inputRequestId: string;
   answers: Record<string, string>;
+}
+
+export interface ArtifactPublishedEvent {
+  artifactId: string;
+  version: number;
+  internalUrl: string;
+  title?: string;
+  favicon?: string;
 }
 
 // ==========================================

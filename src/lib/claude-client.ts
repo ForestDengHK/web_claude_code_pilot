@@ -789,6 +789,9 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             let tokenUsage: TokenUsage | null = null;
             let streamedTextLength = 0; // track text sent via stream_event deltas
 
+            // Correlate tool_use id -> tool name so the publish_artifact result
+            // (a tool_result, which carries only the id) can be detected below.
+            const toolNamesById = new Map<string, string>();
             for await (const message of conversation) {
               if (abortController?.signal.aborted) {
                 break;
@@ -807,6 +810,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
 
                   for (const block of assistantMsg.message.content) {
                     if (block.type === 'tool_use') {
+                      toolNamesById.set(block.id, block.name);
                       controller.enqueue(formatSSE({
                         type: 'tool_use',
                         data: JSON.stringify({
@@ -842,6 +846,29 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
                             is_error: block.is_error || false,
                           }),
                         }));
+                        // When the publish_artifact tool returns, emit a dedicated
+                        // event so the frontend can open/refresh the artifact panel.
+                        const publishedToolName = toolNamesById.get(block.tool_use_id) ?? '';
+                        if (publishedToolName.endsWith('__publish_artifact')) {
+                          try {
+                            const ap = JSON.parse(resultContent);
+                            if (ap && ap.artifact_id) {
+                              controller.enqueue(formatSSE({
+                                type: 'artifact_published',
+                                data: JSON.stringify({
+                                  artifactId: ap.artifact_id,
+                                  version: ap.version,
+                                  internalUrl: ap.internal_url,
+                                  title: ap.title,
+                                  favicon: ap.favicon,
+                                }),
+                              }));
+                            }
+                          } catch {
+                            // tool_result wasn't our JSON (e.g. an error string);
+                            // the tool_result event was already emitted — skip.
+                          }
+                        }
                       }
                     }
                   }

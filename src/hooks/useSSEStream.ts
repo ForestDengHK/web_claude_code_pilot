@@ -1,5 +1,5 @@
 import { useRef, useCallback } from 'react';
-import type { SSEEvent, TokenUsage, PermissionRequestEvent, InputRequestEvent } from '@/types';
+import type { SSEEvent, TokenUsage, PermissionRequestEvent, InputRequestEvent, ArtifactPublishedEvent } from '@/types';
 import type { Tier } from '@/lib/channels/tiers';
 
 interface ToolUseInfo {
@@ -45,6 +45,7 @@ export interface SSECallbacks {
   onImage?: (image: ImageInfo) => void;
   onRateLimit?: (info: RateLimitInfo) => void;
   onHeartbeat?: () => void;
+  onArtifactPublished?: (data: ArtifactPublishedEvent) => void;
   onCompact?: (trigger: string, preTokens: number) => void;
   /** Codex `/goal` lifecycle update. Payload mirrors `thread/goal/updated`
    *  notifications from the app-server. `null` means goal cleared. */
@@ -70,7 +71,7 @@ export interface CodexGoalState {
  * Parse a single SSE line (after stripping "data: " prefix) and dispatch
  * to the appropriate callback.  Returns the updated accumulated text.
  */
-function handleSSEEvent(
+export function handleSSEEvent(
   event: SSEEvent,
   accumulated: string,
   callbacks: SSECallbacks,
@@ -111,6 +112,15 @@ function handleSSEEvent(
         });
       } catch {
         // skip malformed tool_result data
+      }
+      return accumulated;
+    }
+
+    case 'artifact_published': {
+      try {
+        callbacks.onArtifactPublished?.(JSON.parse(event.data));
+      } catch {
+        // skip malformed artifact_published data
       }
       return accumulated;
     }
@@ -356,6 +366,7 @@ export function useSSEStream() {
         onImage: (img) => callbacksRef.current?.onImage?.(img),
         onRateLimit: (i) => callbacksRef.current?.onRateLimit?.(i),
         onHeartbeat: () => callbacksRef.current?.onHeartbeat?.(),
+        onArtifactPublished: (d) => callbacksRef.current?.onArtifactPublished?.(d),
         onCompact: (t, p) => callbacksRef.current?.onCompact?.(t, p),
         onGoalUpdate: (g) => callbacksRef.current?.onGoalUpdate?.(g),
         onTierExhausted: (f, t) => callbacksRef.current?.onTierExhausted?.(f, t),
