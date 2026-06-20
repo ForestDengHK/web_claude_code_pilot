@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { publishArtifact } from '@/lib/artifacts';
+import { defaultArtifactOutputPath } from '@/lib/artifact-paths';
+export { defaultArtifactOutputPath, formatArtifactDatePath, formatArtifactTimestampForPath } from '@/lib/artifact-paths';
 
 export interface CodexArtifactRequest {
   filePath: string;
@@ -8,17 +10,6 @@ export interface CodexArtifactRequest {
   favicon: string;
   label?: string;
   artifactId?: string;
-}
-
-export function formatArtifactDatePath(date = new Date()): string {
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-export function defaultArtifactOutputPath(date = new Date()): string {
-  return `artifacts-summary/${formatArtifactDatePath(date)}/artifact-digest.html`;
 }
 
 export function parseCodexArtifactCommand(content: string): { userContext: string; artifactId?: string } | null {

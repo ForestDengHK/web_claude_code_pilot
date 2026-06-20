@@ -56,6 +56,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { defaultArtifactOutputPath } from '@/lib/artifact-paths';
 import type { ChatStatus } from 'ai';
 import type { FileAttachment, Message } from '@/types';
 import { toast } from 'sonner';
@@ -137,15 +138,8 @@ const COMMAND_PROMPTS: Record<string, string> = {
   '/memory': 'Show the current CLAUDE.md project memory file and help me review or edit it.',
 };
 
-function formatLocalDateForPath(date = new Date()): string {
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
-
 function buildArtifactCommandPrompt(): string {
-  const outputPath = `artifacts-summary/${formatLocalDateForPath()}/artifact-digest.html`;
+  const outputPath = defaultArtifactOutputPath();
   return `Create a self-contained, interactive single-file HTML page that is a mid-altitude run digest of the work in this conversation (progressive disclosure: throughline and key decisions expanded, details in collapsible sections). Inline all CSS/JS and embed all data — NO external network requests or CDN links. Create the output directory if needed, write it to ${outputPath} in the working directory, then call the publish_artifact tool with that path, a short title, and a fitting emoji favicon.`;
 }
 

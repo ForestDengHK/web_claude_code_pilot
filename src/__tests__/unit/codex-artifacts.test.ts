@@ -36,14 +36,20 @@ describe('Codex artifact command support', () => {
     });
     assert.ok(parseCodexArtifactCommand('Write it to artifact-digest.html, then call publish_artifact.'));
     assert.equal(parseCodexArtifactCommand('/goal status'), null);
-    assert.equal(defaultArtifactOutputPath(new Date(2026, 5, 20)), 'artifacts-summary/2026-06-20/artifact-digest.html');
-    assert.match(buildCodexArtifactPrompt('tiny', 'run-digest', 'artifacts-summary/2026-06-20/artifact-digest.html'), /artifacts-summary\/2026-06-20\/artifact-digest\.html/);
+    assert.equal(
+      defaultArtifactOutputPath(new Date(2026, 5, 20, 16, 37, 42)),
+      'artifacts-summary/2026-06-20/artifact-digest-2026-06-20-163742.html',
+    );
+    assert.match(
+      buildCodexArtifactPrompt('tiny', 'run-digest', 'artifacts-summary/2026-06-20/artifact-digest-2026-06-20-163742.html'),
+      /artifacts-summary\/2026-06-20\/artifact-digest-2026-06-20-163742\.html/,
+    );
     assert.match(buildCodexArtifactPrompt('tiny', 'run-digest'), /run-digest/);
   });
 
   it('publishes the written artifact file and appends updates', async () => {
     const { publishCodexArtifactFromFile, readArtifactMtimeMs, resolveArtifactPath } = await import('../../lib/codex-artifacts');
-    const filePath = 'artifacts-summary/2026-06-20/artifact-digest.html';
+    const filePath = 'artifacts-summary/2026-06-20/artifact-digest-2026-06-20-163742.html';
     const abs = resolveArtifactPath(cwd, filePath);
 
     const missing = publishCodexArtifactFromFile({
