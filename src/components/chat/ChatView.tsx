@@ -444,6 +444,18 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     return () => window.removeEventListener('tier-switch-requested', handleTierSwitchRequested);
   }, [sessionId, setCurrentBackend]);
 
+  // "更新此 Artifact" (from the artifact panel) re-publishes a new version.
+  useEffect(() => {
+    function handleArtifactUpdate(e: Event) {
+      const id = (e as CustomEvent<string>).detail;
+      sendMessageRef.current?.(
+        `Rebuild and republish the artifact "${id}" with the latest state of the work: write the updated self-contained HTML (inline everything, no external network requests), then call publish_artifact with artifact_id="${id}".`,
+      );
+    }
+    window.addEventListener('artifact:update', handleArtifactUpdate);
+    return () => window.removeEventListener('artifact:update', handleArtifactUpdate);
+  }, []);
+
   const setCurrentAdvisorModel = useCallback((newAdvisorModel: string | null) => {
     setCurrentAdvisorModelRaw(newAdvisorModel);
     if (sessionId) {

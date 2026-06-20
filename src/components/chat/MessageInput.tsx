@@ -135,6 +135,7 @@ const COMMAND_PROMPTS: Record<string, string> = {
   '/doctor': 'Run diagnostic checks on this project. Check system health, dependencies, configuration files, and report any issues.',
   '/terminal-setup': 'Help me configure my terminal for optimal use with Claude Code. Check current setup and suggest improvements.',
   '/memory': 'Show the current CLAUDE.md project memory file and help me review or edit it.',
+  '/artifact': 'Create a self-contained, interactive single-file HTML page that is a mid-altitude run digest of the work in this conversation (progressive disclosure: throughline and key decisions expanded, details in collapsible sections). Inline all CSS/JS and embed all data — NO external network requests or CDN links. Write it to artifact-digest.html in the working directory, then call the publish_artifact tool with its path, a short title, and a fitting emoji favicon.',
 };
 
 const BUILT_IN_COMMANDS: PopoverItem[] = [
@@ -153,6 +154,7 @@ const BUILT_IN_COMMANDS: PopoverItem[] = [
   { label: 'img', value: '/img', description: 'Display an image inline (e.g. /img /tmp/cat.webp)', builtIn: true, immediate: true, acceptsArg: true, icon: Image01Icon },
   { label: 'goal', value: '/goal', description: 'Codex goal — `/goal <obj>` to start, `/goal` to view state, `/goal clear` to clear', builtIn: true, passthrough: true, icon: Target02Icon },
   { label: 'schedule', value: '/schedule', description: 'Create a scheduled task — pass text or leave blank to use this conversation', builtIn: true, immediate: true, acceptsArg: true, icon: Clock01Icon },
+  { label: 'artifact', value: '/artifact', description: 'Turn this session into a shareable interactive page', builtIn: true, icon: Target02Icon },
 ];
 
 interface ModeOption {
