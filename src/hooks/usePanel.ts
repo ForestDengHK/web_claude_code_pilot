@@ -2,7 +2,7 @@
 
 import { createContext, useContext } from "react";
 
-export type PanelContent = "files" | "tasks" | "history";
+export type PanelContent = "files" | "artifacts" | "tasks" | "history";
 
 export type PreviewViewMode = "source" | "rendered";
 

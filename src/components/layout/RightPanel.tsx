@@ -13,6 +13,7 @@ import {
 import { usePanel } from "@/hooks/usePanel";
 import { FileTree } from "@/components/project/FileTree";
 import { HistoryPanel } from "@/components/project/HistoryPanel";
+import { ArtifactListPanel } from "@/components/project/ArtifactListPanel";
 
 interface RightPanelProps {
   width?: number;
@@ -57,6 +58,12 @@ export function RightPanel({ width }: RightPanelProps) {
     setPreviewViewMode("rendered");
   }, [setPreviewFile, setPreviewLine, setPreviewViewMode]);
 
+  const tabs = [
+    { value: "files" as const, label: "Files" },
+    { value: "artifacts" as const, label: "Artifacts" },
+    { value: "history" as const, label: "History" },
+  ];
+
   if (!panelOpen) {
     return (
       <div className="hidden flex-col items-center gap-2 bg-background p-2 md:flex">
@@ -90,26 +97,19 @@ export function RightPanel({ width }: RightPanelProps) {
       {/* Mobile header with close */}
       <div className="flex h-12 shrink-0 items-center justify-between px-4 md:hidden">
         <div className="flex items-center gap-3">
-          <button
-            type="button"
-            className={cn(
-              "text-[11px] font-semibold uppercase tracking-wider transition-colors",
-              panelContent === "files" ? "text-foreground" : "text-muted-foreground"
-            )}
-            onClick={() => setPanelContent("files")}
-          >
-            Files
-          </button>
-          <button
-            type="button"
-            className={cn(
-              "text-[11px] font-semibold uppercase tracking-wider transition-colors",
-              panelContent === "history" ? "text-foreground" : "text-muted-foreground"
-            )}
-            onClick={() => setPanelContent("history")}
-          >
-            History
-          </button>
+          {tabs.map((tab) => (
+            <button
+              key={tab.value}
+              type="button"
+              className={cn(
+                "text-[11px] font-semibold uppercase tracking-wider transition-colors",
+                panelContent === tab.value ? "text-foreground" : "text-muted-foreground"
+              )}
+              onClick={() => setPanelContent(tab.value)}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
         <Button
           variant="ghost"
@@ -123,26 +123,19 @@ export function RightPanel({ width }: RightPanelProps) {
       {/* Desktop header */}
       <div className="hidden h-12 shrink-0 items-center justify-between px-4 md:flex">
         <div className="flex items-center gap-3">
-          <button
-            type="button"
-            className={cn(
-              "text-[11px] font-semibold uppercase tracking-wider transition-colors",
-              panelContent === "files" ? "text-foreground" : "text-muted-foreground"
-            )}
-            onClick={() => setPanelContent("files")}
-          >
-            Files
-          </button>
-          <button
-            type="button"
-            className={cn(
-              "text-[11px] font-semibold uppercase tracking-wider transition-colors",
-              panelContent === "history" ? "text-foreground" : "text-muted-foreground"
-            )}
-            onClick={() => setPanelContent("history")}
-          >
-            History
-          </button>
+          {tabs.map((tab) => (
+            <button
+              key={tab.value}
+              type="button"
+              className={cn(
+                "text-[11px] font-semibold uppercase tracking-wider transition-colors",
+                panelContent === tab.value ? "text-foreground" : "text-muted-foreground"
+              )}
+              onClick={() => setPanelContent(tab.value)}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -174,6 +167,7 @@ export function RightPanel({ width }: RightPanelProps) {
         {panelContent === "history" && (
           <HistoryPanel workingDirectory={workingDirectory} />
         )}
+        {panelContent === "artifacts" && <ArtifactListPanel />}
       </div>
     </aside>
   );
