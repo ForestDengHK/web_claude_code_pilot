@@ -60,31 +60,17 @@ function uniqueSlug(base: string): string {
 export function publishArtifact(input: PublishInput): { artifactId: string; version: number } {
   const db = getDb();
   const now = new Date().toISOString();
-  let artifactId = input.artifactId;
-  let version: number;
 
-  const existing = artifactId
-    ? (db.prepare('SELECT current_version FROM artifacts WHERE id = ?').get(artifactId) as
+  // Resolve the target id + version first (read-only); no DB writes yet so the
+  // two writes below can commit atomically in a single transaction.
+  const existing = input.artifactId
+    ? (db.prepare('SELECT current_version FROM artifacts WHERE id = ?').get(input.artifactId) as
         | { current_version: number }
         | undefined)
     : undefined;
-
-  if (artifactId && existing) {
-    version = existing.current_version + 1;
-    db.prepare('UPDATE artifacts SET title=?, favicon=?, current_version=?, updated_at=? WHERE id=?').run(
-      input.title,
-      input.favicon,
-      version,
-      now,
-      artifactId,
-    );
-  } else {
-    artifactId = uniqueSlug(slugify(input.title));
-    version = 1;
-    db.prepare(
-      'INSERT INTO artifacts (id, project_id, title, favicon, current_version, created_at, updated_at) VALUES (?,?,?,?,?,?,?)',
-    ).run(artifactId, input.projectId, input.title, input.favicon, version, now, now);
-  }
+  const isUpdate = Boolean(input.artifactId && existing);
+  const artifactId = isUpdate ? (input.artifactId as string) : uniqueSlug(slugify(input.title));
+  const version = isUpdate ? existing!.current_version + 1 : 1;
 
   const dir = path.join(artifactsDir(), artifactId);
   fs.mkdirSync(dir, { recursive: true });
@@ -92,9 +78,26 @@ export function publishArtifact(input: PublishInput): { artifactId: string; vers
   fs.writeFileSync(filePath, input.html, 'utf8');
   const byteSize = Buffer.byteLength(input.html, 'utf8');
 
-  db.prepare(
-    'INSERT INTO artifact_versions (artifact_id, version, path, label, byte_size, created_at) VALUES (?,?,?,?,?,?)',
-  ).run(artifactId, version, filePath, input.label ?? null, byteSize, now);
+  // Atomic: the artifacts row mutation and its version row commit together, so
+  // current_version can never be bumped without a matching artifact_versions row.
+  db.transaction(() => {
+    if (isUpdate) {
+      db.prepare('UPDATE artifacts SET title=?, favicon=?, current_version=?, updated_at=? WHERE id=?').run(
+        input.title,
+        input.favicon,
+        version,
+        now,
+        artifactId,
+      );
+    } else {
+      db.prepare(
+        'INSERT INTO artifacts (id, project_id, title, favicon, current_version, created_at, updated_at) VALUES (?,?,?,?,?,?,?)',
+      ).run(artifactId, input.projectId, input.title, input.favicon, version, now, now);
+    }
+    db.prepare(
+      'INSERT INTO artifact_versions (artifact_id, version, path, label, byte_size, created_at) VALUES (?,?,?,?,?,?)',
+    ).run(artifactId, version, filePath, input.label ?? null, byteSize, now);
+  })();
 
   return { artifactId, version };
 }
