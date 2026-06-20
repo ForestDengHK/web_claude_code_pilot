@@ -791,7 +791,7 @@ export function MessageInput({
     // and hide Claude-specific ones (compact, doctor, init, review, etc.).
     // `branch` is allowed because ChatView routes summary generation through the
     // active backend's chat endpoint using the user's current model.
-    const CODEX_SAFE_COMMANDS = new Set(['help', 'clear', 'cost', 'usage', 'branch', 'goal']);
+    const CODEX_SAFE_COMMANDS = new Set(['help', 'clear', 'cost', 'usage', 'branch', 'goal', 'artifact']);
     const commands = backend === 'codex'
       ? BUILT_IN_COMMANDS.filter(c => CODEX_SAFE_COMMANDS.has(c.label))
       : BUILT_IN_COMMANDS;
