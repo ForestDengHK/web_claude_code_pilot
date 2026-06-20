@@ -1008,6 +1008,14 @@ export function MessageInput({
             onCommand(cmd.value, cmd.acceptsArg ? userInput : undefined);
             return;
           }
+          // Codex publishes artifacts after the turn by inspecting the written
+          // HTML file, so keep the slash form compact and backend-parsed.
+          if (cmd.value === '/artifact' && backend === 'codex') {
+            const finalPrompt = userInput ? `${cmd.value} ${userInput}` : cmd.value;
+            setInputValue('');
+            onSend(finalPrompt, hasFiles ? files : undefined);
+            return;
+          }
           // Passthrough: send "/cmd <args>" verbatim. The backend parses the
           // slash command itself (e.g. Codex's /goal).
           if (cmd.passthrough) {

@@ -25,6 +25,12 @@ import os from 'os';
 import { CodexProcessManager, type CodexProcess } from '@/lib/codex-process-manager';
 import { registerPendingCodexApproval } from '@/lib/codex-approval-registry';
 import { updateCodexThreadId, getSession, getProjectAdditionalDirectories } from '@/lib/db';
+import {
+  publishCodexArtifactFromFile,
+  readArtifactMtimeMs,
+  resolveArtifactPath,
+  type CodexArtifactRequest,
+} from '@/lib/codex-artifacts';
 import { sendPushNotification } from './push-notifications';
 import type { AskForApproval } from '@/types/codex/AskForApproval';
 import type { SandboxMode } from '@/types/codex/v2/SandboxMode';
@@ -56,6 +62,8 @@ export interface CodexStreamOptions {
   summary?: string;
   /** Codex skills resolved from `$skill-name` references in the prompt. */
   skills?: CodexSkillRef[];
+  /** Codex-native artifact publishing: model writes this HTML file, backend publishes it at turn end. */
+  artifactRequest?: CodexArtifactRequest;
   /** Mirrors the existing shield toggle UI; true maps to approvalPolicy "never". */
   skipPermissions?: boolean;
   /**
@@ -701,6 +709,7 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
     effort,
     summary,
     skills,
+    artifactRequest,
     skipPermissions = false,
     approvalPolicy: explicitApprovalPolicy,
     goalObjective,
@@ -919,7 +928,7 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
         // read AND write into linked projects, matching the Claude side.
         // read-only / danger-full-access modes don't need this — both already
         // grant full read access (and danger mode bypasses sandbox entirely).
-        if (desiredSandboxPolicy?.type === 'workspaceWrite') {
+        if (desiredSandboxPolicy?.type === 'workspaceWrite' && workingDirectory) {
           const projectAddlDirs = getProjectAdditionalDirectories(workingDirectory);
           if (projectAddlDirs.length > 0) {
             desiredSandboxPolicy.writableRoots = Array.from(new Set([
@@ -983,6 +992,14 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
             useNewReasoningProtocol: false,
             tokenUsage: { baseline: null, latest: null, contextWindow: null },
             turnStartedAt: Date.now(),
+            artifact: artifactRequest && workingDirectory
+              ? {
+                  request: artifactRequest,
+                  workingDirectory,
+                  projectId: workingDirectory,
+                  beforeMtimeMs: readArtifactMtimeMs(resolveArtifactPath(workingDirectory, artifactRequest.filePath)),
+                }
+              : null,
           };
           // turnState.activeTurnId lives in the outer scope so goalEventHandler
           // can read it between turns. Read/write through the shared object.
@@ -1642,6 +1659,12 @@ interface CodexTurnCtx {
   tokenUsage: CodexTurnTokenUsage;
   /** Timestamp captured at turn/started; used to detect images written during this turn. */
   turnStartedAt: number;
+  artifact: {
+    request: CodexArtifactRequest;
+    workingDirectory: string;
+    projectId: string;
+    beforeMtimeMs: number | null;
+  } | null;
 }
 
 function defaultCodexTurnCtx(): CodexTurnCtx {
@@ -1649,6 +1672,7 @@ function defaultCodexTurnCtx(): CodexTurnCtx {
     useNewReasoningProtocol: false,
     tokenUsage: { baseline: null, latest: null, contextWindow: null },
     turnStartedAt: 0,
+    artifact: null,
   };
 }
 
@@ -1930,6 +1954,56 @@ function handleCodexMessage(
               type: 'image',
               data: JSON.stringify({ path: imgPath }),
             }));
+          }
+        }
+
+        if (turnCtx.artifact && !turnFailed && !turnInterrupted) {
+          const toolUseId = `codex-publish-artifact-${Date.now()}`;
+          controller.enqueue(formatSSE({
+            type: 'tool_use',
+            data: JSON.stringify({
+              id: toolUseId,
+              name: 'publish_artifact',
+              input: {
+                file_path: turnCtx.artifact.request.filePath,
+                title: turnCtx.artifact.request.title,
+                artifact_id: turnCtx.artifact.request.artifactId,
+              },
+            }),
+          }));
+
+          const published = publishCodexArtifactFromFile(turnCtx.artifact);
+          if (published.payload) {
+            const resultText = JSON.stringify(published.payload);
+            controller.enqueue(formatSSE({
+              type: 'tool_result',
+              data: JSON.stringify({
+                tool_use_id: toolUseId,
+                content: resultText,
+                is_error: false,
+              }),
+            }));
+            controller.enqueue(formatSSE({
+              type: 'artifact_published',
+              data: JSON.stringify({
+                artifactId: published.payload.artifact_id,
+                version: published.payload.version,
+                internalUrl: published.payload.internal_url,
+                title: published.payload.title,
+                favicon: published.payload.favicon,
+              }),
+            }));
+          } else {
+            const errorText = published.error ?? 'Codex artifact publish failed.';
+            controller.enqueue(formatSSE({
+              type: 'tool_result',
+              data: JSON.stringify({
+                tool_use_id: toolUseId,
+                content: errorText,
+                is_error: true,
+              }),
+            }));
+            controller.enqueue(formatSSE({ type: 'error', data: errorText }));
           }
         }
 

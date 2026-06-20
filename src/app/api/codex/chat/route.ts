@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { streamCodex, streamCodexGoalAction, type CodexSkillRef } from '@/lib/codex-client';
+import { buildCodexArtifactPrompt, parseCodexArtifactCommand, type CodexArtifactRequest } from '@/lib/codex-artifacts';
 import { detectBackendSwitch, buildIncrementalBridge } from '@/lib/context-bridge';
 import { addMessage, getSession, updateSessionTitle, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected } from '@/lib/db';
 import { normalizeCodexMode } from '@/lib/permission-modes';
@@ -161,6 +162,18 @@ export async function POST(request: NextRequest) {
       });
     } else {
       let effectivePrompt = prompt || content;
+      let artifactRequest: CodexArtifactRequest | undefined;
+      const artifactCommand = parseCodexArtifactCommand(trimmedContent);
+      if (artifactCommand) {
+        effectivePrompt = buildCodexArtifactPrompt(artifactCommand.userContext, artifactCommand.artifactId);
+        artifactRequest = {
+          filePath: 'artifact-digest.html',
+          title: 'Codex Artifact',
+          favicon: '📊',
+          label: artifactCommand.artifactId ? 'update' : 'initial',
+          ...(artifactCommand.artifactId ? { artifactId: artifactCommand.artifactId } : {}),
+        };
+      }
       let goalObjective: string | undefined;
       const goalMatch = trimmedContent.match(/^\/goal\s+([\s\S]+)$/);
       if (goalMatch) {
@@ -207,6 +220,7 @@ export async function POST(request: NextRequest) {
         contextBridgePrompt: undefined,
         effort: effort || undefined,
         skills: codexSkills,
+        artifactRequest,
         skipPermissions: session.skip_permissions === 1,
         approvalPolicy,
         goalObjective,

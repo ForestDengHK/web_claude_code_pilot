@@ -448,13 +448,18 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   useEffect(() => {
     function handleArtifactUpdate(e: Event) {
       const id = (e as CustomEvent<string>).detail;
+      if (!id) return;
+      if (currentBackend === 'codex') {
+        sendMessageRef.current?.(`/artifact --update ${id}`);
+        return;
+      }
       sendMessageRef.current?.(
         `Rebuild and republish the artifact "${id}" with the latest state of the work: write the updated self-contained HTML (inline everything, no external network requests), then call publish_artifact with artifact_id="${id}".`,
       );
     }
     window.addEventListener('artifact:update', handleArtifactUpdate);
     return () => window.removeEventListener('artifact:update', handleArtifactUpdate);
-  }, []);
+  }, [currentBackend]);
 
   const setCurrentAdvisorModel = useCallback((newAdvisorModel: string | null) => {
     setCurrentAdvisorModelRaw(newAdvisorModel);
