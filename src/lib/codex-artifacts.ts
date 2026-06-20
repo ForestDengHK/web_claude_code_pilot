@@ -10,6 +10,17 @@ export interface CodexArtifactRequest {
   artifactId?: string;
 }
 
+export function formatArtifactDatePath(date = new Date()): string {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+export function defaultArtifactOutputPath(date = new Date()): string {
+  return `artifacts-summary/${formatArtifactDatePath(date)}/artifact-digest.html`;
+}
+
 export function parseCodexArtifactCommand(content: string): { userContext: string; artifactId?: string } | null {
   const trimmed = content.trim();
   const slash = trimmed.match(/^\/artifact(?:\s+([\s\S]*))?$/);
@@ -36,17 +47,17 @@ export function parseCodexArtifactCommand(content: string): { userContext: strin
   return null;
 }
 
-export function buildCodexArtifactPrompt(userContext: string, artifactId?: string): string {
+export function buildCodexArtifactPrompt(userContext: string, artifactId?: string, filePath = defaultArtifactOutputPath()): string {
   const updateLine = artifactId
     ? `Update existing artifact id "${artifactId}" by writing a new version.`
     : 'Create a new artifact.';
   const contextLine = userContext ? `User context: ${userContext}` : 'User context: summarize this conversation/work at medium granularity.';
 
   return [
-    `${updateLine} Write a single self-contained interactive HTML file to artifact-digest.html in the working directory.`,
+    `${updateLine} Write a single self-contained interactive HTML file to ${filePath} in the working directory. Create the output directory first if needed.`,
     'Inline all CSS/JS/data. Do not use external scripts, CDNs, fonts, fetches, or network resources.',
     'Default content shape: mid-altitude run digest with the throughline and key decisions visible, details in collapsible sections.',
-    'Include a useful <title>. When the file is written, finish normally; CodePilot will publish artifact-digest.html automatically.',
+    `Include a useful <title>. When the file is written, finish normally; CodePilot will publish ${filePath} automatically.`,
     contextLine,
   ].join('\n');
 }

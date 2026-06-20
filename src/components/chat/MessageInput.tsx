@@ -135,8 +135,19 @@ const COMMAND_PROMPTS: Record<string, string> = {
   '/doctor': 'Run diagnostic checks on this project. Check system health, dependencies, configuration files, and report any issues.',
   '/terminal-setup': 'Help me configure my terminal for optimal use with Claude Code. Check current setup and suggest improvements.',
   '/memory': 'Show the current CLAUDE.md project memory file and help me review or edit it.',
-  '/artifact': 'Create a self-contained, interactive single-file HTML page that is a mid-altitude run digest of the work in this conversation (progressive disclosure: throughline and key decisions expanded, details in collapsible sections). Inline all CSS/JS and embed all data — NO external network requests or CDN links. Write it to artifact-digest.html in the working directory, then call the publish_artifact tool with its path, a short title, and a fitting emoji favicon.',
 };
+
+function formatLocalDateForPath(date = new Date()): string {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function buildArtifactCommandPrompt(): string {
+  const outputPath = `artifacts-summary/${formatLocalDateForPath()}/artifact-digest.html`;
+  return `Create a self-contained, interactive single-file HTML page that is a mid-altitude run digest of the work in this conversation (progressive disclosure: throughline and key decisions expanded, details in collapsible sections). Inline all CSS/JS and embed all data — NO external network requests or CDN links. Create the output directory if needed, write it to ${outputPath} in the working directory, then call the publish_artifact tool with that path, a short title, and a fitting emoji favicon.`;
+}
 
 const BUILT_IN_COMMANDS: PopoverItem[] = [
   { label: 'help', value: '/help', description: 'Show available commands and tips', builtIn: true, immediate: true, icon: HelpCircleIcon },
@@ -1025,7 +1036,9 @@ export function MessageInput({
             return;
           }
           // Non-immediate built-in: expand with COMMAND_PROMPTS
-          const promptTemplate = COMMAND_PROMPTS[cmd.value] || '';
+          const promptTemplate = cmd.value === '/artifact'
+            ? buildArtifactCommandPrompt()
+            : (COMMAND_PROMPTS[cmd.value] || '');
           const finalPrompt = userInput
             ? `${promptTemplate}\n\nUser context: ${userInput}`
             : promptTemplate || cmd.value;

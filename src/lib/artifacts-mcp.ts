@@ -112,7 +112,7 @@ Other shapes (dashboard you can filter/sort, PR walkthrough, checklist) are fine
 - Interactivity via inline \`<script>\` is allowed (filter/sort/collapse).
 
 ## How to publish
-1. Write the file into the working directory (e.g. \`artifact-digest.html\`).
+1. Write the file into a dated summary directory in the working directory, e.g. \`artifacts-summary/YYYY-MM-DD/artifact-digest.html\`. Create the directory first if needed.
 2. Call \`publish_artifact({ file_path, title, favicon })\`.
 3. To update an artifact later, call again with its \`artifact_id\` — that adds a new version at the same URL.
 `;

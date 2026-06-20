@@ -25,7 +25,7 @@ afterEach(async () => {
 
 describe('Codex artifact command support', () => {
   it('parses new and update slash commands', async () => {
-    const { parseCodexArtifactCommand, buildCodexArtifactPrompt } = await import('../../lib/codex-artifacts');
+    const { parseCodexArtifactCommand, buildCodexArtifactPrompt, defaultArtifactOutputPath } = await import('../../lib/codex-artifacts');
 
     assert.deepEqual(parseCodexArtifactCommand('/artifact small digest'), {
       userContext: 'small digest',
@@ -36,13 +36,14 @@ describe('Codex artifact command support', () => {
     });
     assert.ok(parseCodexArtifactCommand('Write it to artifact-digest.html, then call publish_artifact.'));
     assert.equal(parseCodexArtifactCommand('/goal status'), null);
-    assert.match(buildCodexArtifactPrompt('tiny', 'run-digest'), /artifact-digest\.html/);
+    assert.equal(defaultArtifactOutputPath(new Date(2026, 5, 20)), 'artifacts-summary/2026-06-20/artifact-digest.html');
+    assert.match(buildCodexArtifactPrompt('tiny', 'run-digest', 'artifacts-summary/2026-06-20/artifact-digest.html'), /artifacts-summary\/2026-06-20\/artifact-digest\.html/);
     assert.match(buildCodexArtifactPrompt('tiny', 'run-digest'), /run-digest/);
   });
 
   it('publishes the written artifact file and appends updates', async () => {
     const { publishCodexArtifactFromFile, readArtifactMtimeMs, resolveArtifactPath } = await import('../../lib/codex-artifacts');
-    const filePath = 'artifact-digest.html';
+    const filePath = 'artifacts-summary/2026-06-20/artifact-digest.html';
     const abs = resolveArtifactPath(cwd, filePath);
 
     const missing = publishCodexArtifactFromFile({
@@ -53,6 +54,7 @@ describe('Codex artifact command support', () => {
     });
     assert.match(missing.error ?? '', /was not written/);
 
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, '<!doctype html><title>Codex Digest</title><p>v1</p>');
     const first = publishCodexArtifactFromFile({
       request: { filePath, title: 'Digest', favicon: '📊' },

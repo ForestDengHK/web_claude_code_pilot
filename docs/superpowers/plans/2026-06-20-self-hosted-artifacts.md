@@ -498,7 +498,7 @@ Other shapes (dashboard you can filter/sort, PR walkthrough, checklist) are fine
 - Interactivity via inline \`<script>\` is allowed (filter/sort/collapse).
 
 ## How to publish
-1. Write the file into the working directory (e.g. \`artifact-digest.html\`).
+1. Write the file into a dated summary directory in the working directory (e.g. \`artifacts-summary/YYYY-MM-DD/artifact-digest.html\`).
 2. Call \`publish_artifact({ file_path, title, favicon })\`.
 3. To update an artifact later, call again with its \`artifact_id\` — that adds a new version at the same URL.
 `;
@@ -917,7 +917,7 @@ git commit -m "feat(artifacts): open hardened artifact panel on publish"
 - [ ] **Step 1: Add the command + expansion prompt** in `src/components/chat/MessageInput.tsx`. In `COMMAND_PROMPTS` (~line 133) add:
 
 ```ts
-  '/artifact': 'Create a self-contained, interactive single-file HTML page that is a mid-altitude run digest of the work in this conversation (progressive disclosure: throughline and key decisions expanded, details in collapsible sections). Inline all CSS/JS and embed all data — NO external network requests or CDN links. Write it to artifact-digest.html in the working directory, then call the publish_artifact tool with its path, a short title, and a fitting emoji favicon.',
+  '/artifact': 'Create a self-contained, interactive single-file HTML page that is a mid-altitude run digest of the work in this conversation (progressive disclosure: throughline and key decisions expanded, details in collapsible sections). Inline all CSS/JS and embed all data — NO external network requests or CDN links. Write it to artifacts-summary/YYYY-MM-DD/artifact-digest.html in the working directory, then call the publish_artifact tool with its path, a short title, and a fitting emoji favicon.',
 ```
 
 In `BUILT_IN_COMMANDS` (~line 155) add a **non-immediate** entry (so it expands via `COMMAND_PROMPTS` and is sent to the model — see the dispatch at `MessageInput.tsx:1017-1024`):

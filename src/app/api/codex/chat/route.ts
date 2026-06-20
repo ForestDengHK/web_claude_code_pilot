@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { streamCodex, streamCodexGoalAction, type CodexSkillRef } from '@/lib/codex-client';
-import { buildCodexArtifactPrompt, parseCodexArtifactCommand, type CodexArtifactRequest } from '@/lib/codex-artifacts';
+import { buildCodexArtifactPrompt, defaultArtifactOutputPath, parseCodexArtifactCommand, type CodexArtifactRequest } from '@/lib/codex-artifacts';
 import { detectBackendSwitch, buildIncrementalBridge } from '@/lib/context-bridge';
 import { addMessage, getSession, updateSessionTitle, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected } from '@/lib/db';
 import { normalizeCodexMode } from '@/lib/permission-modes';
@@ -165,9 +165,10 @@ export async function POST(request: NextRequest) {
       let artifactRequest: CodexArtifactRequest | undefined;
       const artifactCommand = parseCodexArtifactCommand(trimmedContent);
       if (artifactCommand) {
-        effectivePrompt = buildCodexArtifactPrompt(artifactCommand.userContext, artifactCommand.artifactId);
+        const filePath = defaultArtifactOutputPath();
+        effectivePrompt = buildCodexArtifactPrompt(artifactCommand.userContext, artifactCommand.artifactId, filePath);
         artifactRequest = {
-          filePath: 'artifact-digest.html',
+          filePath,
           title: 'Codex Artifact',
           favicon: '📊',
           label: artifactCommand.artifactId ? 'update' : 'initial',
