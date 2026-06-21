@@ -5,6 +5,15 @@ import { tailTranscript, transcriptPath } from './channels/transcript-tailer';
 import { subscribeChannelEvents } from './channels/event-bus';
 import { resolveFinalReplyText } from './channels/reply-dedup';
 import { loadEnabledPluginPaths, loadMergedMcpServers } from './claude-config-loader';
+// The dashboard "model writes a JSON entry file → server scans + publishes after
+// the turn" helpers are backend-neutral (Codex and T1 both lack the in-process
+// SDK MCP tool). They live in codex-artifacts.ts; alias to neutral names here.
+import {
+  publishCodexDashboardFromFile as publishDashboardEntryFromFile,
+  readArtifactMtimeMs,
+  resolveArtifactPath,
+  type CodexDashboardRequest as DashboardEntryRequest,
+} from './codex-artifacts';
 import type { SSEEvent } from '@/types';
 
 function sse(event: SSEEvent): string {
@@ -75,6 +84,12 @@ export interface ChannelsStreamOptions {
    * STALL_TIMEOUT_MS of transcript silence elapses.
    */
   abortSignal?: AbortSignal;
+  /**
+   * Codex-style dashboard update for T1: the model writes this JSON entry file
+   * during the turn, and on a clean turn-end the server reads it and appends it
+   * to the project dashboard (T1 has no in-process SDK MCP tool).
+   */
+  dashboardRequest?: DashboardEntryRequest;
 }
 
 // Absolute per-turn cap. Agentic T1 turns can legitimately run long (many
@@ -184,6 +199,11 @@ function runChannelsTurn(opts: ChannelsStreamOptions): ReadableStream<string> {
       void (async () => {
         try {
           const db = getDbSession(opts.sessionId);
+          // Snapshot the dashboard entry file's mtime BEFORE the turn so the
+          // post-turn scan can tell whether the model actually (re)wrote it.
+          const dashboardBeforeMtimeMs = opts.dashboardRequest
+            ? readArtifactMtimeMs(resolveArtifactPath(opts.workingDirectory, opts.dashboardRequest.filePath))
+            : null;
           // Prefer channel_session_id; fall back to sdk_session_id when T1 is
           // entered for the first time after T2 has already been logging turns
           // (channel_session_id is empty in that case). Both backends write
@@ -443,10 +463,52 @@ function runChannelsTurn(opts: ChannelsStreamOptions): ReadableStream<string> {
           // was only working-notes / narration it returns replyText so the
           // answer isn't dropped (the recurring truncation bug). See
           // reply-dedup.ts for the full rationale.
+          // On a clean turn-end, scan the dashboard entry JSON the model was
+          // asked to write and append it to the project dashboard — the T1
+          // parallel of the SDK `update_project_dashboard` tool. Best-effort:
+          // a missing/invalid file (model didn't write it) is logged, NOT
+          // surfaced as a turn error, so the model's text answer still stands.
+          const maybePublishDashboard = () => {
+            if (!opts.dashboardRequest) return;
+            try {
+              const res = publishDashboardEntryFromFile({
+                request: opts.dashboardRequest,
+                workingDirectory: opts.workingDirectory,
+                projectId: opts.workingDirectory,
+                beforeMtimeMs: dashboardBeforeMtimeMs,
+              });
+              if (!res.payload) {
+                console.warn(`[channels:${opts.sessionId}] dashboard update skipped: ${res.error}`);
+                return;
+              }
+              const toolUseId = `channels-update-dashboard-${Date.now()}`;
+              emit({ type: 'tool_use', data: JSON.stringify({
+                id: toolUseId,
+                name: 'update_project_dashboard',
+                input: { file_path: opts.dashboardRequest.filePath },
+              }) });
+              emit({ type: 'tool_result', data: JSON.stringify({
+                tool_use_id: toolUseId,
+                content: JSON.stringify(res.payload),
+                is_error: false,
+              }) });
+              emit({ type: 'artifact_published', data: JSON.stringify({
+                artifactId: res.payload.artifact_id,
+                version: res.payload.version,
+                internalUrl: res.payload.internal_url,
+                title: res.payload.title,
+                favicon: res.payload.favicon,
+              }) });
+            } catch (err) {
+              console.error(`[channels:${opts.sessionId}] dashboard publish threw:`, err);
+            }
+          };
+
           const finishTurn = () => {
             if (done) return;
             done = true;
             cleanup();
+            maybePublishDashboard();
             finish(
               resolveFinalReplyText(streamedText, replyText),
               sawUsage ? turnUsage : undefined,

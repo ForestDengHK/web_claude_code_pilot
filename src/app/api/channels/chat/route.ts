@@ -1,5 +1,11 @@
 import { NextRequest } from 'next/server';
 import { streamChannels } from '@/lib/channels-client';
+import {
+  parseCodexDashboardCommand as parseDashboardCommand,
+  buildCodexDashboardPrompt as buildDashboardEntryPrompt,
+  defaultDashboardEntryPath,
+  type CodexDashboardRequest as DashboardEntryRequest,
+} from '@/lib/codex-artifacts';
 import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected } from '@/lib/db';
 import { sendPushNotification } from '@/lib/push-notifications';
 import { registerAbort, unregisterAbort } from '@/lib/abort-registry';
@@ -147,6 +153,16 @@ export async function POST(request: NextRequest) {
     // Use `prompt` (skill-injected content) if provided, otherwise plain `content`.
     let effectivePrompt = prompt || content;
 
+    // `/dashboard`: T1 has no in-process MCP tool, so (like Codex) we ask the
+    // model to write ONE JSON entry file and scan + publish it after the turn.
+    let dashboardRequest: DashboardEntryRequest | undefined;
+    const dashboardCommand = parseDashboardCommand(content.trim());
+    if (dashboardCommand) {
+      const filePath = defaultDashboardEntryPath();
+      effectivePrompt = buildDashboardEntryPrompt(dashboardCommand.userContext, filePath);
+      dashboardRequest = { filePath };
+    }
+
     // Inject branch summary as context prefix on the first message of a branched session.
     // Only inject when there is no sdk_session_id yet (first turn — subsequent turns use resume).
     if (session.branch_summary && !session.sdk_session_id) {
@@ -191,6 +207,7 @@ export async function POST(request: NextRequest) {
       fastMode,
       skipPermissions: session.skip_permissions === 1,
       abortSignal: abortController.signal,
+      dashboardRequest,
     });
 
     // Tee the stream: one for client, one for collecting the response
