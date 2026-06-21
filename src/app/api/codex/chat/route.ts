@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import { streamCodex, streamCodexGoalAction, type CodexSkillRef } from '@/lib/codex-client';
-import { buildCodexArtifactPrompt, defaultArtifactOutputPath, parseCodexArtifactCommand, type CodexArtifactRequest } from '@/lib/codex-artifacts';
+import { buildCodexArtifactPrompt, defaultArtifactOutputPath, parseCodexArtifactCommand, buildCodexDashboardPrompt, defaultDashboardEntryPath, parseCodexDashboardCommand, type CodexArtifactRequest, type CodexDashboardRequest } from '@/lib/codex-artifacts';
 import { detectBackendSwitch, buildIncrementalBridge } from '@/lib/context-bridge';
 import { addMessage, getSession, updateSessionTitle, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected } from '@/lib/db';
 import { normalizeCodexMode } from '@/lib/permission-modes';
@@ -163,7 +163,9 @@ export async function POST(request: NextRequest) {
     } else {
       let effectivePrompt = prompt || content;
       let artifactRequest: CodexArtifactRequest | undefined;
+      let dashboardRequest: CodexDashboardRequest | undefined;
       const artifactCommand = parseCodexArtifactCommand(trimmedContent);
+      const dashboardCommand = artifactCommand ? null : parseCodexDashboardCommand(trimmedContent);
       if (artifactCommand) {
         const filePath = defaultArtifactOutputPath();
         effectivePrompt = buildCodexArtifactPrompt(artifactCommand.userContext, artifactCommand.artifactId, filePath);
@@ -174,6 +176,10 @@ export async function POST(request: NextRequest) {
           label: artifactCommand.artifactId ? 'update' : 'initial',
           ...(artifactCommand.artifactId ? { artifactId: artifactCommand.artifactId } : {}),
         };
+      } else if (dashboardCommand) {
+        const filePath = defaultDashboardEntryPath();
+        effectivePrompt = buildCodexDashboardPrompt(dashboardCommand.userContext, filePath);
+        dashboardRequest = { filePath };
       }
       let goalObjective: string | undefined;
       const goalMatch = trimmedContent.match(/^\/goal\s+([\s\S]+)$/);
@@ -222,6 +228,7 @@ export async function POST(request: NextRequest) {
         effort: effort || undefined,
         skills: codexSkills,
         artifactRequest,
+        dashboardRequest,
         skipPermissions: session.skip_permissions === 1,
         approvalPolicy,
         goalObjective,

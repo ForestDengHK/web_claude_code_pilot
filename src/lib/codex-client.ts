@@ -27,9 +27,11 @@ import { registerPendingCodexApproval } from '@/lib/codex-approval-registry';
 import { updateCodexThreadId, getSession, getProjectAdditionalDirectories } from '@/lib/db';
 import {
   publishCodexArtifactFromFile,
+  publishCodexDashboardFromFile,
   readArtifactMtimeMs,
   resolveArtifactPath,
   type CodexArtifactRequest,
+  type CodexDashboardRequest,
 } from '@/lib/codex-artifacts';
 import { sendPushNotification } from './push-notifications';
 import type { AskForApproval } from '@/types/codex/AskForApproval';
@@ -64,6 +66,8 @@ export interface CodexStreamOptions {
   skills?: CodexSkillRef[];
   /** Codex-native artifact publishing: model writes this HTML file, backend publishes it at turn end. */
   artifactRequest?: CodexArtifactRequest;
+  /** Codex-native dashboard update: model writes this JSON entry file, backend appends it at turn end. */
+  dashboardRequest?: CodexDashboardRequest;
   /** Mirrors the existing shield toggle UI; true maps to approvalPolicy "never". */
   skipPermissions?: boolean;
   /**
@@ -710,6 +714,7 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
     summary,
     skills,
     artifactRequest,
+    dashboardRequest,
     skipPermissions = false,
     approvalPolicy: explicitApprovalPolicy,
     goalObjective,
@@ -998,6 +1003,14 @@ export function streamCodex(options: CodexStreamOptions): ReadableStream<string>
                   workingDirectory,
                   projectId: workingDirectory,
                   beforeMtimeMs: readArtifactMtimeMs(resolveArtifactPath(workingDirectory, artifactRequest.filePath)),
+                }
+              : null,
+            dashboard: dashboardRequest && workingDirectory
+              ? {
+                  request: dashboardRequest,
+                  workingDirectory,
+                  projectId: workingDirectory,
+                  beforeMtimeMs: readArtifactMtimeMs(resolveArtifactPath(workingDirectory, dashboardRequest.filePath)),
                 }
               : null,
           };
@@ -1665,6 +1678,12 @@ interface CodexTurnCtx {
     projectId: string;
     beforeMtimeMs: number | null;
   } | null;
+  dashboard: {
+    request: CodexDashboardRequest;
+    workingDirectory: string;
+    projectId: string;
+    beforeMtimeMs: number | null;
+  } | null;
 }
 
 function defaultCodexTurnCtx(): CodexTurnCtx {
@@ -1673,6 +1692,7 @@ function defaultCodexTurnCtx(): CodexTurnCtx {
     tokenUsage: { baseline: null, latest: null, contextWindow: null },
     turnStartedAt: 0,
     artifact: null,
+    dashboard: null,
   };
 }
 
@@ -1995,6 +2015,51 @@ function handleCodexMessage(
             }));
           } else {
             const errorText = published.error ?? 'Codex artifact publish failed.';
+            controller.enqueue(formatSSE({
+              type: 'tool_result',
+              data: JSON.stringify({
+                tool_use_id: toolUseId,
+                content: errorText,
+                is_error: true,
+              }),
+            }));
+            controller.enqueue(formatSSE({ type: 'error', data: errorText }));
+          }
+        }
+
+        if (turnCtx.dashboard && !turnFailed && !turnInterrupted) {
+          const toolUseId = `codex-update-dashboard-${Date.now()}`;
+          controller.enqueue(formatSSE({
+            type: 'tool_use',
+            data: JSON.stringify({
+              id: toolUseId,
+              name: 'update_project_dashboard',
+              input: { file_path: turnCtx.dashboard.request.filePath },
+            }),
+          }));
+
+          const published = publishCodexDashboardFromFile(turnCtx.dashboard);
+          if (published.payload) {
+            controller.enqueue(formatSSE({
+              type: 'tool_result',
+              data: JSON.stringify({
+                tool_use_id: toolUseId,
+                content: JSON.stringify(published.payload),
+                is_error: false,
+              }),
+            }));
+            controller.enqueue(formatSSE({
+              type: 'artifact_published',
+              data: JSON.stringify({
+                artifactId: published.payload.artifact_id,
+                version: published.payload.version,
+                internalUrl: published.payload.internal_url,
+                title: published.payload.title,
+                favicon: published.payload.favicon,
+              }),
+            }));
+          } else {
+            const errorText = published.error ?? 'Codex dashboard update failed.';
             controller.enqueue(formatSSE({
               type: 'tool_result',
               data: JSON.stringify({
