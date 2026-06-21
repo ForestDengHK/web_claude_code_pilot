@@ -447,6 +447,7 @@ export type SSEEventType =
   | 'tier_exhausted'    // tier hit usage limit; client should prompt to switch
   | 'heartbeat'          // keepalive signal for connection health
   | 'session_reset'      // stale SDK session cleared, retry in progress
+  | 'auth_error'         // channels: expired/invalid OAuth token; consumed internally by streamChannels (re-mint + retry)
   | 'turn_complete'      // channels: assistant turn ended (terminal stop_reason); consumed internally by streamChannels
   | 'channel_queue'      // channels: CLI enqueue/dequeue of a pushed message; consumed internally by streamChannels (wedge detection)
   | 'artifact_published' // model published an artifact via the publish_artifact MCP tool

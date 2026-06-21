@@ -32,13 +32,16 @@ async function collect(stream: ReadableStream<string>): Promise<SSEEvent[]> {
 
 const baseOpts = { sessionId: 's1', prompt: 'hi', workingDirectory: '/tmp', internalUrl: 'http://x' } as unknown as ChannelsStreamOptions;
 
+/** No-op warmup so unit tests never spawn a real `claude -p`. */
+const noWarmup = async () => {};
+
 test('auth_error on first attempt → swallowed, session_reset emitted, retry succeeds', async () => {
   const scripts = [
     [{ type: 'auth_error', data: 'Please run /login · API Error: 401' }, { type: 'done', data: '' }],
     [{ type: 'text', data: 'recovered answer' }, { type: 'done', data: '' }],
   ] as SSEEvent[][];
   let calls = 0;
-  const events = await collect(streamChannels(baseOpts, () => fakeTurn(scripts[calls++])));
+  const events = await collect(streamChannels(baseOpts, () => fakeTurn(scripts[calls++]), noWarmup));
 
   assert.equal(calls, 2, 'turn runner called twice (original + retry)');
   assert.ok(!events.some((e) => e.type === 'auth_error'), 'auth_error must never reach the client');
@@ -46,10 +49,40 @@ test('auth_error on first attempt → swallowed, session_reset emitted, retry su
   assert.ok(events.some((e) => e.type === 'text' && e.data === 'recovered answer'), 'retry answer forwarded');
 });
 
+test('auth_error → warmup re-mints the token BETWEEN the failed turn and the retry', async () => {
+  const scripts = [
+    [{ type: 'auth_error', data: 'Please run /login · API Error: 401' }, { type: 'done', data: '' }],
+    [{ type: 'text', data: 'recovered' }, { type: 'done', data: '' }],
+  ] as SSEEvent[][];
+  const order: string[] = [];
+  let calls = 0;
+  const runTurn = () => { order.push(`turn${calls}`); return fakeTurn(scripts[calls++]); };
+  const warmup = async () => { order.push('warmup'); };
+  await collect(streamChannels(baseOpts, runTurn, warmup));
+  assert.deepEqual(order, ['turn0', 'warmup', 'turn1'],
+    'warmup must run after the 401 and before the respawned retry, so the retry reads a fresh token');
+});
+
+test('happy path → warmup is NOT called', async () => {
+  let warmups = 0;
+  const script = [{ type: 'text', data: 'hi' }, { type: 'done', data: '' }] as SSEEvent[];
+  await collect(streamChannels(baseOpts, () => fakeTurn(script), async () => { warmups++; }));
+  assert.equal(warmups, 0, 'no warmup when there is no auth failure');
+});
+
+test('auth_error but not retryable (already aborted) → warmup is NOT called', async () => {
+  const ac = new AbortController(); ac.abort();
+  const opts = { ...baseOpts, abortSignal: ac.signal } as ChannelsStreamOptions;
+  let warmups = 0;
+  const auth = [{ type: 'auth_error', data: '401' }, { type: 'done', data: '' }] as SSEEvent[];
+  await collect(streamChannels(opts, () => fakeTurn(auth), async () => { warmups++; }));
+  assert.equal(warmups, 0, 'no warmup when the retry is not attempted');
+});
+
 test('auth_error on BOTH attempts → surfaced as a normal error (no infinite loop)', async () => {
   const auth = [{ type: 'auth_error', data: 'Please run /login · API Error: 401' }, { type: 'done', data: '' }] as SSEEvent[];
   let calls = 0;
-  const events = await collect(streamChannels(baseOpts, () => { calls++; return fakeTurn(auth); }));
+  const events = await collect(streamChannels(baseOpts, () => { calls++; return fakeTurn(auth); }, noWarmup));
 
   assert.equal(calls, 2, 'capped at one retry');
   assert.ok(!events.some((e) => e.type === 'auth_error'), 'auth_error never leaks');

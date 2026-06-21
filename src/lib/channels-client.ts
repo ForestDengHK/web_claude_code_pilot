@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { getSession as getDbSession, updateChannelSessionId } from './db';
+import { findClaudeBinary } from './platform';
 import { ensureSession, killSession } from './channels/session-manager';
 import { tailTranscript, transcriptPath } from './channels/transcript-tailer';
 import { subscribeChannelEvents } from './channels/event-bus';
@@ -672,18 +674,54 @@ function runChannelsTurn(opts: ChannelsStreamOptions): ReadableStream<string> {
 }
 
 /**
+ * Force the macOS Keychain OAuth access token to re-mint before a channels
+ * retry, by running a tiny headless `claude -p` with `CLAUDE_CODE_OAUTH_TOKEN`
+ * **removed** from its env.
+ *
+ * Why remove the env token: a `claude` that has `CLAUDE_CODE_OAUTH_TOKEN` set
+ * uses it directly as a bearer and never touches the Keychain — so it would NOT
+ * refresh the stale Keychain access token. The channels interactive PTY, by
+ * contrast, relies on that short-lived (~8h) Keychain token; stripping the env
+ * token forces this warmup down the Keychain path, where an expired access token
+ * is re-minted from the refresh token (verified: an env-token-less `claude -p`
+ * rewrites the Keychain `expiresAt` ~8h forward).
+ *
+ * This closes the gap behind the residual 401s: respawning the channels turn
+ * alone was not enough — a freshly spawned interactive `claude` could still 401
+ * (observed: two 401s ~10s apart, while a separate process succeeded ~78s
+ * later, i.e. once the token had re-minted). We now actively re-mint here, then
+ * retry. Best-effort and bounded by a timeout; never throws (a failed warmup
+ * just means the retry proceeds as before and may surface "Please run /login").
+ */
+function refreshKeychainAuth(timeoutMs = 20_000): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => { if (!settled) { settled = true; resolve(); } };
+    try {
+      const bin = findClaudeBinary();
+      if (!bin) return done();
+      const env: NodeJS.ProcessEnv = { ...process.env };
+      delete env.CLAUDE_CODE_OAUTH_TOKEN;
+      // `-p` is non-interactive (prints and exits); the prompt only needs to
+      // trigger one authenticated API call so the CLI notices the expired access
+      // token and refreshes it. Output is discarded.
+      execFile(bin, ['-p', 'ok'], { env, timeout: timeoutMs, maxBuffer: 1 << 20 }, () => done());
+    } catch { done(); }
+  });
+}
+
+/**
  * Public channels stream: runs a turn and, on an expired/invalid auth token,
- * transparently respawns the session and retries once.
+ * re-mints the OAuth token and transparently retries once.
  *
  * Why this exists: a long-lived T1 `claude` PTY caches the OAuth access token at
  * spawn and does NOT refresh it across the token's ~8h boundary — so after that
  * boundary every send 401s ("Please run /login") until something re-mints the
- * token. A freshly spawned `claude` always re-mints, which is exactly why the
- * manual workaround ("open a terminal, run claude") fixed it. This wrapper
- * automates that: `runChannelsTurn` kills the stale PTY and ends the turn with a
- * dedicated `auth_error` event; we swallow it, tell the collector to reset, and
- * re-run the turn — `ensureSession` then spawns a fresh `claude` with a valid
- * token. Capped at one retry: if it still fails the token is genuinely
+ * token. This wrapper automates the recovery: `runChannelsTurn` kills the stale
+ * PTY and ends the turn with a dedicated `auth_error` event; we swallow it, tell
+ * the collector to reset, run `refreshKeychainAuth` to re-mint the token, then
+ * re-run the turn — `ensureSession` spawns a fresh `claude` that now reads a
+ * valid token. Capped at one retry: if it still fails the token is genuinely
  * invalid/revoked, so we surface "Please run /login" rather than loop.
  */
 export function streamChannels(
@@ -692,6 +730,9 @@ export function streamChannels(
   // PTY-backed turn machine; tests inject a fake to exercise the retry plumbing
   // without spawning `claude`.
   runTurn: (o: ChannelsStreamOptions) => ReadableStream<string> = runChannelsTurn,
+  // Seam for tests: how to re-mint auth between attempts. Production re-mints the
+  // Keychain token via a headless `claude -p`; tests inject a no-op (or a spy).
+  warmupAuth: () => Promise<void> = refreshKeychainAuth,
 ): ReadableStream<string> {
   const MAX_ATTEMPTS = 2; // original turn + one auth-refresh retry
   // Downstream-teardown flag. The route tees this stream; if every branch goes
@@ -748,8 +789,13 @@ export function streamChannels(
             && !forwardedContent
             && !opts.abortSignal?.aborted;
           if (canRetry) {
-            // Discard any partial draft + reset the recovery buffer, then retry.
+            // Discard any partial draft + reset the recovery buffer.
             safeEnqueue(sse({ type: 'session_reset', data: 'Authentication token refreshed — retrying…' }), controller);
+            // Actively re-mint the token before respawning. Respawn alone is not
+            // enough: a freshly spawned interactive `claude` can still 401 until
+            // the stale Keychain access token is re-minted, so we trigger that
+            // re-mint here and only then loop back to run the turn again.
+            await warmupAuth();
             continue;
           }
           // Out of retries (or unsafe to retry): surface it like any failed turn
