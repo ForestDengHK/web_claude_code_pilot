@@ -53,6 +53,9 @@ next-env.d.ts
 # user uploads (runtime data)
 .codepilot-uploads/
 
+# generated artifact digests / dashboard entry files (runtime output)
+/artifacts-summary/
+
 # local database (root-level stray)
 .codepilot.db
 
