@@ -56,6 +56,7 @@ function writeExcalidrawFile(p, elements) {
   fs.writeFileSync(p, JSON.stringify({ type: 'excalidraw', version: 2, source: 'codepilot', elements, appState: {} }, null, 2));
 }
 function readElements(dir, id, engine) {
+  safeId(id); // self-defending: future (Phase 1) callers may reach here without going through readMeta
   const raw = fs.readFileSync(dataPath(dir, id, engine), 'utf8');
   if (engine === 'excalidraw') return JSON.parse(raw).elements ?? [];
   return []; // drawio/mermaid: ops not supported (Phase 2); summary handled separately
@@ -79,6 +80,10 @@ export function readDiagram(dir, id) {
   const meta = readMeta(dir, id);
   if (meta.engine === 'excalidraw') {
     const elements = readElements(dir, id, meta.engine);
+    // NOTE: the summary abbreviates Excalidraw-native `width`/`height` to `w`/`h`.
+    // Phase 1's adapter/translation layer MUST map `w`/`h` back to `width`/`height`
+    // when turning model `ops.update` into element patches — otherwise the shallow
+    // merge in applyOps would add orphan `w`/`h` keys instead of resizing the element.
     const summary = elements.map((e) => ({ id: e.id, type: e.type, text: e.text, x: e.x, y: e.y, w: e.width, h: e.height }));
     return { id: meta.id, engine: meta.engine, version: meta.version, elements: summary };
   }

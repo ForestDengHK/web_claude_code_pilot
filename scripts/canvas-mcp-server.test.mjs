@@ -41,6 +41,10 @@ test('engineToExt maps the three engines', () => {
   assert.equal(engineToExt('mermaid'), 'mmd');
 });
 
+test('engineToExt throws on unknown engine', () => {
+  assert.throws(() => engineToExt('nope'), /unknown engine/);
+});
+
 test('file round-trip: create -> read -> update -> list', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'canvas-poc-'));
   const { id, version } = createDiagram(dir, {
