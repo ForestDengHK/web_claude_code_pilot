@@ -550,6 +550,31 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           ];
         }
 
+        // Inject the file-based Diagram Canvas MCP server (stdio subprocess) unless
+        // disabled. Claude can list/read/create/update Excalidraw diagrams; the file
+        // is the source of truth and the CanvasPanel live-reloads via fs.watch SSE.
+        if (getSetting('enable_canvas') !== 'false') {
+          const canvasServerPath = path.join(process.cwd(), 'scripts', 'canvas-mcp-server.mjs');
+          const diagramsDir = path.join(process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.codepilot'), 'diagrams');
+          const canvasMcp: McpStdioServerConfig = {
+            type: 'stdio',
+            command: process.execPath,
+            args: [canvasServerPath],
+            env: { ...process.env, CODEPILOT_DIAGRAMS_DIR: diagramsDir } as Record<string, string>,
+          };
+          queryOptions.mcpServers = {
+            ...(queryOptions.mcpServers ?? {}),
+            'codepilot-canvas': canvasMcp,
+          };
+          queryOptions.allowedTools = [
+            ...(queryOptions.allowedTools ?? []),
+            'mcp__codepilot-canvas__canvas_list',
+            'mcp__codepilot-canvas__canvas_read',
+            'mcp__codepilot-canvas__canvas_create',
+            'mcp__codepilot-canvas__canvas_update',
+          ];
+        }
+
         // Resume session if we have an SDK session ID from a previous conversation turn
         if (sdkSessionId) {
           queryOptions.resume = sdkSessionId;
