@@ -18,3 +18,9 @@ export function defaultArtifactOutputPath(date = new Date()): string {
   const stamp = formatArtifactTimestampForPath(date);
   return `artifacts-summary/${day}/artifact-digest-${stamp}.html`;
 }
+
+export function defaultDashboardEntryPath(date = new Date()): string {
+  const day = formatArtifactDatePath(date);
+  const stamp = formatArtifactTimestampForPath(date);
+  return `artifacts-summary/${day}/dashboard-entry-${stamp}.json`;
+}

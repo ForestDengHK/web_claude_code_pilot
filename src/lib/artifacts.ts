@@ -30,6 +30,12 @@ export interface PublishInput {
   label?: string;
   /** When set and the artifact exists, append a new version instead of creating one. */
   artifactId?: string;
+  /**
+   * Deterministic id used for both create and update (e.g. the per-project
+   * dashboard). When set, the artifact is created with exactly this id if it is
+   * missing, or appended to if it already exists — never slug-disambiguated.
+   */
+  fixedId?: string;
 }
 
 function artifactsDir(): string {
@@ -63,13 +69,16 @@ export function publishArtifact(input: PublishInput): { artifactId: string; vers
 
   // Resolve the target id + version first (read-only); no DB writes yet so the
   // two writes below can commit atomically in a single transaction.
-  const existing = input.artifactId
-    ? (db.prepare('SELECT current_version FROM artifacts WHERE id = ?').get(input.artifactId) as
+  const targetId = input.fixedId ?? input.artifactId;
+  const existing = targetId
+    ? (db.prepare('SELECT current_version FROM artifacts WHERE id = ?').get(targetId) as
         | { current_version: number }
         | undefined)
     : undefined;
-  const isUpdate = Boolean(input.artifactId && existing);
-  const artifactId = isUpdate ? (input.artifactId as string) : uniqueSlug(slugify(input.title));
+  const isUpdate = Boolean(targetId && existing);
+  // fixedId: always that exact id (create or append). artifactId: append only
+  // when it exists, else fall through to a fresh disambiguated slug.
+  const artifactId = input.fixedId ?? (isUpdate ? (input.artifactId as string) : uniqueSlug(slugify(input.title)));
   const version = isUpdate ? existing!.current_version + 1 : 1;
 
   const dir = path.join(artifactsDir(), artifactId);

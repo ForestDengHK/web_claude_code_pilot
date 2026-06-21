@@ -546,6 +546,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           queryOptions.allowedTools = [
             ...(queryOptions.allowedTools ?? []),
             'mcp__codepilot-artifacts__publish_artifact',
+            'mcp__codepilot-artifacts__update_project_dashboard',
           ];
         }
 
@@ -846,10 +847,14 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
                             is_error: block.is_error || false,
                           }),
                         }));
-                        // When the publish_artifact tool returns, emit a dedicated
-                        // event so the frontend can open/refresh the artifact panel.
+                        // When the publish_artifact / update_project_dashboard
+                        // tool returns, emit a dedicated event so the frontend can
+                        // open/refresh the artifact panel.
                         const publishedToolName = toolNamesById.get(block.tool_use_id) ?? '';
-                        if (publishedToolName.endsWith('__publish_artifact')) {
+                        if (
+                          publishedToolName.endsWith('__publish_artifact') ||
+                          publishedToolName.endsWith('__update_project_dashboard')
+                        ) {
                           try {
                             const ap = JSON.parse(resultContent);
                             if (ap && ap.artifact_id) {

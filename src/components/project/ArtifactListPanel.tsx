@@ -42,7 +42,14 @@ export function ArtifactListPanel() {
     };
   }, [workingDirectory]);
 
-  const artifacts = state.projectId === workingDirectory ? state.artifacts : [];
+  const rawArtifacts = state.projectId === workingDirectory ? state.artifacts : [];
+  // Pin the project dashboard (deterministic id prefix) to the top; keep the
+  // rest in their server order (newest-updated first).
+  const artifacts = [...rawArtifacts].sort((a, b) => {
+    const da = a.id.startsWith("project-dashboard-") ? 0 : 1;
+    const db = b.id.startsWith("project-dashboard-") ? 0 : 1;
+    return da - db;
+  });
   const loaded = state.projectId === workingDirectory && state.loaded;
 
   if (!loaded) {
@@ -58,6 +65,7 @@ export function ArtifactListPanel() {
       <div className="flex flex-col py-2">
         {artifacts.map((artifact) => {
           const active = artifactPreview?.id === artifact.id;
+          const isDashboard = artifact.id.startsWith("project-dashboard-");
           return (
             <button
               key={artifact.id}
@@ -77,7 +85,9 @@ export function ArtifactListPanel() {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">{artifact.title}</span>
-                <span className="block truncate text-xs text-muted-foreground">v{artifact.currentVersion}</span>
+                <span className="block truncate text-xs text-muted-foreground">
+                  {isDashboard ? `Dashboard · v${artifact.currentVersion}` : `v${artifact.currentVersion}`}
+                </span>
               </span>
             </button>
           );

@@ -140,7 +140,11 @@ const COMMAND_PROMPTS: Record<string, string> = {
 
 function buildArtifactCommandPrompt(): string {
   const outputPath = defaultArtifactOutputPath();
-  return `Create a self-contained, interactive single-file HTML page that is a mid-altitude run digest of the work in this conversation (progressive disclosure: throughline and key decisions expanded, details in collapsible sections). Inline all CSS/JS and embed all data — NO external network requests or CDN links. Create the output directory if needed, write it to ${outputPath} in the working directory, then call the publish_artifact tool with that path, a short title, and a fitting emoji favicon.`;
+  return `Turn this session into a self-contained, interactive single-file HTML page. Choose the form by what the work actually produced, favoring interaction that plain text can't replicate: structured/tabular results (file lists, test results, search hits, dependencies) → a sortable/filterable table; relationships or architecture → a zoomable graph/diagram; code changes → an expandable diff; a task list → a stateful checklist. Only if the work produced nothing structured, fall back to a progressive-disclosure prose digest (throughline expanded, details in collapsible sections). If there is genuinely nothing worth an interactive page this time, do NOT force one — say a plain chat summary is enough and skip publishing. Inline all CSS/JS and embed all data — NO external network requests or CDN links. Create the output directory if needed, write it to ${outputPath} in the working directory, then call the publish_artifact tool with that path, a short title, and a fitting emoji favicon.`;
+}
+
+function buildDashboardCommandPrompt(): string {
+  return `Record what we did in this session as ONE entry on this project's living dashboard. Call the update_project_dashboard tool with: a short \`title\` (what this session was about), a 1–3 sentence \`summary\`, a \`status\` (done / in-progress / blocked), and — when applicable — \`decisions\` (key decisions), \`changes\` (notable changes/outputs), and \`links\` (relevant artifacts/files/URLs). Do NOT write any HTML; the dashboard tool renders and versions the page.`;
 }
 
 const BUILT_IN_COMMANDS: PopoverItem[] = [
@@ -160,6 +164,7 @@ const BUILT_IN_COMMANDS: PopoverItem[] = [
   { label: 'goal', value: '/goal', description: 'Codex goal — `/goal <obj>` to start, `/goal` to view state, `/goal clear` to clear', builtIn: true, passthrough: true, icon: Target02Icon },
   { label: 'schedule', value: '/schedule', description: 'Create a scheduled task — pass text or leave blank to use this conversation', builtIn: true, immediate: true, acceptsArg: true, icon: Clock01Icon },
   { label: 'artifact', value: '/artifact', description: 'Turn this session into a shareable interactive page', builtIn: true, icon: Target02Icon },
+  { label: 'dashboard', value: '/dashboard', description: "Record this session on the project's living dashboard", builtIn: true, icon: ClipboardIcon },
 ];
 
 interface ModeOption {
@@ -796,7 +801,7 @@ export function MessageInput({
     // and hide Claude-specific ones (compact, doctor, init, review, etc.).
     // `branch` is allowed because ChatView routes summary generation through the
     // active backend's chat endpoint using the user's current model.
-    const CODEX_SAFE_COMMANDS = new Set(['help', 'clear', 'cost', 'usage', 'branch', 'goal', 'artifact']);
+    const CODEX_SAFE_COMMANDS = new Set(['help', 'clear', 'cost', 'usage', 'branch', 'goal', 'artifact', 'dashboard']);
     const commands = backend === 'codex'
       ? BUILT_IN_COMMANDS.filter(c => CODEX_SAFE_COMMANDS.has(c.label))
       : BUILT_IN_COMMANDS;
@@ -1013,9 +1018,15 @@ export function MessageInput({
             onCommand(cmd.value, cmd.acceptsArg ? userInput : undefined);
             return;
           }
-          // Codex publishes artifacts after the turn by inspecting the written
-          // HTML file, so keep the slash form compact and backend-parsed.
-          if (cmd.value === '/artifact' && backend === 'codex') {
+          // Codex AND T1 (channels) publish artifacts / dashboard entries after
+          // the turn by inspecting a written file (HTML for /artifact, JSON for
+          // /dashboard) — neither has the in-process SDK MCP tool — so send the
+          // slash form verbatim for the backend route to parse. `/artifact` is
+          // still Codex-only; `/dashboard` is supported on both Codex and T1.
+          if (
+            (cmd.value === '/artifact' && backend === 'codex') ||
+            (cmd.value === '/dashboard' && (backend === 'codex' || backend === 'channels'))
+          ) {
             const finalPrompt = userInput ? `${cmd.value} ${userInput}` : cmd.value;
             setInputValue('');
             onSend(finalPrompt, hasFiles ? files : undefined);
@@ -1032,7 +1043,9 @@ export function MessageInput({
           // Non-immediate built-in: expand with COMMAND_PROMPTS
           const promptTemplate = cmd.value === '/artifact'
             ? buildArtifactCommandPrompt()
-            : (COMMAND_PROMPTS[cmd.value] || '');
+            : cmd.value === '/dashboard'
+              ? buildDashboardCommandPrompt()
+              : (COMMAND_PROMPTS[cmd.value] || '');
           const finalPrompt = userInput
             ? `${promptTemplate}\n\nUser context: ${userInput}`
             : promptTemplate || cmd.value;
