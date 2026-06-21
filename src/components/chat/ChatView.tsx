@@ -114,6 +114,11 @@ interface ChatViewProps {
 export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, initialMode, backend = 'claude', advisorModel, branchSummary, branchSourceSessionId }: ChatViewProps) {
   const { setStreamingSessionId, workingDirectory, setWorkingDirectory, setPanelOpen, setArtifactPreview, setPendingApprovalSessionId, sessionTitle, addStreamingSession, updateStreamingSession, removeStreamingSession } = usePanel();
   const [messages, setMessages] = useState<Message[]>(initialMessages);
+  // Stale-closure-free mirror of `messages`, read inside recovery polling to
+  // compute the incremental fetch cursor and merge without re-reading the
+  // whole (potentially multi-MB) conversation on every poll.
+  const messagesRef = useRef<Message[]>(initialMessages);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [loadingMore, setLoadingMore] = useState(false);
   const loadingMoreRef = useRef(false);
@@ -523,12 +528,40 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   // Fetch messages from DB and check if the backend has finished
   const recoverMessages = useCallback(async (): Promise<boolean> => {
     try {
-      const res = await fetch(`/api/chat/sessions/${sessionId}/messages?limit=100`);
+      // Incremental fetch: only pull messages newer than the highest rowid the
+      // client already has. Recovery polling must never re-read the full
+      // conversation — a synchronous multi-MB better-sqlite3 read blocks the
+      // server event loop for tens of seconds and wedges the live stream.
+      const prev = messagesRef.current;
+      const cursor = prev.reduce((max, m) => (m._rowid && m._rowid > max ? m._rowid : max), 0);
+      // Cold path (no loaded history with a rowid): full fetch of the most
+      // recent window, preserving the original behaviour.
+      const url = cursor > 0
+        ? `/api/chat/sessions/${sessionId}/messages?after=${cursor}`
+        : `/api/chat/sessions/${sessionId}/messages?limit=100`;
+      const res = await fetch(url);
       if (!res.ok) return false;
       const data: MessagesResponse = await res.json();
-      setMessages(data.messages);
-      setHasMore(data.hasMore ?? false);
-      const lastMsg = data.messages[data.messages.length - 1];
+
+      let merged: Message[];
+      if (cursor === 0) {
+        // Full replace (cold) — authoritative newest window.
+        merged = data.messages;
+        setHasMore(data.hasMore ?? false);
+      } else if (data.messages.length === 0) {
+        // Nothing new persisted yet — leave optimistic local state untouched.
+        merged = prev;
+      } else {
+        // Keep authoritative (rowid-bearing) history, drop optimistic local
+        // messages (no rowid, e.g. the just-sent user message), and append the
+        // freshly-fetched server tail. No overlap: kept rowids ≤ cursor <
+        // fetched rowids, so this never duplicates.
+        merged = [...prev.filter(m => m._rowid !== undefined), ...data.messages];
+      }
+      messagesRef.current = merged;
+      setMessages(merged);
+
+      const lastMsg = merged[merged.length - 1];
       // Done if the last message is a complete assistant message.
       if (lastMsg?.role === 'assistant' && lastMsg.status !== 'streaming') return true;
       // Also treat "last message is user" as done — this means the task was lost

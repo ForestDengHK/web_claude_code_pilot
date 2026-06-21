@@ -8,11 +8,11 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import {
-  applyOps, engineToExt, createDiagram, readDiagram, updateDiagram, listDiagrams,
+  applyOps, engineToExt, createDiagram, readDiagram, updateDiagram, listDiagrams, coerceElements,
 } from '../src/lib/canvas-core.mjs';
 
 // Re-export the core helpers so the existing test (scripts/canvas-mcp-server.test.mjs) keeps importing from here.
-export { applyOps, engineToExt, createDiagram, readDiagram, updateDiagram, listDiagrams };
+export { applyOps, engineToExt, createDiagram, readDiagram, updateDiagram, listDiagrams, coerceElements };
 
 const log = (...a) => console.error('[canvas-mcp]', ...a);
 const asText = (v) => ({ content: [{ type: 'text', text: typeof v === 'string' ? v : JSON.stringify(v, null, 2) }] });

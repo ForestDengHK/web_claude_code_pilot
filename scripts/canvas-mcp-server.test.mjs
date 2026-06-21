@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { applyOps, engineToExt, createDiagram, readDiagram, updateDiagram, listDiagrams } from './canvas-mcp-server.mjs';
+import { applyOps, engineToExt, createDiagram, readDiagram, updateDiagram, listDiagrams, coerceElements } from './canvas-mcp-server.mjs';
 
 test('applyOps: add appends new elements', () => {
   const { elements, applied, warnings } = applyOps([], { add: [{ id: 'a', type: 'rectangle' }] });
@@ -43,6 +43,23 @@ test('engineToExt maps the three engines', () => {
 
 test('engineToExt throws on unknown engine', () => {
   assert.throws(() => engineToExt('nope'), /unknown engine/);
+});
+
+test('coerceElements tolerates array, {elements}, and JSON strings (LLM input)', () => {
+  const arr = [{ id: 'a' }];
+  assert.deepEqual(coerceElements(arr), arr);
+  assert.deepEqual(coerceElements({ elements: arr }), arr);
+  assert.deepEqual(coerceElements(JSON.stringify({ elements: arr })), arr);
+  assert.deepEqual(coerceElements(JSON.stringify(arr)), arr);
+  assert.deepEqual(coerceElements('not json'), []);
+  assert.deepEqual(coerceElements(undefined), []);
+});
+
+test('createDiagram coerces a stringified scene', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'canvas-coerce-'));
+  const { id } = createDiagram(dir, { engine: 'excalidraw', scene: JSON.stringify({ elements: [{ id: 'z1', type: 'rectangle' }] }) });
+  assert.deepEqual(readDiagram(dir, id).elements.map((e) => e.id), ['z1']);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('file round-trip: create -> read -> update -> list', () => {

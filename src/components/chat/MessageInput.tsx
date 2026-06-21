@@ -505,7 +505,10 @@ function FileAttachmentsCapsules() {
   if (attachments.files.length === 0) return null;
 
   return (
-    <div className="flex w-full flex-wrap items-center gap-1.5 px-3 pt-2 pb-0 order-first">
+    // On mobile, cap the capsule strip height so many attachments scroll
+    // internally instead of pushing the textarea + footer (submit button)
+    // under the fixed BottomNav. `sm:` restores unbounded growth on larger screens.
+    <div className="flex w-full flex-wrap items-center gap-1.5 px-3 pt-2 pb-0 order-first max-h-24 overflow-y-auto sm:max-h-none sm:overflow-visible">
       {attachments.files.map((file) => {
         const isImage = file.mediaType?.startsWith('image/');
         return (

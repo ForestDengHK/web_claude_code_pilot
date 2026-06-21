@@ -16,12 +16,18 @@ export async function GET(
     const searchParams = request.nextUrl.searchParams;
     const limitParam = searchParams.get('limit');
     const beforeParam = searchParams.get('before');
+    const afterParam = searchParams.get('after');
     const bookmarkedOnly = searchParams.get('bookmarked') === 'true';
 
     const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 100, 1), 500) : 100;
     const beforeRowId = beforeParam ? parseInt(beforeParam, 10) || undefined : undefined;
+    // Incremental cursor for recovery polling: fetch only messages newer than
+    // what the client already has, so it never re-reads the full conversation.
+    // Parse with Number.isFinite so `after=0` (valid: everything) is honoured.
+    const afterRowIdParsed = afterParam !== null ? parseInt(afterParam, 10) : NaN;
+    const afterRowId = Number.isFinite(afterRowIdParsed) ? afterRowIdParsed : undefined;
 
-    const { messages, hasMore } = getMessages(id, { limit, beforeRowId });
+    const { messages, hasMore } = getMessages(id, { limit, beforeRowId, afterRowId });
     let result: MessagesResponse = { messages, hasMore };
 
     if (bookmarkedOnly) {

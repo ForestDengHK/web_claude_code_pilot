@@ -63,11 +63,21 @@ export function readRawData(dir, id, engine) {
   return fs.readFileSync(dataPath(dir, id, engine), 'utf8');
 }
 
+// Coerce a model-supplied scene into an element array. Tolerates: an array, an
+// object {elements:[...]}, or a JSON string of either (LLMs often stringify args).
+export function coerceElements(scene) {
+  let s = scene;
+  if (typeof s === 'string') { try { s = JSON.parse(s); } catch { return []; } }
+  if (Array.isArray(s)) return s;
+  if (Array.isArray(s?.elements)) return s.elements;
+  return [];
+}
+
 export function createDiagram(dir, { id, engine, title, scene, author = 'user' }) {
   fs.mkdirSync(dir, { recursive: true });
   const realId = id ? safeId(id) : genId();
   if (engine === 'excalidraw') {
-    const elements = Array.isArray(scene) ? scene : (scene?.elements ?? []);
+    const elements = coerceElements(scene);
     writeExcalidrawFile(dataPath(dir, realId, engine), elements);
   } else {
     fs.writeFileSync(dataPath(dir, realId, engine), typeof scene === 'string' ? scene : String(scene ?? ''));

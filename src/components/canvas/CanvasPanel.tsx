@@ -23,6 +23,16 @@ export default function CanvasPanel({ id, onClose }: Props) {
   const lastSigRef = useRef('');           // content signature of the last loaded/saved scene
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Normalize possibly-partial elements (e.g. minimal skeletons written by Claude/MCP)
+  // into full Excalidraw elements, preserving ids so incremental update-by-id keeps working.
+  const normalize = async (elements: unknown[]): Promise<unknown[]> => {
+    if (!elements?.length) return [];
+    try {
+      const { restoreElements } = await import('@excalidraw/excalidraw');
+      return restoreElements(elements as never, null) as unknown[];
+    } catch { return elements; }
+  };
+
   // Cheap content signature: ignores Excalidraw's on-load normalization (same ids+versions).
   const sigOf = (elements: readonly unknown[]) =>
     (elements as { id?: string; version?: number; isDeleted?: boolean }[])
@@ -37,10 +47,12 @@ export default function CanvasPanel({ id, onClose }: Props) {
       if (!res.ok) { if (alive) setStatus('not found'); return; }
       const scene = await res.json();
       if (!alive) return;
+      const els = await normalize(scene.elements || []);
+      if (!alive) return;
       myVersionRef.current = scene.version;
-      lastSigRef.current = sigOf(scene.elements || []);
+      lastSigRef.current = sigOf(els);
       setTitle(scene.title || id);
-      setInitialElements(scene.elements || []);
+      setInitialElements(els);
       setReady(true);
     })();
     return () => { alive = false; };
@@ -58,10 +70,11 @@ export default function CanvasPanel({ id, onClose }: Props) {
       const res = await fetch(`/api/canvas/${id}`);
       if (!res.ok) return;
       const scene = await res.json();
+      const els = await normalize(scene.elements || []);
       myVersionRef.current = scene.version;
-      lastSigRef.current = sigOf(scene.elements || []);
+      lastSigRef.current = sigOf(els);
       applyingExternalRef.current = true;
-      apiRef.current?.updateScene({ elements: scene.elements });
+      apiRef.current?.updateScene({ elements: els });
       setStatus(`updated by Claude → v${scene.version}`);
       setTimeout(() => { applyingExternalRef.current = false; }, 50);
     };
