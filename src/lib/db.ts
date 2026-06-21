@@ -198,6 +198,30 @@ function initDb(db: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_artifacts_project_id ON artifacts(project_id);
+
+    CREATE TABLE IF NOT EXISTS diagrams (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      engine TEXT NOT NULL DEFAULT 'excalidraw',
+      file_path TEXT NOT NULL DEFAULT '',
+      current_version INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS diagram_versions (
+      diagram_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      author TEXT NOT NULL DEFAULT 'user',
+      message_id TEXT,
+      summary TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (diagram_id, version),
+      FOREIGN KEY (diagram_id) REFERENCES diagrams(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_diagrams_session_id ON diagrams(session_id);
   `);
 
   // FTS5 full-text search index for messages (standalone storage)
@@ -648,11 +672,26 @@ export function markSessionMemoryInjected(id: string): void {
 
 export function getMessages(
   sessionId: string,
-  options?: { limit?: number; beforeRowId?: number },
+  options?: { limit?: number; beforeRowId?: number; afterRowId?: number },
 ): { messages: Message[]; hasMore: boolean } {
   const db = getDb();
   const limit = options?.limit ?? 100;
   const beforeRowId = options?.beforeRowId;
+  const afterRowId = options?.afterRowId;
+
+  // Incremental forward fetch: only messages newer than the cursor, in
+  // chronological (ASC) order. Recovery polling uses this so it never re-reads
+  // the full (potentially multi-MB) conversation on every poll — a synchronous
+  // better-sqlite3 read of that size blocks the event loop for tens of seconds
+  // and wedges the live stream.
+  if (afterRowId !== undefined) {
+    let rows = db.prepare(
+      'SELECT *, rowid as _rowid FROM messages WHERE session_id = ? AND rowid > ? ORDER BY rowid ASC LIMIT ?'
+    ).all(sessionId, afterRowId, limit + 1) as Message[];
+    const hasMore = rows.length > limit;
+    if (hasMore) rows = rows.slice(0, limit);
+    return { messages: rows, hasMore };
+  }
 
   let rows: Message[];
   if (beforeRowId) {

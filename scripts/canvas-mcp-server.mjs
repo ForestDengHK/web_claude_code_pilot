@@ -2,120 +2,19 @@
 // CodePilot Diagram Canvas — file-based MCP server.
 // stdout is the MCP stdio transport; ALL logging goes to stderr.
 // Source of truth = files under CODEPILOT_DIAGRAMS_DIR (one file per diagram + <id>.meta.json).
-import fs from 'node:fs';
-import path from 'node:path';
+// Pure ops + file IO live in src/lib/canvas-core.mjs (shared with the Next-side store).
 import { pathToFileURL } from 'node:url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+  applyOps, engineToExt, createDiagram, readDiagram, updateDiagram, listDiagrams,
+} from '../src/lib/canvas-core.mjs';
+
+// Re-export the core helpers so the existing test (scripts/canvas-mcp-server.test.mjs) keeps importing from here.
+export { applyOps, engineToExt, createDiagram, readDiagram, updateDiagram, listDiagrams };
 
 const log = (...a) => console.error('[canvas-mcp]', ...a);
-
-// --- engine map -------------------------------------------------------------
-const ENGINE_EXT = { excalidraw: 'excalidraw', drawio: 'drawio', mermaid: 'mmd' };
-export function engineToExt(engine) {
-  const ext = ENGINE_EXT[engine];
-  if (!ext) throw new Error(`unknown engine: ${engine}`);
-  return ext;
-}
-
-// --- pure ops engine (the heart; Phase 1 extracts this to canvas-store.ts) --
-export function applyOps(elements, ops) {
-  const warnings = [];
-  const byId = new Map(elements.map((e) => [e.id, e]));
-  let added = 0, updated = 0, deleted = 0;
-  for (const el of ops.add ?? []) {
-    if (byId.has(el.id)) { warnings.push(`add: id ${el.id} already exists, skipped`); continue; }
-    byId.set(el.id, el); added++;
-  }
-  for (const patch of ops.update ?? []) {
-    const cur = byId.get(patch.id);
-    if (!cur) { warnings.push(`update: id ${patch.id} not found`); continue; }
-    byId.set(patch.id, { ...cur, ...patch }); updated++;
-  }
-  for (const id of ops.delete ?? []) {
-    if (!byId.has(id)) { warnings.push(`delete: id ${id} not found`); continue; }
-    byId.delete(id); deleted++;
-  }
-  return { elements: [...byId.values()], applied: { added, updated, deleted }, warnings };
-}
-
-// --- file helpers -----------------------------------------------------------
-function nano() { return Math.random().toString(36).slice(2, 10); } // POC id; Phase 1 uses nanoid
-function metaPath(dir, id) { return path.join(dir, `${id}.meta.json`); }
-function dataPath(dir, id, engine) { return path.join(dir, `${id}.${engineToExt(engine)}`); }
-
-function safeId(id) {
-  if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error(`bad diagram id: ${id}`);
-  return id;
-}
-function readMeta(dir, id) {
-  return JSON.parse(fs.readFileSync(metaPath(dir, safeId(id)), 'utf8'));
-}
-function writeExcalidrawFile(p, elements) {
-  fs.writeFileSync(p, JSON.stringify({ type: 'excalidraw', version: 2, source: 'codepilot', elements, appState: {} }, null, 2));
-}
-function readElements(dir, id, engine) {
-  safeId(id); // self-defending: future (Phase 1) callers may reach here without going through readMeta
-  const raw = fs.readFileSync(dataPath(dir, id, engine), 'utf8');
-  if (engine === 'excalidraw') return JSON.parse(raw).elements ?? [];
-  return []; // drawio/mermaid: ops not supported (Phase 2); summary handled separately
-}
-
-export function createDiagram(dir, { id, engine, title, scene }) {
-  fs.mkdirSync(dir, { recursive: true });
-  const realId = id ? safeId(id) : nano();
-  if (engine === 'excalidraw') {
-    const elements = Array.isArray(scene) ? scene : (scene?.elements ?? []);
-    writeExcalidrawFile(dataPath(dir, realId, engine), elements);
-  } else {
-    fs.writeFileSync(dataPath(dir, realId, engine), typeof scene === 'string' ? scene : String(scene ?? ''));
-  }
-  const meta = { id: realId, engine, title: title ?? realId, version: 1, updatedAt: new Date().toISOString() };
-  fs.writeFileSync(metaPath(dir, realId), JSON.stringify(meta, null, 2));
-  return { id: realId, version: 1 };
-}
-
-export function readDiagram(dir, id) {
-  const meta = readMeta(dir, id);
-  if (meta.engine === 'excalidraw') {
-    const elements = readElements(dir, id, meta.engine);
-    // NOTE: the summary abbreviates Excalidraw-native `width`/`height` to `w`/`h`.
-    // Phase 1's adapter/translation layer MUST map `w`/`h` back to `width`/`height`
-    // when turning model `ops.update` into element patches — otherwise the shallow
-    // merge in applyOps would add orphan `w`/`h` keys instead of resizing the element.
-    const summary = elements.map((e) => ({ id: e.id, type: e.type, text: e.text, x: e.x, y: e.y, w: e.width, h: e.height }));
-    return { id: meta.id, engine: meta.engine, version: meta.version, elements: summary };
-  }
-  const text = fs.readFileSync(dataPath(dir, id, meta.engine), 'utf8');
-  return { id: meta.id, engine: meta.engine, version: meta.version, source: text };
-}
-
-export function updateDiagram(dir, id, ops) {
-  const meta = readMeta(dir, id);
-  if (meta.engine !== 'excalidraw') throw new Error(`canvas_update ops only support excalidraw (Phase 2 for ${meta.engine}); use canvas_create to replace`);
-  const current = readElements(dir, id, meta.engine);
-  const { elements, applied, warnings } = applyOps(current, ops);
-  writeExcalidrawFile(dataPath(dir, id, meta.engine), elements);
-  meta.version += 1;
-  meta.updatedAt = new Date().toISOString();
-  fs.writeFileSync(metaPath(dir, id), JSON.stringify(meta, null, 2));
-  return { id: meta.id, version: meta.version, applied, warnings };
-}
-
-export function listDiagrams(dir) {
-  if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir)
-    .filter((f) => f.endsWith('.meta.json'))
-    .map((f) => {
-      const meta = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-      let elementCount = 0;
-      try { elementCount = meta.engine === 'excalidraw' ? readElements(dir, meta.id, meta.engine).length : 0; } catch { /* ignore */ }
-      return { id: meta.id, title: meta.title, engine: meta.engine, version: meta.version, elementCount, updatedAt: meta.updatedAt };
-    });
-}
-
-// --- MCP wiring -------------------------------------------------------------
 const asText = (v) => ({ content: [{ type: 'text', text: typeof v === 'string' ? v : JSON.stringify(v, null, 2) }] });
 
 export function buildServer(diagramsDir) {
