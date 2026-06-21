@@ -6,7 +6,7 @@ import os from 'os';
 import fs from 'fs';
 import { getDb } from './db';
 import {
-  createDiagram, writeScene, updateDiagram, readElements, readMeta, listDiagrams, safeId,
+  createDiagram, writeScene, writeSource, updateDiagram, readElements, readRawData, readMeta, listDiagrams, safeId,
   type Engine, type CanvasElement, type CanvasOps, type DiagramMeta,
 } from './canvas-core.mjs';
 
@@ -47,6 +47,14 @@ export function saveScene(id: string, elements: CanvasElement[], author = 'user'
   return { id: res.id, version: res.version };
 }
 
+/** User-edit save path for drawio (mxGraph XML) / mermaid (source text). */
+export function saveSource(id: string, source: string, author = 'user', messageId?: string): { id: string; version: number } {
+  const dir = getDiagramsDir();
+  const res = writeSource(dir, id, source, author);
+  indexFromMeta(readMeta(dir, id), getSessionId(id), messageId);
+  return res;
+}
+
 /** Claude incremental write path (also used by the watcher reconcile). */
 export function applyCanvasOps(id: string, ops: CanvasOps, author = 'claude', messageId?: string) {
   const dir = getDiagramsDir();
@@ -64,12 +72,14 @@ export function reconcileFromMeta(id: string): { id: string; version: number; en
   return { id: meta.id, version: meta.version, engine: meta.engine };
 }
 
-/** Full scene for the editor (Excalidraw elements + meta). */
-export function getScene(id: string): { id: string; engine: Engine; version: number; title: string; elements: CanvasElement[] } {
+/** Full scene for the editor: Excalidraw elements, or source text for drawio/mermaid. */
+export function getScene(id: string): { id: string; engine: Engine; version: number; title: string; elements: CanvasElement[]; source?: string } {
   const dir = getDiagramsDir();
   const meta = readMeta(dir, safeId(id));
-  const elements = meta.engine === 'excalidraw' ? readElements(dir, meta.id, meta.engine) : [];
-  return { id: meta.id, engine: meta.engine, version: meta.version, title: meta.title, elements };
+  if (meta.engine === 'excalidraw') {
+    return { id: meta.id, engine: meta.engine, version: meta.version, title: meta.title, elements: readElements(dir, meta.id, meta.engine) };
+  }
+  return { id: meta.id, engine: meta.engine, version: meta.version, title: meta.title, elements: [], source: readRawData(dir, meta.id, meta.engine) };
 }
 
 export function listCanvases(sessionId?: string) {

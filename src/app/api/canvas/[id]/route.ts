@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getScene, saveScene } from '@/lib/canvas-store';
+import { getScene, saveScene, saveSource } from '@/lib/canvas-store';
 
 interface RouteContext { params: Promise<{ id: string }>; }
 
@@ -13,15 +13,19 @@ export async function GET(_req: NextRequest, context: RouteContext) {
   }
 }
 
-// PUT /api/canvas/<id>  { elements }  -> { id, version }  (user-draw save path)
+// PUT /api/canvas/<id>  { elements } | { source }  -> { id, version }  (user-edit save path)
+//   elements[] -> excalidraw scene replace; source (string) -> drawio/mermaid text.
 export async function PUT(req: NextRequest, context: RouteContext) {
   const { id } = await context.params;
   const body = await req.json().catch(() => ({}));
-  if (!Array.isArray(body.elements)) {
-    return NextResponse.json({ error: 'elements[] required' }, { status: 400 });
-  }
   try {
-    return NextResponse.json(saveScene(id, body.elements, body.author ?? 'user'));
+    if (typeof body.source === 'string') {
+      return NextResponse.json(saveSource(id, body.source, body.author ?? 'user'));
+    }
+    if (Array.isArray(body.elements)) {
+      return NextResponse.json(saveScene(id, body.elements, body.author ?? 'user'));
+    }
+    return NextResponse.json({ error: 'elements[] or source required' }, { status: 400 });
   } catch (e) {
     return NextResponse.json({ error: String((e as Error).message) }, { status: 400 });
   }

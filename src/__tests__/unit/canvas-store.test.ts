@@ -45,6 +45,19 @@ test('applyCanvasOps (claude) patches incrementally', () => {
   assert.deepEqual(ids, ['k1', 'k2']);
 });
 
+test('mermaid/drawio: createCanvas + saveSource round-trip via source', () => {
+  const m = store.createCanvas({ sessionId: 's4', engine: 'mermaid', title: 'M', scene: 'graph TD\n A-->B' });
+  let scene = store.getScene(m.id);
+  assert.equal(scene.engine, 'mermaid');
+  assert.match(scene.source ?? '', /A-->B/);
+  const r = store.saveSource(m.id, 'graph LR\n X-->Y', 'user');
+  assert.equal(r.version, 2);
+  assert.match(store.getScene(m.id).source ?? '', /X-->Y/);
+
+  const d = store.createCanvas({ sessionId: 's4', engine: 'drawio', title: 'D', scene: '<mxGraphModel></mxGraphModel>' });
+  assert.match(store.getScene(d.id).source ?? '', /mxGraphModel/);
+});
+
 test('reconcileFromMeta indexes an externally-written file', () => {
   // simulate the MCP server (out-of-process) creating a diagram by writing files directly
   const dir = path.join(TMP, 'diagrams');

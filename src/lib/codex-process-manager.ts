@@ -14,6 +14,8 @@
 
 import { spawn, type ChildProcess } from 'child_process';
 import { createInterface } from 'readline';
+import os from 'os';
+import path from 'path';
 import {
   formatJsonRpcRequest,
   getLastRequestId,
@@ -21,6 +23,30 @@ import {
   type JsonRpcMessage,
 } from './codex-jsonrpc';
 import { getCodexExecutable } from './codex-binary';
+import { getSetting } from './db';
+
+/**
+ * Build `codex app-server` argv, injecting the file-based Diagram Canvas MCP
+ * server per-session via `-c mcp_servers.*` overrides (no global config.toml
+ * pollution). Gated by the enable_canvas setting. Mirrors the T2 wiring so all
+ * backends expose the same canvas_* tools over the shared source-of-truth files.
+ */
+function buildCodexArgs(): string[] {
+  const args: string[] = [];
+  try {
+    if (getSetting('enable_canvas') !== 'false') {
+      const serverPath = path.join(process.cwd(), 'scripts', 'canvas-mcp-server.mjs');
+      const diagramsDir = path.join(process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.codepilot'), 'diagrams');
+      // TOML inline table; JSON.stringify yields valid TOML basic strings.
+      const toml = `mcp_servers.codepilot_canvas={ command = ${JSON.stringify(process.execPath)}, args = [${JSON.stringify(serverPath)}], env = { CODEPILOT_DIAGRAMS_DIR = ${JSON.stringify(diagramsDir)} } }`;
+      args.push('-c', toml);
+    }
+  } catch {
+    // setting/db unavailable -> just launch without the canvas server
+  }
+  args.push('app-server');
+  return args;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -199,7 +225,7 @@ export class CodexProcessManager {
   private static async spawnAndInitialize(sessionId: string): Promise<CodexProcess> {
     // Resolved via getCodexExecutable() so a self-healed fresh-inode copy is
     // used when the installed binary's inode is hung (see codex-binary.ts).
-    const proc = spawn(getCodexExecutable(), ['app-server'], {
+    const proc = spawn(getCodexExecutable(), buildCodexArgs(), {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 

@@ -17,11 +17,14 @@ export default function CanvasIndexPage() {
   };
   useEffect(() => { load(); }, []);
 
-  const create = async () => {
+  const create = async (engine: 'excalidraw' | 'drawio' | 'mermaid') => {
+    const scene = engine === 'mermaid' ? 'graph TD\n  A[Start] --> B[End]'
+      : engine === 'drawio' ? '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>'
+      : { elements: [] };
     const res = await fetch('/api/canvas', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ engine: 'excalidraw', title: 'New Canvas', scene: { elements: [] } }),
+      body: JSON.stringify({ engine, title: `New ${engine}`, scene }),
     });
     const { id } = await res.json();
     window.location.href = `/canvas/${id}`;
@@ -32,7 +35,9 @@ export default function CanvasIndexPage() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
         <h1 style={{ fontSize: 18, fontWeight: 600 }}>🎨 Canvases</h1>
         <span style={{ flex: 1 }} />
-        <button onClick={create} style={{ fontSize: 13, padding: '6px 12px', border: '1px solid var(--border,#ccc)', borderRadius: 6 }}>+ New canvas</button>
+        <button onClick={() => create('excalidraw')} style={{ fontSize: 13, padding: '6px 10px', border: '1px solid var(--border,#ccc)', borderRadius: 6 }}>+ Excalidraw</button>
+        <button onClick={() => create('drawio')} style={{ fontSize: 13, padding: '6px 10px', border: '1px solid var(--border,#ccc)', borderRadius: 6 }}>+ draw.io</button>
+        <button onClick={() => create('mermaid')} style={{ fontSize: 13, padding: '6px 10px', border: '1px solid var(--border,#ccc)', borderRadius: 6 }}>+ Mermaid</button>
         <button onClick={load} style={{ fontSize: 13 }}>↻</button>
       </div>
       {loading ? <p>loading…</p> : items.length === 0 ? (

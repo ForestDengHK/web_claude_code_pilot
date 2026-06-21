@@ -15,6 +15,8 @@ export function readElements(dir: string, id: string, engine: string): CanvasEle
 export function readRawData(dir: string, id: string, engine: string): string;
 export function createDiagram(dir: string, args: { id?: string; engine: Engine; title?: string; scene: unknown; author?: string }): { id: string; version: number };
 export function writeScene(dir: string, id: string, elements: CanvasElement[], author?: string): { id: string; version: number; count: number };
+export function writeSource(dir: string, id: string, source: string, author?: string): { id: string; version: number };
+export function coerceElements(scene: unknown): CanvasElement[];
 export function readDiagram(dir: string, id: string): { id: string; engine: Engine; version: number; elements?: CanvasElement[]; source?: string };
 export function updateDiagram(dir: string, id: string, ops: CanvasOps, author?: string): { id: string; version: number; applied: { added: number; updated: number; deleted: number }; warnings: string[] };
 export function listDiagrams(dir: string): ListEntry[];

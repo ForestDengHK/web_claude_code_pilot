@@ -99,6 +99,18 @@ export function writeScene(dir, id, elements, author = 'user') {
   return { id: meta.id, version: meta.version, count: elements.length };
 }
 
+// Replace the source text of a drawio (mxGraph XML) or mermaid diagram.
+export function writeSource(dir, id, source, author = 'user') {
+  const meta = readMeta(dir, id);
+  if (meta.engine === 'excalidraw') throw new Error('writeSource is for drawio/mermaid; use writeScene for excalidraw');
+  fs.writeFileSync(dataPath(dir, id, meta.engine), typeof source === 'string' ? source : String(source ?? ''));
+  meta.version += 1;
+  meta.lastAuthor = author;
+  meta.updatedAt = new Date().toISOString();
+  fs.writeFileSync(metaPath(dir, id), JSON.stringify(meta, null, 2));
+  return { id: meta.id, version: meta.version };
+}
+
 export function readDiagram(dir, id) {
   const meta = readMeta(dir, id);
   if (meta.engine === 'excalidraw') {
