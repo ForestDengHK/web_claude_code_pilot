@@ -29,6 +29,7 @@ import { sanitizeEffortLevel } from './effort';
 import { createSpawnSubagentsMcp, SPAWN_SUBAGENTS_PROMPT_FRAGMENT } from './spawn-subagents-mcp';
 import { createArtifactsMcp, ARTIFACTS_PROMPT_FRAGMENT } from './artifacts-mcp';
 import { loadEnabledPlugins, loadMergedMcpServers } from './claude-config-loader';
+import { listCanvases } from './canvas-store';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
@@ -467,10 +468,26 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
         // a tool it can't call.
         const wantSpawnSubagents = getSetting('enable_spawn_subagents') !== 'false';
         const wantArtifacts = getSetting('enable_artifacts') !== 'false';
+        const wantCanvasCtx = getSetting('enable_canvas') !== 'false';
+        // Tell the model which diagram canvases already exist in THIS conversation,
+        // with their ids — so "edit the canvas" resolves to a real id instead of a
+        // ghost / a new empty canvas. (Fixes the "AI doesn't know the canvas exists" gap.)
+        let canvasFragment = '';
+        if (wantCanvasCtx && sessionId) {
+          try {
+            const cvs = listCanvases(sessionId);
+            if (cvs.length > 0) {
+              canvasFragment = '\n\n<canvas-context>\nThis conversation has these diagram canvases. When the user says "the canvas" / "this diagram" or asks to edit, redraw, or change a drawing, operate on one of these BY ID (call canvas_read first; then canvas_update for excalidraw, or canvas_create with the SAME id for drawio/mermaid). Only create a new canvas if none fits.\n'
+                + cvs.map((c) => `- id="${c.id}" title="${c.title}" engine=${c.engine} v${c.version} (${c.elementCount} elements)`).join('\n')
+                + '\n</canvas-context>';
+            }
+          } catch { /* db unavailable -> no canvas context */ }
+        }
         const appendedSystemPrompt =
           (systemPrompt ?? '') +
           (wantSpawnSubagents ? SPAWN_SUBAGENTS_PROMPT_FRAGMENT : '') +
-          (wantArtifacts ? ARTIFACTS_PROMPT_FRAGMENT : '');
+          (wantArtifacts ? ARTIFACTS_PROMPT_FRAGMENT : '') +
+          canvasFragment;
         if (appendedSystemPrompt) {
           queryOptions.systemPrompt = {
             type: 'preset',

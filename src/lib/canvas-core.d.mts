@@ -3,7 +3,7 @@ export type Engine = 'excalidraw' | 'drawio' | 'mermaid';
 export interface CanvasElement { id: string; type?: string; text?: string; x?: number; y?: number; width?: number; height?: number; [k: string]: unknown; }
 export interface CanvasOps { add?: CanvasElement[]; update?: ({ id: string } & Record<string, unknown>)[]; delete?: string[]; }
 export interface DiagramMeta { id: string; engine: Engine; title: string; version: number; lastAuthor?: string; sessionId?: string; updatedAt: string; }
-export interface ListEntry { id: string; title: string; engine: Engine; version: number; elementCount: number; updatedAt: string; }
+export interface ListEntry { id: string; title: string; engine: Engine; version: number; elementCount: number; sessionId: string; updatedAt: string; }
 
 export const ENGINE_EXT: Record<string, string>;
 export function engineToExt(engine: string): string;
@@ -19,4 +19,4 @@ export function writeSource(dir: string, id: string, source: string, author?: st
 export function coerceElements(scene: unknown): CanvasElement[];
 export function readDiagram(dir: string, id: string): { id: string; engine: Engine; version: number; elements?: CanvasElement[]; source?: string };
 export function updateDiagram(dir: string, id: string, ops: CanvasOps, author?: string): { id: string; version: number; applied: { added: number; updated: number; deleted: number }; warnings: string[] };
-export function listDiagrams(dir: string): ListEntry[];
+export function listDiagrams(dir: string, sessionId?: string): ListEntry[];

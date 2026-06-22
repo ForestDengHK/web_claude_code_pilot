@@ -55,6 +55,27 @@ test('coerceElements tolerates array, {elements}, and JSON strings (LLM input)',
   assert.deepEqual(coerceElements(undefined), []);
 });
 
+test('createDiagram with an existing id continues the version + keeps session', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'canvas-recreate-'));
+  const a = createDiagram(dir, { id: 'fixed1', engine: 'drawio', scene: '<a/>', sessionId: 'sess9' });
+  assert.equal(a.version, 1);
+  const b = createDiagram(dir, { id: 'fixed1', engine: 'drawio', scene: '<b/>' }); // replace, no session passed
+  assert.equal(b.version, 2, 'version must continue, not reset (so live SSE fires)');
+  const list = listDiagrams(dir);
+  assert.equal(list[0].sessionId, 'sess9', 'session preserved across replace');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('listDiagrams filters by session (keeps untagged)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'canvas-sess-'));
+  createDiagram(dir, { id: 'mine', engine: 'mermaid', scene: 'x', sessionId: 'S1' });
+  createDiagram(dir, { id: 'other', engine: 'mermaid', scene: 'y', sessionId: 'S2' });
+  createDiagram(dir, { id: 'loose', engine: 'mermaid', scene: 'z' }); // untagged
+  const s1 = listDiagrams(dir, 'S1').map((d) => d.id).sort();
+  assert.deepEqual(s1, ['loose', 'mine'], 'session list = own + untagged, not other sessions');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('createDiagram coerces a stringified scene', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'canvas-coerce-'));
   const { id } = createDiagram(dir, { engine: 'excalidraw', scene: JSON.stringify({ elements: [{ id: 'z1', type: 'rectangle' }] }) });

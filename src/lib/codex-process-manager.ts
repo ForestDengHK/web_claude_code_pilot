@@ -31,14 +31,14 @@ import { getSetting } from './db';
  * pollution). Gated by the enable_canvas setting. Mirrors the T2 wiring so all
  * backends expose the same canvas_* tools over the shared source-of-truth files.
  */
-function buildCodexArgs(): string[] {
+function buildCodexArgs(sessionId: string): string[] {
   const args: string[] = [];
   try {
     if (getSetting('enable_canvas') !== 'false') {
       const serverPath = path.join(process.cwd(), 'scripts', 'canvas-mcp-server.mjs');
       const diagramsDir = path.join(process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.codepilot'), 'diagrams');
       // TOML inline table; JSON.stringify yields valid TOML basic strings.
-      const toml = `mcp_servers.codepilot_canvas={ command = ${JSON.stringify(process.execPath)}, args = [${JSON.stringify(serverPath)}], env = { CODEPILOT_DIAGRAMS_DIR = ${JSON.stringify(diagramsDir)} } }`;
+      const toml = `mcp_servers.codepilot_canvas={ command = ${JSON.stringify(process.execPath)}, args = [${JSON.stringify(serverPath)}], env = { CODEPILOT_DIAGRAMS_DIR = ${JSON.stringify(diagramsDir)}, CODEPILOT_SESSION_ID = ${JSON.stringify(sessionId)} } }`;
       args.push('-c', toml);
     }
   } catch {
@@ -225,7 +225,7 @@ export class CodexProcessManager {
   private static async spawnAndInitialize(sessionId: string): Promise<CodexProcess> {
     // Resolved via getCodexExecutable() so a self-healed fresh-inode copy is
     // used when the installed binary's inode is hung (see codex-binary.ts).
-    const proc = spawn(getCodexExecutable(), buildCodexArgs(), {
+    const proc = spawn(getCodexExecutable(), buildCodexArgs(sessionId), {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 

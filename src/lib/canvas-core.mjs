@@ -76,15 +76,25 @@ export function coerceElements(scene) {
 export function createDiagram(dir, { id, engine, title, scene, author = 'user', sessionId = '' }) {
   fs.mkdirSync(dir, { recursive: true });
   const realId = id ? safeId(id) : genId();
+  // If this id already exists (e.g. Claude replacing a draw.io/mermaid diagram by id),
+  // CONTINUE the version + preserve title/session so the live SSE diff still fires.
+  let prev = null;
+  try { prev = readMeta(dir, realId); } catch { /* new diagram */ }
   if (engine === 'excalidraw') {
-    const elements = coerceElements(scene);
-    writeExcalidrawFile(dataPath(dir, realId, engine), elements);
+    writeExcalidrawFile(dataPath(dir, realId, engine), coerceElements(scene));
   } else {
     fs.writeFileSync(dataPath(dir, realId, engine), typeof scene === 'string' ? scene : String(scene ?? ''));
   }
-  const meta = { id: realId, engine, title: title ?? realId, version: 1, lastAuthor: author, sessionId, updatedAt: new Date().toISOString() };
+  const version = prev ? prev.version + 1 : 1;
+  const meta = {
+    id: realId, engine,
+    title: title ?? prev?.title ?? realId,
+    version, lastAuthor: author,
+    sessionId: sessionId || prev?.sessionId || '',
+    updatedAt: new Date().toISOString(),
+  };
   fs.writeFileSync(metaPath(dir, realId), JSON.stringify(meta, null, 2));
-  return { id: realId, version: 1 };
+  return { id: realId, version };
 }
 
 // Replace the full Excalidraw scene (used by the user-draw save path).
@@ -136,7 +146,9 @@ export function updateDiagram(dir, id, ops, author = 'claude') {
   return { id: meta.id, version: meta.version, applied, warnings };
 }
 
-export function listDiagrams(dir) {
+// listDiagrams(dir) -> all; listDiagrams(dir, sessionId) -> only that session's
+// (plus untagged ones, so manually-created files still surface).
+export function listDiagrams(dir, sessionId) {
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir)
     .filter((f) => f.endsWith('.meta.json'))
@@ -144,6 +156,7 @@ export function listDiagrams(dir) {
       const meta = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
       let elementCount = 0;
       try { elementCount = meta.engine === 'excalidraw' ? readElements(dir, safeId(meta.id), meta.engine).length : 0; } catch { /* ignore */ }
-      return { id: meta.id, title: meta.title, engine: meta.engine, version: meta.version, elementCount, updatedAt: meta.updatedAt };
-    });
+      return { id: meta.id, title: meta.title, engine: meta.engine, version: meta.version, elementCount, sessionId: meta.sessionId ?? '', updatedAt: meta.updatedAt };
+    })
+    .filter((d) => !sessionId || !d.sessionId || d.sessionId === sessionId);
 }
