@@ -1,0 +1,36 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>draw.io preview</title>
+<!-- Block external (incl. the viewer's optional MathJax fetch) so rendering is offline/CSP-safe.
+     GraphViewer attempts MathJax, the CSP blocks it, and the diagram still renders without math. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:">
+<style>
+  html,body{margin:0;height:100%}
+  body{background:#fff}
+  @media (prefers-color-scheme: dark){body{background:#1e1e1e}}
+  .mxgraph{width:100%;height:100%}
+  #msg{font:13px system-ui,sans-serif;color:#888;padding:16px;white-space:pre-wrap}
+  #msg.err{color:#b00}
+</style>
+<script src="/drawio/viewer-static.min.js"></script>
+</head><body>
+<div id="msg">Loading diagram…</div>
+<script>
+(function(){
+  var msg=document.getElementById('msg');
+  function fail(t){msg.className='err';msg.textContent='draw.io preview failed: '+t;}
+  var p=new URLSearchParams(location.search);
+  var path=p.get('path'); var baseDir=p.get('baseDir');
+  if(!path){fail('missing path');return;}
+  var url='/api/files/raw?path='+encodeURIComponent(path)+(baseDir?'&baseDir='+encodeURIComponent(baseDir):'');
+  fetch(url).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.text();}).then(function(xml){
+    if(typeof GraphViewer==='undefined'){fail('viewer not loaded');return;}
+    try{
+      msg.remove();
+      var el=document.createElement('div');el.className='mxgraph';
+      el.setAttribute('data-mxgraph',JSON.stringify({editable:false,highlight:'#0066cc',resize:true,nav:false,toolbar:null,lightbox:false,xml:xml}));
+      document.body.appendChild(el);
+      GraphViewer.createViewerForElement(el);
+    }catch(e){fail(String(e));}
+  }).catch(function(e){fail(String(e));});
+})();
+</script>
+</body></html>

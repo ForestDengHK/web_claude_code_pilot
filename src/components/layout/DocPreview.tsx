@@ -355,6 +355,7 @@ interface DocPreviewProps {
 const RENDERABLE_EXTENSIONS = new Set([
   ".md", ".mdx", ".html", ".htm",
   ".json", ".csv", ".tsv", ".svg", ".xml", ".yaml", ".yml",
+  ".drawio",
   ".pdf",
   ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp",
 ]);
@@ -389,6 +390,10 @@ function isCsv(filePath: string): boolean {
 
 function isSvg(filePath: string): boolean {
   return getExtension(filePath) === ".svg";
+}
+
+function isDrawio(filePath: string): boolean {
+  return getExtension(filePath) === ".drawio";
 }
 
 function isPdf(filePath: string): boolean {
@@ -946,6 +951,10 @@ function RenderedView({
     return <SvgRenderedView content={content} />;
   }
 
+  if (isDrawio(filePath)) {
+    return <DrawioRenderedView filePath={filePath} baseDir={workingDirectory ?? undefined} />;
+  }
+
   if (isPdf(filePath)) {
     return <PdfRenderedView filePath={filePath} />;
   }
@@ -1197,6 +1206,32 @@ function SvgRenderedView({ content }: { content: string }) {
         sandbox=""
         className="h-full w-full border-0"
         title="SVG Preview"
+      />
+    </PinchZoomContainer>
+  );
+}
+
+/* ── draw.io Rendered View (read-only, rendered client-side by the bundled
+   GraphViewer). The viewer is hosted in the static page /drawio/view.html, loaded
+   via an iframe `src` (a real same-origin URL — GraphViewer doesn't render under
+   about:srcdoc). The page fetches the file via /api/files/raw and renders it to
+   SVG; its CSP blocks all external origins, so the viewer's optional MathJax
+   fetch (viewer.diagrams.net) is blocked and the diagram still renders fully
+   offline. This keeps the 3.9MB vendor global out of the main app bundle. */
+function DrawioRenderedView({ filePath, baseDir }: { filePath: string; baseDir?: string }) {
+  const src = useMemo(() => {
+    const params = new URLSearchParams({ path: filePath });
+    if (baseDir) params.set("baseDir", baseDir);
+    return `/drawio/view.html?${params.toString()}`;
+  }, [filePath, baseDir]);
+
+  return (
+    <PinchZoomContainer iframeMode resetKey={filePath}>
+      <iframe
+        src={src}
+        sandbox="allow-scripts allow-same-origin"
+        className="h-full w-full border-0"
+        title="draw.io Preview"
       />
     </PinchZoomContainer>
   );

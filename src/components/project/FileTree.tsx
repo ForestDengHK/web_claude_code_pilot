@@ -49,6 +49,8 @@ function isDotfileHidden(name: string): boolean {
 const PREVIEWABLE_EXTENSIONS = new Set([
   // Markup & data
   "md", "mdx", "html", "htm", "json", "yaml", "yml", "toml", "csv", "tsv", "svg", "xml",
+  // Diagrams (draw.io — rendered read-only via bundled GraphViewer in DocPreview)
+  "drawio",
   // Images
   "png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "ico",
   // Video (browser-playable formats)
