@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ExcalidrawCanvas, { type ExcalidrawApi } from './ExcalidrawCanvas';
+import type { CanvasMode } from './CanvasPanel';
 
 export interface SceneData { id: string; engine: string; version: number; title: string; elements?: unknown[]; source?: string }
 
-interface Props { id: string; initial: SceneData; onStatus: (s: string) => void; }
+interface Props { id: string; initial: SceneData; onStatus: (s: string) => void; mode: CanvasMode; }
 
 // Excalidraw engine view: load → debounced user save → live reload on external (Claude) writes.
-export default function ExcalidrawView({ id, initial, onStatus }: Props) {
+export default function ExcalidrawView({ id, initial, onStatus, mode }: Props) {
   const [ready, setReady] = useState(false);
   const [initialElements, setInitialElements] = useState<unknown[]>([]);
   const apiRef = useRef<ExcalidrawApi | null>(null);
@@ -73,5 +74,5 @@ export default function ExcalidrawView({ id, initial, onStatus }: Props) {
   }, [id, ready, onStatus]);
 
   if (!ready) return <div style={{ padding: 16 }}>loading…</div>;
-  return <ExcalidrawCanvas initialElements={initialElements} onApi={(api) => { apiRef.current = api; }} onChange={onChange} />;
+  return <ExcalidrawCanvas initialElements={initialElements} onApi={(api) => { apiRef.current = api; }} onChange={onChange} viewMode={mode === 'view'} />;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { StructureFolderIcon, PanelRightCloseIcon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import { cn } from "@/lib/utils";
@@ -22,6 +22,9 @@ interface RightPanelProps {
 
 export function RightPanel({ width }: RightPanelProps) {
   const { panelOpen, setPanelOpen, panelContent, setPanelContent, workingDirectory, sessionId, previewFile, setPreviewFile, setPreviewLine, setPreviewViewMode } = usePanel();
+  // Mobile only: dock the panel to the top half so the chat (composer + latest messages)
+  // stays visible underneath — lets you chat while watching the canvas update live.
+  const [mobileSplit, setMobileSplit] = useState(false);
 
   const handleFileAdd = useCallback((path: string, isDirectory?: boolean) => {
     window.dispatchEvent(new CustomEvent('attach-file-to-chat', { detail: { path, isDirectory: isDirectory ?? false } }));
@@ -91,8 +94,10 @@ export function RightPanel({ width }: RightPanelProps) {
       data-mobile-overlay=""
       className={cn(
         "flex flex-col overflow-hidden bg-background",
-        "fixed inset-x-0 top-0 bottom-14 z-50",
-        "md:static md:inset-auto md:z-auto md:h-full md:shrink-0"
+        mobileSplit
+          ? "fixed inset-x-0 top-0 h-[55vh] z-50 border-b shadow-lg"
+          : "fixed inset-x-0 top-0 bottom-14 z-50",
+        "md:static md:inset-auto md:z-auto md:h-full md:shrink-0 md:border-b-0 md:shadow-none"
       )}
       style={{ width: width ?? 288 }}
     >
@@ -113,14 +118,23 @@ export function RightPanel({ width }: RightPanelProps) {
             </button>
           ))}
         </div>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={() => setPanelOpen(false)}
-        >
-          <HugeiconsIcon icon={Cancel01Icon} className="h-4 w-4" />
-          <span className="sr-only">Close panel</span>
-        </Button>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setMobileSplit((s) => !s)}
+            className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground transition-colors"
+          >
+            {mobileSplit ? "Full" : "Split"}
+          </button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setPanelOpen(false)}
+          >
+            <HugeiconsIcon icon={Cancel01Icon} className="h-4 w-4" />
+            <span className="sr-only">Close panel</span>
+          </Button>
+        </div>
       </div>
       {/* Desktop header */}
       <div className="hidden h-12 shrink-0 items-center justify-between px-4 md:flex">

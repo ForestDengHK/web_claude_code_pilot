@@ -1,0 +1,99 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>draw.io view</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<!-- Read-only canvas viewer: loads a canvas's mxGraph XML by id and renders it with
+     GraphViewer (editable:false, no built-in toolbar). GraphViewer fits the diagram to
+     the full-size #stage at scale 1; pan/zoom is then handled by transforming #stage via
+     Pointer Events (1 finger = pan, 2 fingers = pinch-zoom, wheel = zoom). GraphViewer's
+     own viewer only offers zoom buttons (no panning/pinch) which is unusable on mobile.
+     Read-only means elements can never be dragged. Identity transform = fitted view. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:">
+<style>
+  html,body{margin:0;height:100%;overflow:hidden}
+  body{background:#fff}
+  @media (prefers-color-scheme: dark){body{background:#1e1e1e}}
+  #container{position:absolute;inset:0;overflow:hidden;touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none}
+  #container.grabbing{cursor:grabbing}
+  #stage{position:absolute;inset:0;transform-origin:0 0;will-change:transform}
+  #stage .mxgraph{width:100%;height:100%}
+  #msg{font:13px system-ui,sans-serif;color:#888;padding:16px;white-space:pre-wrap}
+  #msg.err{color:#b00}
+  #zoom{position:absolute;left:8px;top:8px;display:flex;gap:6px;z-index:10}
+  #zoom button{width:34px;height:34px;border:1px solid rgba(0,0,0,.15);background:rgba(255,255,255,.92);border-radius:8px;font-size:18px;line-height:1;cursor:pointer;color:#333;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+  @media (prefers-color-scheme: dark){#zoom button{background:rgba(40,40,40,.92);border-color:rgba(255,255,255,.18);color:#ddd}}
+</style>
+<script src="/drawio/viewer-static.min.js"></script>
+</head><body>
+<div id="msg">Loading diagram…</div>
+<script>
+(function(){
+  var msg=document.getElementById('msg');
+  function fail(t){if(msg){msg.className='err';msg.textContent='draw.io view failed: '+t;}}
+  var p=new URLSearchParams(location.search);
+  var id=p.get('id');
+  if(!id){fail('missing id');return;}
+  fetch('/api/canvas/'+encodeURIComponent(id)).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(function(scene){
+    var xml=scene&&scene.source?scene.source:'';
+    if(!xml){fail('empty diagram');return;}
+    if(typeof GraphViewer==='undefined'){fail('viewer not loaded');return;}
+    try{ render(xml); }catch(e){ fail(String(e)); }
+  }).catch(function(e){fail(String(e));});
+
+  function render(xml){
+    if(msg){msg.remove();msg=null;}
+    var container=document.createElement('div');container.id='container';
+    var stage=document.createElement('div');stage.id='stage';
+    var graph=document.createElement('div');graph.className='mxgraph';
+    // resize:true → GraphViewer fits the diagram into #stage (full viewport) at load.
+    graph.setAttribute('data-mxgraph',JSON.stringify({editable:false,highlight:'#0066cc',resize:true,nav:false,toolbar:null,lightbox:false,xml:xml}));
+    stage.appendChild(graph);container.appendChild(stage);document.body.appendChild(container);
+    GraphViewer.createViewerForElement(graph);
+
+    var zoom=document.createElement('div');zoom.id='zoom';
+    zoom.innerHTML='<button data-z="in">+</button><button data-z="out">−</button><button data-z="fit">⤢</button>';
+    document.body.appendChild(zoom);
+
+    // Identity transform = GraphViewer's fitted view; pan/zoom layers on top of it.
+    var scale=1,tx=0,ty=0;
+    function apply(){stage.style.transform='translate('+tx+'px,'+ty+'px) scale('+scale+')';}
+    function zoomAt(cx,cy,f){
+      var r=container.getBoundingClientRect();var x=cx-r.left,y=cy-r.top;
+      var ns=Math.min(20,Math.max(0.2,scale*f));f=ns/scale;
+      tx=x-(x-tx)*f;ty=y-(y-ty)*f;scale=ns;apply();
+    }
+    function reset(){scale=1;tx=0;ty=0;apply();}
+    window.addEventListener('resize',reset);
+
+    var pointers=new Map();var lastDist=0,lastMid=null;
+    container.addEventListener('pointerdown',function(e){
+      try{container.setPointerCapture(e.pointerId);}catch(_){/* not fatal — keep tracking the pointer */}
+      pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+      container.classList.add('grabbing');
+      if(pointers.size===2){var v=Array.from(pointers.values());lastMid={x:(v[0].x+v[1].x)/2,y:(v[0].y+v[1].y)/2};lastDist=Math.hypot(v[0].x-v[1].x,v[0].y-v[1].y);}
+    });
+    container.addEventListener('pointermove',function(e){
+      if(!pointers.has(e.pointerId))return;
+      var prev=pointers.get(e.pointerId);pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+      var v=Array.from(pointers.values());
+      if(v.length===1){tx+=e.clientX-prev.x;ty+=e.clientY-prev.y;apply();}
+      else if(v.length===2){
+        var dist=Math.hypot(v[0].x-v[1].x,v[0].y-v[1].y);var mid={x:(v[0].x+v[1].x)/2,y:(v[0].y+v[1].y)/2};
+        if(lastDist&&lastMid){tx+=mid.x-lastMid.x;ty+=mid.y-lastMid.y;zoomAt(mid.x,mid.y,dist/lastDist);}
+        lastDist=dist;lastMid=mid;
+      }
+    });
+    function endPointer(e){pointers.delete(e.pointerId);if(pointers.size<2){lastDist=0;lastMid=null;}if(pointers.size===0)container.classList.remove('grabbing');}
+    container.addEventListener('pointerup',endPointer);
+    container.addEventListener('pointercancel',endPointer);
+    container.addEventListener('wheel',function(e){e.preventDefault();zoomAt(e.clientX,e.clientY,e.deltaY<0?1.12:1/1.12);},{passive:false});
+
+    zoom.addEventListener('click',function(e){
+      var b=e.target.getAttribute&&e.target.getAttribute('data-z');if(!b)return;
+      var r=container.getBoundingClientRect();
+      if(b==='in')zoomAt(r.left+r.width/2,r.top+r.height/2,1.25);
+      else if(b==='out')zoomAt(r.left+r.width/2,r.top+r.height/2,1/1.25);
+      else reset();
+    });
+  }
+})();
+</script>
+</body></html>

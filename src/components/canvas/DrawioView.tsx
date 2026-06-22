@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { SceneData } from './ExcalidrawView';
+import type { CanvasMode } from './CanvasPanel';
 
-interface Props { id: string; initial: SceneData; onStatus: (s: string) => void; }
+interface Props { id: string; initial: SceneData; onStatus: (s: string) => void; mode: CanvasMode; }
 
 const EMBED_URL = 'https://embed.diagrams.net/?embed=1&proto=json&spin=1&libraries=1&configure=0&noSaveBtn=1';
 
@@ -11,14 +12,17 @@ const EMBED_URL = 'https://embed.diagrams.net/?embed=1&proto=json&spin=1&librari
 // JSON postMessage protocol (init/load/autosave) — the same iframe⇄host shape as
 // baoyu's Tweaks protocol. Bidirectional: user edits → autosave → save XML;
 // Claude rewrites the mxGraph XML → reload the editor with the new XML.
-export default function DrawioView({ id, initial, onStatus }: Props) {
+export default function DrawioView({ id, initial, onStatus, mode }: Props) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const myVersionRef = useRef(initial.version);
   const sourceRef = useRef(initial.source ?? '');
+  // Read-only viewer reloads by cache-busting its iframe src when Claude rewrites the diagram.
+  const [viewVersion, setViewVersion] = useState(initial.version);
 
   const post = (msg: object) => iframeRef.current?.contentWindow?.postMessage(JSON.stringify(msg), '*');
 
   useEffect(() => {
+    if (mode !== 'edit') return;
     const onMessage = async (evt: MessageEvent) => {
       if (typeof evt.data !== 'string') return;
       let data: { event?: string; xml?: string };
@@ -34,7 +38,7 @@ export default function DrawioView({ id, initial, onStatus }: Props) {
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [id, onStatus]);
+  }, [id, onStatus, mode]);
 
   useEffect(() => {
     const es = new EventSource(`/api/canvas/${id}/stream`);
@@ -48,11 +52,15 @@ export default function DrawioView({ id, initial, onStatus }: Props) {
       const scene = await res.json();
       myVersionRef.current = scene.version;
       sourceRef.current = scene.source ?? '';
-      post({ action: 'load', xml: sourceRef.current, autosave: 1 });
+      if (mode === 'edit') post({ action: 'load', xml: sourceRef.current, autosave: 1 });
+      else setViewVersion(scene.version);
       onStatus(`updated by Claude → v${scene.version}`);
     };
     return () => es.close();
-  }, [id, onStatus]);
+  }, [id, onStatus, mode]);
 
+  if (mode === 'view') {
+    return <iframe key={`view-${viewVersion}`} src={`/drawio/canvas-view.html?id=${id}&v=${viewVersion}`} title="draw.io view" style={{ width: '100%', height: '100%', border: 'none' }} />;
+  }
   return <iframe ref={iframeRef} src={EMBED_URL} title="draw.io" style={{ width: '100%', height: '100%', border: 'none' }} />;
 }

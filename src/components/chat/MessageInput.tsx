@@ -493,6 +493,17 @@ function FileTreeAttachmentBridge() {
     return () => window.removeEventListener('detach-file-from-chat', handler);
   }, []);
 
+  // Listen for an annotated canvas image (from Canvas → Annotate mode). Reuses the normal
+  // image-upload path: a real PNG File goes through the same attachments pipeline.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const file = (e as CustomEvent<{ file?: File }>).detail?.file;
+      if (file) attachmentsRef.current.add([file]);
+    };
+    window.addEventListener('attach-image-to-chat', handler);
+    return () => window.removeEventListener('attach-image-to-chat', handler);
+  }, []);
+
   return null;
 }
 

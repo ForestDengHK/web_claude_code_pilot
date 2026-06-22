@@ -22,9 +22,10 @@ interface Props {
   initialElements: unknown[];
   onApi: (api: ExcalidrawApi) => void;
   onChange: (elements: readonly unknown[]) => void;
+  viewMode: boolean;
 }
 
-export default function ExcalidrawCanvas({ initialElements, onApi, onChange }: Props) {
+export default function ExcalidrawCanvas({ initialElements, onApi, onChange, viewMode }: Props) {
   // mount-only: hand the API up to the parent
   useEffect(() => () => { /* unmount cleanup handled by Excalidraw */ }, []);
   return (
@@ -32,6 +33,7 @@ export default function ExcalidrawCanvas({ initialElements, onApi, onChange }: P
       initialData={{ elements: initialElements as never, scrollToContent: true }}
       excalidrawAPI={(api) => onApi(api as unknown as ExcalidrawApi)}
       onChange={(elements) => onChange(elements)}
+      viewModeEnabled={viewMode}
     />
   );
 }

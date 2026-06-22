@@ -50,7 +50,7 @@ export default function CanvasListPanel({ sessionId }: Props) {
   if (selected) {
     return (
       <div className="flex flex-col h-full min-h-0">
-        <button onClick={() => setSelected(null)} className="shrink-0 text-left text-xs text-muted-foreground px-3 py-2 border-b">← 画布列表</button>
+        <button onClick={() => setSelected(null)} className="shrink-0 text-left text-xs text-muted-foreground px-3 py-2 border-b">← Canvas list</button>
         <div className="flex-1 min-h-0"><CanvasPanel id={selected} /></div>
       </div>
     );
@@ -64,7 +64,7 @@ export default function CanvasListPanel({ sessionId }: Props) {
         <button onClick={() => create('mermaid')} className="text-xs border rounded px-2 py-1">+ Mermaid</button>
       </div>
       {items.length === 0 ? (
-        <p className="text-xs text-muted-foreground p-3">这次对话还没有画布。新建一个,或在聊天里让 Claude 画一个(会自动出现在这里)。</p>
+        <p className="text-xs text-muted-foreground p-3">No canvases in this conversation yet. Create one above, or ask Claude to draw one in the chat — it&apos;ll appear here automatically.</p>
       ) : (
         <ul className="flex flex-col">
           {items.map((d) => (
