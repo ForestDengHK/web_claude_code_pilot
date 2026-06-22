@@ -560,7 +560,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
             type: 'stdio',
             command: process.execPath,
             args: [canvasServerPath],
-            env: { ...process.env, CODEPILOT_DIAGRAMS_DIR: diagramsDir } as Record<string, string>,
+            env: { ...process.env, CODEPILOT_DIAGRAMS_DIR: diagramsDir, CODEPILOT_SESSION_ID: sessionId ?? '' } as Record<string, string>,
           };
           queryOptions.mcpServers = {
             ...(queryOptions.mcpServers ?? {}),

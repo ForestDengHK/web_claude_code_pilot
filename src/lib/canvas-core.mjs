@@ -73,7 +73,7 @@ export function coerceElements(scene) {
   return [];
 }
 
-export function createDiagram(dir, { id, engine, title, scene, author = 'user' }) {
+export function createDiagram(dir, { id, engine, title, scene, author = 'user', sessionId = '' }) {
   fs.mkdirSync(dir, { recursive: true });
   const realId = id ? safeId(id) : genId();
   if (engine === 'excalidraw') {
@@ -82,7 +82,7 @@ export function createDiagram(dir, { id, engine, title, scene, author = 'user' }
   } else {
     fs.writeFileSync(dataPath(dir, realId, engine), typeof scene === 'string' ? scene : String(scene ?? ''));
   }
-  const meta = { id: realId, engine, title: title ?? realId, version: 1, lastAuthor: author, updatedAt: new Date().toISOString() };
+  const meta = { id: realId, engine, title: title ?? realId, version: 1, lastAuthor: author, sessionId, updatedAt: new Date().toISOString() };
   fs.writeFileSync(metaPath(dir, realId), JSON.stringify(meta, null, 2));
   return { id: realId, version: 1 };
 }

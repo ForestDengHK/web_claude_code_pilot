@@ -33,7 +33,7 @@ export function buildServer(diagramsDir) {
       switch (req.params.name) {
         case 'canvas_list': return asText(listDiagrams(diagramsDir));
         case 'canvas_read': return asText(readDiagram(diagramsDir, a.id));
-        case 'canvas_create': return asText(createDiagram(diagramsDir, a));
+        case 'canvas_create': return asText(createDiagram(diagramsDir, { ...a, sessionId: a.sessionId ?? process.env.CODEPILOT_SESSION_ID ?? '' }));
         case 'canvas_update': return asText(updateDiagram(diagramsDir, a.id, a.ops ?? {}));
         default: throw new Error(`unknown tool: ${req.params.name}`);
       }

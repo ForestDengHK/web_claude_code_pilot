@@ -14,6 +14,7 @@ import { usePanel } from "@/hooks/usePanel";
 import { FileTree } from "@/components/project/FileTree";
 import { HistoryPanel } from "@/components/project/HistoryPanel";
 import { ArtifactListPanel } from "@/components/project/ArtifactListPanel";
+import CanvasListPanel from "@/components/canvas/CanvasListPanel";
 
 interface RightPanelProps {
   width?: number;
@@ -60,6 +61,7 @@ export function RightPanel({ width }: RightPanelProps) {
 
   const tabs = [
     { value: "files" as const, label: "Files" },
+    { value: "canvas" as const, label: "Canvas" },
     { value: "artifacts" as const, label: "Artifacts" },
     { value: "history" as const, label: "History" },
   ];
@@ -168,6 +170,7 @@ export function RightPanel({ width }: RightPanelProps) {
           <HistoryPanel workingDirectory={workingDirectory} />
         )}
         {panelContent === "artifacts" && <ArtifactListPanel />}
+        {panelContent === "canvas" && <CanvasListPanel sessionId={sessionId} />}
       </div>
     </aside>
   );

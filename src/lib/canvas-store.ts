@@ -21,11 +21,16 @@ export function getDiagramsDir(): string {
 /** Upsert the diagrams row + a diagram_versions row from the on-disk meta. Idempotent. */
 function indexFromMeta(meta: DiagramMeta, sessionId: string, messageId?: string): void {
   const db = getDb();
+  // Prefer the session stamped in the on-disk meta (set when Claude/MCP created it),
+  // so canvases drawn during a chat turn are tagged to that conversation.
+  const sid = meta.sessionId || sessionId;
   db.prepare(
     `INSERT INTO diagrams (id, session_id, title, engine, file_path, current_version, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-     ON CONFLICT(id) DO UPDATE SET title=excluded.title, current_version=excluded.current_version, updated_at=datetime('now')`,
-  ).run(meta.id, sessionId, meta.title, meta.engine, `${meta.id}.${meta.engine === 'mermaid' ? 'mmd' : meta.engine}`, meta.version);
+     ON CONFLICT(id) DO UPDATE SET title=excluded.title, current_version=excluded.current_version,
+       session_id=CASE WHEN excluded.session_id != '' THEN excluded.session_id ELSE diagrams.session_id END,
+       updated_at=datetime('now')`,
+  ).run(meta.id, sid, meta.title, meta.engine, `${meta.id}.${meta.engine === 'mermaid' ? 'mmd' : meta.engine}`, meta.version);
   db.prepare(
     `INSERT OR IGNORE INTO diagram_versions (diagram_id, version, author, message_id, summary)
      VALUES (?, ?, ?, ?, ?)`,
@@ -34,7 +39,7 @@ function indexFromMeta(meta: DiagramMeta, sessionId: string, messageId?: string)
 
 export function createCanvas(args: { sessionId?: string; id?: string; engine?: Engine; title?: string; scene?: unknown; author?: string }): { id: string; version: number } {
   const dir = getDiagramsDir();
-  const res = createDiagram(dir, { id: args.id, engine: args.engine ?? 'excalidraw', title: args.title, scene: args.scene ?? { elements: [] }, author: args.author ?? 'user' });
+  const res = createDiagram(dir, { id: args.id, engine: args.engine ?? 'excalidraw', title: args.title, scene: args.scene ?? { elements: [] }, author: args.author ?? 'user', sessionId: args.sessionId ?? '' });
   indexFromMeta(readMeta(dir, res.id), args.sessionId ?? '');
   return res;
 }
