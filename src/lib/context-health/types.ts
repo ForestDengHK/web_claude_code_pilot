@@ -8,6 +8,8 @@ export interface TurnMetrics {
   model: string;
   contextWindow: number;
   turnIndex: number;
+  /** True when this turn leaked a tool call as plain text (degradation signal). */
+  leakedToolCall?: boolean;
 }
 
 /** Aggregated session-level metrics */

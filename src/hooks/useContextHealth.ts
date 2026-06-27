@@ -15,7 +15,7 @@ function createEmptySession(): SessionMetrics {
   };
 }
 
-function usageToTurnMetrics(usage: TokenUsage, turnIndex: number): TurnMetrics {
+function usageToTurnMetrics(usage: TokenUsage, turnIndex: number, leaked = false): TurnMetrics {
   const cacheRead = usage.cache_read_input_tokens ?? 0;
   const cacheCreation = usage.cache_creation_input_tokens ?? 0;
 
@@ -30,6 +30,7 @@ function usageToTurnMetrics(usage: TokenUsage, turnIndex: number): TurnMetrics {
     model: usage.model ?? '',
     contextWindow: usage.contextWindow ?? 200000,
     turnIndex,
+    leakedToolCall: leaked,
   };
 }
 
@@ -45,17 +46,17 @@ export function useContextHealth(backend: 'claude' | 'codex' | 'channels') {
   const configRef = useRef<RuleConfig>({});
   const enabledRef = useRef(true);
   const settingsLoadedRef = useRef(false);
-  const pendingUsagesRef = useRef<TokenUsage[]>([]);
+  const pendingUsagesRef = useRef<Array<{ usage: TokenUsage; leaked: boolean }>>([]);
   // Rule ids the user explicitly dismissed this session. In-memory only:
   // cleared on `resetSession()` and on page reload (user would have a fresh
   // context then anyway). For permanent mute, Settings → Context Health lets
   // the user disable a rule outright — we don't duplicate that here.
   const dismissedRuleIdsRef = useRef<Set<string>>(new Set());
 
-  const appendTurn = useCallback((usage: TokenUsage) => {
+  const appendTurn = useCallback((usage: TokenUsage, leaked = false) => {
     const session = sessionRef.current;
     const turnIndex = session.turns.length;
-    const turn = usageToTurnMetrics(usage, turnIndex);
+    const turn = usageToTurnMetrics(usage, turnIndex, leaked);
 
     session.turns.push(turn);
     session.totalCost += turn.costUsd ?? 0;
@@ -93,8 +94,8 @@ export function useContextHealth(backend: 'claude' | 'codex' | 'channels') {
 
     let latestAlerts: HealthAlert[] = [];
     const additions: Array<[number, HealthAlert[]]> = [];
-    for (const usage of pending) {
-      const { turnIndex, newAlerts } = appendTurn(usage);
+    for (const { usage, leaked } of pending) {
+      const { turnIndex, newAlerts } = appendTurn(usage, leaked);
       latestAlerts = newAlerts;
       if (newAlerts.length > 0) {
         additions.push([turnIndex, newAlerts]);
@@ -146,15 +147,15 @@ export function useContextHealth(backend: 'claude' | 'codex' | 'channels') {
       .catch(() => { /* ignore fetch errors */ });
   }, [backend]);
 
-  const recordTurn = useCallback((usage: TokenUsage | null) => {
+  const recordTurn = useCallback((usage: TokenUsage | null, leaked = false) => {
     if (backend !== 'claude' || !usage) return;
     if (!settingsLoadedRef.current) {
-      pendingUsagesRef.current.push(usage);
+      pendingUsagesRef.current.push({ usage, leaked });
       return;
     }
     if (!enabledRef.current) return;
 
-    const { turnIndex, newAlerts } = appendTurn(usage);
+    const { turnIndex, newAlerts } = appendTurn(usage, leaked);
     setAlerts(newAlerts);
     if (newAlerts.length > 0) {
       setTurnAlerts(prev => new Map(prev).set(turnIndex, newAlerts));
@@ -212,7 +213,7 @@ export function useContextHealth(backend: 'claude' | 'codex' | 'channels') {
    * Rebuild state from persisted assistant messages.
    * This keeps turn indexes aligned after reload/recovery without replaying toasts.
    */
-  const hydrateHistory = useCallback((usages: TokenUsage[]) => {
+  const hydrateHistory = useCallback((turns: Array<{ usage: TokenUsage; leaked: boolean }>) => {
     if (backend !== 'claude') return;
 
     if (!enabledRef.current) {
@@ -227,8 +228,8 @@ export function useContextHealth(backend: 'claude' | 'codex' | 'channels') {
     const firedHistory = new Map<string, number>();
     const hydratedTurnAlerts = new Map<number, HealthAlert[]>();
 
-    for (const usage of usages) {
-      const turn = usageToTurnMetrics(usage, session.turns.length);
+    for (const { usage, leaked } of turns) {
+      const turn = usageToTurnMetrics(usage, session.turns.length, leaked);
       session.turns.push(turn);
       session.totalCost += turn.costUsd ?? 0;
       session.lastActivityAt = Date.now();

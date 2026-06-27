@@ -21,6 +21,7 @@ import type { ClaudeAccountInfo } from '@/lib/claude-usage';
 import { normalizeModeForBackend } from '@/lib/permission-modes';
 import { useContextHealth } from '@/hooks/useContextHealth';
 import { ContextHealthToast } from './ContextHealthToast';
+import { detectLeakedToolCall } from '@/lib/context-health';
 import type { HealthAction } from '@/lib/context-health';
 import type { Tier } from '@/lib/channels/tiers';
 import { TierSwitchPrompt } from './TierSwitchPrompt';
@@ -243,31 +244,34 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   // actually changes. Live SSE updates (where `recordTurn` already populated
   // turnAlerts) won't change the persisted fingerprint until the message lands
   // in DB, which happens once per turn.
-  const persistedUsages = useMemo(() => {
+  const persistedTurns = useMemo(() => {
     if (currentBackend !== 'claude') return [];
     return messages
       .filter((msg) => msg.role === 'assistant' && !!msg.token_usage)
       .map((msg) => {
+        let usage: TokenUsage | null;
         try {
-          return typeof msg.token_usage === 'string'
+          usage = typeof msg.token_usage === 'string'
             ? JSON.parse(msg.token_usage)
-            : msg.token_usage;
+            : (msg.token_usage as TokenUsage | null);
         } catch {
-          return null;
+          usage = null;
         }
+        if (!usage) return null;
+        return { usage, leaked: detectLeakedToolCall(msg.content) };
       })
-      .filter((usage): usage is TokenUsage => !!usage);
+      .filter((t): t is { usage: TokenUsage; leaked: boolean } => !!t);
   }, [currentBackend, messages]);
 
   const persistedFingerprint = useMemo(() => {
-    // Compact, stable signature: count + per-turn (input|output|cacheRead|cacheCreation|cost)
-    if (persistedUsages.length === 0) return '0';
-    const parts = persistedUsages.map(
-      (u) =>
-        `${u.input_tokens}|${u.output_tokens}|${u.cache_read_input_tokens ?? 0}|${u.cache_creation_input_tokens ?? 0}|${u.cost_usd ?? 0}`,
+    // Compact, stable signature: count + per-turn (input|output|cacheRead|cacheCreation|cost|leaked)
+    if (persistedTurns.length === 0) return '0';
+    const parts = persistedTurns.map(
+      ({ usage: u, leaked }) =>
+        `${u.input_tokens}|${u.output_tokens}|${u.cache_read_input_tokens ?? 0}|${u.cache_creation_input_tokens ?? 0}|${u.cost_usd ?? 0}|${leaked ? 1 : 0}`,
     );
-    return `${persistedUsages.length}:${parts.join(',')}`;
-  }, [persistedUsages]);
+    return `${persistedTurns.length}:${parts.join(',')}`;
+  }, [persistedTurns]);
 
   const lastHydratedFingerprintRef = useRef<string | null>(null);
 
@@ -288,13 +292,13 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     if (lastHydratedFingerprintRef.current === persistedFingerprint) return;
 
     lastHydratedFingerprintRef.current = persistedFingerprint;
-    hydrateHistory(persistedUsages);
+    hydrateHistory(persistedTurns);
   }, [
     currentBackend,
     hydrateHistory,
     isStreaming,
     persistedFingerprint,
-    persistedUsages,
+    persistedTurns,
     resetHealthSession,
   ]);
 
@@ -1296,7 +1300,10 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             }
           },
           onResult: (usage) => {
-            recordTurn(usage);
+            // Flag turns where the model wrote a tool call as plain text instead
+            // of executing it — the context-degradation signal that surfaces the
+            // "session degraded, start a new session" alert.
+            recordTurn(usage, detectLeakedToolCall(accumulatedRef.current));
           },
           onCompact: (trigger, preTokens) => {
             recordCompact(trigger, preTokens);

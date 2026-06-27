@@ -108,6 +108,15 @@ export const rules: HealthRule[] = [
     actions: [{ type: 'new-session' }, { type: 'dismiss' }], cooldownTurns: 1,
   },
   {
+    id: 'tool-call-leak', name: 'Tool call emitted as text',
+    description: 'The model wrote a tool call as plain text instead of executing it — a sign the session has degraded and is silently stalling.',
+    models: '*', severity: 'critical',
+    // No configSchema — this is a boolean detection, not a tunable threshold.
+    condition: (t) => t.leakedToolCall === true,
+    message: () => 'The model wrote a command as plain text instead of running it — this session has degraded. Start a new session to continue.',
+    actions: [{ type: 'new-session' }, { type: 'dismiss' }], cooldownTurns: 3,
+  },
+  {
     id: 'auto-compact-fired', name: 'Auto-compact occurred',
     description: 'Claude Code auto-compacted the context. Informational only.',
     models: '*', severity: 'info',
