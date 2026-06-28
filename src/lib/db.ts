@@ -521,6 +521,17 @@ function migrateDb(db: Database.Database): void {
   db.prepare("CREATE INDEX IF NOT EXISTS idx_task_runs_task ON task_runs(task_id, scheduled_at DESC)").run();
   db.prepare("CREATE INDEX IF NOT EXISTS idx_task_runs_status ON task_runs(status)").run();
   db.prepare("CREATE INDEX IF NOT EXISTS idx_task_runs_session ON task_runs(session_id)").run();
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_provider_lanes (
+      session_id          TEXT NOT NULL,
+      provider_key        TEXT NOT NULL,
+      claude_session_id   TEXT NOT NULL DEFAULT '',
+      last_bridged_msg_id TEXT,
+      updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (session_id, provider_key)
+    )
+  `);
 }
 
 // ==========================================
@@ -589,6 +600,36 @@ export function deleteSession(id: string): boolean {
   }
   const result = db.prepare('DELETE FROM chat_sessions WHERE id = ?').run(id);
   return result.changes > 0;
+}
+
+// ==========================================
+// Provider Lane Operations
+// ==========================================
+
+export function getProviderLane(
+  sessionId: string, providerKey: string,
+): { claude_session_id: string; last_bridged_msg_id: string | null } | undefined {
+  return getDb()
+    .prepare('SELECT claude_session_id, last_bridged_msg_id FROM session_provider_lanes WHERE session_id = ? AND provider_key = ?')
+    .get(sessionId, providerKey) as { claude_session_id: string; last_bridged_msg_id: string | null } | undefined;
+}
+
+export function setProviderLaneSessionId(sessionId: string, providerKey: string, claudeSessionId: string): void {
+  getDb().prepare(`
+    INSERT INTO session_provider_lanes (session_id, provider_key, claude_session_id, updated_at)
+    VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(session_id, provider_key)
+    DO UPDATE SET claude_session_id = excluded.claude_session_id, updated_at = datetime('now')
+  `).run(sessionId, providerKey, claudeSessionId);
+}
+
+export function setProviderLaneBridgedMsgId(sessionId: string, providerKey: string, msgId: string): void {
+  getDb().prepare(`
+    INSERT INTO session_provider_lanes (session_id, provider_key, last_bridged_msg_id, updated_at)
+    VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(session_id, provider_key)
+    DO UPDATE SET last_bridged_msg_id = excluded.last_bridged_msg_id, updated_at = datetime('now')
+  `).run(sessionId, providerKey, msgId);
 }
 
 export function updateSessionTimestamp(id: string): void {
