@@ -582,7 +582,6 @@ export function MessageInput({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const modeMenuRef = useRef<HTMLDivElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
-  const providerMenuRef = useRef<HTMLDivElement>(null);
 
   const [popoverMode, setPopoverMode] = useState<PopoverMode>(null);
   const [popoverItems, setPopoverItems] = useState<PopoverItem[]>([]);
@@ -591,7 +590,6 @@ export function MessageInput({
   const [triggerPos, setTriggerPos] = useState<number | null>(null);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const [providerMenuOpen, setProviderMenuOpen] = useState(false);
   const [providers, setProviders] = useState<{ id: string; name: string }[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [dynamicModels, setDynamicModels] = useState<Array<{ value: string; label: string; group?: 'claude' | 'codex' }> | null>(null);
@@ -1202,18 +1200,6 @@ export function MessageInput({
     return () => document.removeEventListener('mousedown', handler);
   }, [modelMenuOpen]);
 
-  // Click outside to close provider menu
-  useEffect(() => {
-    if (!providerMenuOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (providerMenuRef.current && !providerMenuRef.current.contains(e.target as Node)) {
-        setProviderMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [providerMenuOpen]);
-
   const filteredItems = popoverItems.filter((item) =>
     item.label.toLowerCase().includes(popoverFilter.toLowerCase())
   );
@@ -1521,61 +1507,7 @@ export function MessageInput({
                   )}
                 </div>
 
-                {/* Provider picker — only rendered when multiple providers are configured */}
-                {providers.length > 0 && (
-                  <div className="relative" ref={providerMenuRef}>
-                    <PromptInputButton
-                      onClick={() => setProviderMenuOpen((prev) => !prev)}
-                    >
-                      <span className="text-xs max-w-[8ch] truncate sm:max-w-none">
-                        {providerId ? (providers.find(p => p.id === providerId)?.name ?? 'Default') : 'Default'}
-                      </span>
-                      <HugeiconsIcon icon={ArrowDown01Icon} className={cn("h-2.5 w-2.5 shrink-0 transition-transform duration-200", providerMenuOpen && "rotate-180")} />
-                    </PromptInputButton>
-
-                    {providerMenuOpen && (
-                      <div className="absolute bottom-full left-0 mb-1.5 w-44 rounded-lg border bg-popover shadow-lg overflow-hidden z-50">
-                        <div className="py-0.5">
-                          {/* Default entry — clears provider override */}
-                          <button
-                            type="button"
-                            className={cn(
-                              "flex w-full items-center px-3 py-[5px] text-left transition-colors",
-                              !providerId ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
-                            )}
-                            onClick={() => {
-                              onProviderChange?.('');
-                              setProviderMenuOpen(false);
-                            }}
-                          >
-                            <span className="font-mono text-[11px]">Default</span>
-                          </button>
-                          {providers.map((p) => {
-                            const isActive = p.id === providerId;
-                            return (
-                              <button
-                                type="button"
-                                key={p.id}
-                                className={cn(
-                                  "flex w-full items-center px-3 py-[5px] text-left transition-colors",
-                                  isActive ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
-                                )}
-                                onClick={() => {
-                                  onProviderChange?.(p.id);
-                                  setProviderMenuOpen(false);
-                                }}
-                              >
-                                <span className="font-mono text-[11px] truncate">{p.name}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Model selector (with effort for Codex) */}
+                {/* Model selector (with effort for Codex; provider picker lives inside this menu) */}
                 <div className="relative min-w-0 shrink" ref={modelMenuRef}>
                   <PromptInputButton
                     onClick={() => setModelMenuOpen((prev) => !prev)}
@@ -1595,9 +1527,47 @@ export function MessageInput({
                   {modelMenuOpen && (
                     <div className="absolute bottom-full left-0 mb-1.5 w-40 rounded-lg border bg-popover shadow-lg z-50 max-h-[50vh] flex flex-col overflow-hidden">
                       <div className="overflow-y-auto py-0.5 flex-1 min-h-0">
+                        {/* Provider group — per-turn endpoint: official Claude (Default) vs a configured provider */}
+                        {providers.length > 0 && (
+                          <>
+                            <div className="px-2 py-0.5 text-[9px] font-medium text-muted-foreground/50 uppercase tracking-wider">Provider</div>
+                            <button
+                              type="button"
+                              className={cn(
+                                "flex w-full items-center px-2 py-[5px] text-left transition-colors",
+                                !providerId ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
+                              )}
+                              onClick={() => {
+                                onProviderChange?.('');
+                                setModelMenuOpen(false);
+                              }}
+                            >
+                              <span className="font-mono text-[11px]">Default</span>
+                            </button>
+                            {providers.map((p) => {
+                              const isActive = p.id === providerId;
+                              return (
+                                <button
+                                  type="button"
+                                  key={`prov-${p.id}`}
+                                  className={cn(
+                                    "flex w-full items-center px-2 py-[5px] text-left transition-colors",
+                                    isActive ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
+                                  )}
+                                  onClick={() => {
+                                    onProviderChange?.(p.id);
+                                    setModelMenuOpen(false);
+                                  }}
+                                >
+                                  <span className="font-mono text-[11px] truncate">{p.name}</span>
+                                </button>
+                              );
+                            })}
+                          </>
+                        )}
                         {/* Claude models group */}
                         {MODEL_OPTIONS.some(m => m.group === 'claude' || (!m.group && !codexModelInfo.has(m.value))) && (
-                          <div className="px-2 py-0.5 text-[9px] font-medium text-muted-foreground/50 uppercase tracking-wider">Claude</div>
+                          <div className={cn("px-2 py-0.5 text-[9px] font-medium text-muted-foreground/50 uppercase tracking-wider", providers.length > 0 && "border-t border-border/50 mt-0.5 pt-1")}>Claude</div>
                         )}
                         {MODEL_OPTIONS.filter(m => m.group === 'claude' || (!m.group && !codexModelInfo.has(m.value))).map((opt) => {
                           const isActive = opt.value === currentModelValue;
