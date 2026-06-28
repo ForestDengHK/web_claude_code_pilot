@@ -178,7 +178,7 @@ export async function POST(request: NextRequest) {
     // When this provider's T1 lane has no transcript yet, bridge the prior
     // conversation as text so the model has context. Skip when resuming an existing lane.
     const laneForBridge = getProviderLane(session_id, providerKey);
-    const t1Resuming = !!(laneForBridge?.claude_session_id || (providerKey === 'default' ? session.sdk_session_id : ''));
+    const t1Resuming = !!(laneForBridge?.claude_session_id || (providerKey === 'default' ? (session.sdk_session_id || session.channel_session_id) : ''));
     if (!t1Resuming) {
       const providerBridge = buildProviderBridge(session_id, providerKey);
       if (providerBridge) effectivePrompt = `${providerBridge}\n\n---\n\n${effectivePrompt}`;
