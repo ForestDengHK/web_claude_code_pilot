@@ -107,12 +107,13 @@ interface ChatViewProps {
   modelName?: string;
   initialMode?: string;
   backend?: 'claude' | 'codex' | 'channels';
+  providerId?: string;
   advisorModel?: string | null;
   branchSummary?: string | null;
   branchSourceSessionId?: string | null;
 }
 
-export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, initialMode, backend = 'claude', advisorModel, branchSummary, branchSourceSessionId }: ChatViewProps) {
+export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, initialMode, backend = 'claude', providerId, advisorModel, branchSummary, branchSourceSessionId }: ChatViewProps) {
   const { setStreamingSessionId, workingDirectory, setWorkingDirectory, setPanelOpen, setArtifactPreview, setPendingApprovalSessionId, sessionTitle, addStreamingSession, updateStreamingSession, removeStreamingSession } = usePanel();
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   // Stale-closure-free mirror of `messages`, read inside recovery polling to
@@ -141,7 +142,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   );
   const [currentBackend, setCurrentBackendRaw] = useState<'claude' | 'codex' | 'channels'>(backend || 'claude');
   const [currentModel, setCurrentModelRaw] = useState(modelName || '');
-  const [currentProvider, setCurrentProviderRaw] = useState<string>(''); // '' = default/active
+  const [currentProvider, setCurrentProviderRaw] = useState<string>(providerId || ''); // '' = default/active
   const [currentEffort, setCurrentEffort] = useState<string | undefined>();
   // Fast mode — ephemeral per-view state, sent per turn (mirrors currentEffort,
   // which is also not persisted to the DB). Defaults off.

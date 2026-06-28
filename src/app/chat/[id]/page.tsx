@@ -27,6 +27,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
   const [sessionModel, setSessionModel] = useState<string>('');
   const [sessionMode, setSessionMode] = useState<string>('');
   const [sessionBackend, setSessionBackend] = useState<'claude' | 'codex' | 'channels'>('claude');
+  const [sessionProvider, setSessionProvider] = useState<string>('');
   // Gate ChatView mounting on session info being loaded — otherwise a Codex session
   // briefly mounts with backend='claude' (the initial default) and recovery polling
   // can mislabel the backend (e.g. "Claude is running..." on a Codex session).
@@ -135,6 +136,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           setSessionModel(data.session.model || '');
           setSessionMode(normalizeClaudeMode(data.session.mode));
           setSessionBackend(data.session.backend || 'claude');
+          setSessionProvider(data.session.provider_id || '');
           setSessionAdvisorModel(data.session.advisor_model || null);
           setBranchSummary(data.session.branch_summary || null);
           setBranchSourceSessionId(data.session.branch_source_session_id || null);
@@ -265,7 +267,7 @@ export default function ChatSessionPage({ params }: ChatSessionPageProps) {
           )}
         </div>
       )}
-      <ChatView key={id} sessionId={id} initialMessages={messages} initialHasMore={hasMore} modelName={sessionModel} initialMode={sessionMode} backend={sessionBackend} advisorModel={sessionAdvisorModel} branchSummary={branchSummary} branchSourceSessionId={branchSourceSessionId} />
+      <ChatView key={id} sessionId={id} initialMessages={messages} initialHasMore={hasMore} modelName={sessionModel} initialMode={sessionMode} backend={sessionBackend} providerId={sessionProvider} advisorModel={sessionAdvisorModel} branchSummary={branchSummary} branchSourceSessionId={branchSourceSessionId} />
     </div>
   );
 }
