@@ -21,6 +21,7 @@ import { registerPendingPermission } from './permission-registry';
 import { registerPendingInputRequest } from './input-request-registry';
 import { cacheRateLimit } from './rate-limit-cache';
 import { getSetting, getActiveProvider, getSession, updateSdkSessionId, getAllMessages, getProjectAdditionalDirectories } from './db';
+import { applyProviderEnv } from './provider-env';
 import { formatMessagesForContext } from './context-bridge';
 import { sendPushNotification } from './push-notifications';
 import { wasInterrupted } from './abort-registry';
@@ -259,6 +260,8 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
     advisorModel,
     disableTools,
     maxTurns,
+    provider,
+    providerResolved,
   } = options;
 
   let heartbeatInterval: ReturnType<typeof setInterval>;
@@ -305,58 +308,18 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
           }
         }
 
-        // Try to get config from active provider first
-        const activeProvider = getActiveProvider();
+        // Resolve provider: explicit per-turn override (providerResolved) wins; else legacy global active.
+        const activeProvider = providerResolved ? (provider ?? null) : getActiveProvider();
 
         if (activeProvider && activeProvider.api_key) {
-          // Clear all existing ANTHROPIC_* variables to prevent conflicts
-          for (const key of Object.keys(sdkEnv)) {
-            if (key.startsWith('ANTHROPIC_')) {
-              delete sdkEnv[key];
-            }
-          }
-
-          // Inject provider config — set both token variants so extra_env can clear the unwanted one
-          sdkEnv.ANTHROPIC_AUTH_TOKEN = activeProvider.api_key;
-          sdkEnv.ANTHROPIC_API_KEY = activeProvider.api_key;
-          if (activeProvider.base_url) {
-            sdkEnv.ANTHROPIC_BASE_URL = activeProvider.base_url;
-          }
-
-          // Inject extra environment variables
-          // Empty string values mean "delete this variable" (e.g. clear ANTHROPIC_API_KEY for AUTH_TOKEN-only providers)
-          try {
-            const extraEnv = JSON.parse(activeProvider.extra_env || '{}');
-            for (const [key, value] of Object.entries(extraEnv)) {
-              if (typeof value === 'string') {
-                if (value === '') {
-                  delete sdkEnv[key];
-                } else {
-                  sdkEnv[key] = value;
-                }
-              }
-            }
-          } catch {
-            // ignore malformed extra_env
-          }
+          applyProviderEnv(sdkEnv, activeProvider);
         } else {
-          // No active provider — check legacy DB settings first, then fall back to
-          // environment variables already present in process.env (copied into sdkEnv above).
-          // This allows users who set ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL
-          // in their shell environment to use them without configuring a provider in the UI.
+          // No provider — legacy DB settings, then process.env. (UNCHANGED from current 342-363 block.)
           const appToken = getSetting('anthropic_auth_token');
           const appBaseUrl = getSetting('anthropic_base_url');
-          if (appToken) {
-            sdkEnv.ANTHROPIC_AUTH_TOKEN = appToken;
-          }
-          if (appBaseUrl) {
-            sdkEnv.ANTHROPIC_BASE_URL = appBaseUrl;
-          }
-          // Pass CLAUDE_CODE_OAUTH_TOKEN for subscription OAuth auth (v2.0+)
-          if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
-            sdkEnv.CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN;
-          }
-          // If neither legacy settings nor env vars provide a key, log a warning
+          if (appToken) sdkEnv.ANTHROPIC_AUTH_TOKEN = appToken;
+          if (appBaseUrl) sdkEnv.ANTHROPIC_BASE_URL = appBaseUrl;
+          if (process.env.CLAUDE_CODE_OAUTH_TOKEN) sdkEnv.CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN;
           if (!appToken && !sdkEnv.ANTHROPIC_API_KEY && !sdkEnv.ANTHROPIC_AUTH_TOKEN && !sdkEnv.CLAUDE_CODE_OAUTH_TOKEN) {
             console.warn('[claude-client] No API key found: no active provider, no legacy settings, and no ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN/CLAUDE_CODE_OAUTH_TOKEN in environment');
           }

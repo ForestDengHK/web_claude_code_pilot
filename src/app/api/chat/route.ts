@@ -1,7 +1,8 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
-import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected } from '@/lib/db';
+import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected, setSessionProvider } from '@/lib/db';
 import { sendPushNotification } from '@/lib/push-notifications';
+import { resolveProvider } from '@/lib/provider-resolution';
 import { detectBackendSwitch, buildIncrementalBridge } from '@/lib/context-bridge';
 import { normalizeClaudeMode } from '@/lib/permission-modes';
 import { registerAbort, registerQuery, unregisterAbort } from '@/lib/abort-registry';
@@ -24,7 +25,7 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: NextRequest) {
   try {
     const body: SendMessageRequest & { files?: FileAttachment[]; toolTimeout?: number; effort?: string; fastMode?: boolean; disable_tools?: boolean; max_turns?: number } = await request.json();
-    const { session_id, content, prompt, model, mode, files, toolTimeout, effort, fastMode, disable_tools, max_turns } = body;
+    const { session_id, content, prompt, model, mode, files, toolTimeout, effort, fastMode, disable_tools, max_turns, provider } = body;
 
     if (!session_id || !content) {
       return new Response(JSON.stringify({ error: 'session_id and content are required' }), {
@@ -186,6 +187,9 @@ export async function POST(request: NextRequest) {
         markSessionMemoryInjected(session_id);
       }
     }
+    const { provider: resolvedProvider } = resolveProvider(provider ?? session.provider_id);
+    if (provider !== undefined) setSessionProvider(session_id, provider); // remember the per-turn pick
+
     const stream = streamClaude({
       prompt: effectivePrompt,
       sessionId: session_id,
@@ -204,6 +208,8 @@ export async function POST(request: NextRequest) {
       advisorModel: session.advisor_model || undefined,
       disableTools: disable_tools,
       maxTurns: max_turns,
+      provider: resolvedProvider,
+      providerResolved: true,
     });
 
     // Tee the stream: one for client, one for collecting the response

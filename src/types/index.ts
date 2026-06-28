@@ -614,4 +614,8 @@ export interface ClaudeStreamOptions {
   advisorModel?: string; // Advisor model for server-side review (Claude-only)
   disableTools?: boolean; // When true, pass tools: [] to disable all tool use
   maxTurns?: number; // Limit the number of agentic turns
+  /** Per-turn provider override. When set, used for env injection instead of getActiveProvider(). */
+  provider?: ApiProvider | null;
+  /** True when the caller already resolved `provider` (even to null), so skip getActiveProvider(). */
+  providerResolved?: boolean;
 }
