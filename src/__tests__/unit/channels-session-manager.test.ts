@@ -160,6 +160,29 @@ test('buildSpawnEnv mirrors CLAUDE_CODE_OAUTH_TOKEN into ANTHROPIC_AUTH_TOKEN (i
   assert.strictEqual(env.ANTHROPIC_AUTH_TOKEN, 'oauth-xyz');
 });
 
+test('buildSpawnEnv injects an active provider base_url + auth token', () => {
+  const provider = {
+    id: 'p9', name: 'OR', provider_type: 'openrouter', base_url: 'https://openrouter.ai/api',
+    api_key: 'sk-or-9', is_active: 1, sort_order: 0, extra_env: '{}', notes: '',
+    created_at: '', updated_at: '',
+  };
+  const env = buildSpawnEnv(
+    { CLAUDE_CODE_OAUTH_TOKEN: 'oauth-xyz' },
+    { sessionId: 'S-P', channelPort: 1, internalUrl: 'u' },
+    provider as any,
+  );
+  assert.strictEqual(env.ANTHROPIC_BASE_URL, 'https://openrouter.ai/api');
+  assert.strictEqual(env.ANTHROPIC_AUTH_TOKEN, 'sk-or-9');
+});
+
+test('buildSpawnEnv without a provider keeps the OAuth mirror (back-compat)', () => {
+  const env = buildSpawnEnv(
+    { CLAUDE_CODE_OAUTH_TOKEN: 'oauth-xyz' },
+    { sessionId: 'S-Q', channelPort: 1, internalUrl: 'u' },
+  );
+  assert.strictEqual(env.ANTHROPIC_AUTH_TOKEN, 'oauth-xyz');
+});
+
 test('buildSpawnEnv does NOT override an existing ANTHROPIC_AUTH_TOKEN', () => {
   const env = buildSpawnEnv(
     { CLAUDE_CODE_OAUTH_TOKEN: 'oauth-xyz', ANTHROPIC_AUTH_TOKEN: 'user-set' },

@@ -6,7 +6,8 @@ import {
   defaultDashboardEntryPath,
   type CodexDashboardRequest as DashboardEntryRequest,
 } from '@/lib/codex-artifacts';
-import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected } from '@/lib/db';
+import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected, setSessionProvider } from '@/lib/db';
+import { resolveProvider } from '@/lib/provider-resolution';
 import { sendPushNotification } from '@/lib/push-notifications';
 import { registerAbort, unregisterAbort } from '@/lib/abort-registry';
 import { killSession as killChannelSession } from '@/lib/channels/session-manager';
@@ -27,8 +28,8 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
-    const body: SendMessageRequest & { files?: FileAttachment[]; effort?: string; fastMode?: boolean } = await request.json();
-    const { session_id, content, prompt, model, files, effort, fastMode } = body;
+    const body: SendMessageRequest & { files?: FileAttachment[]; effort?: string; fastMode?: boolean; provider?: string } = await request.json();
+    const { session_id, content, prompt, model, files, effort, fastMode, provider } = body;
 
     if (!session_id || !content) {
       return new Response(JSON.stringify({ error: 'session_id and content are required' }), {
@@ -103,6 +104,10 @@ export async function POST(request: NextRequest) {
         : firstLine || content.slice(0, limit);
       updateSessionTitle(session_id, title);
     }
+
+    // Resolve provider: request override > session-persisted provider > default
+    const { provider: resolvedProvider } = resolveProvider(provider ?? session.provider_id);
+    if (provider !== undefined) setSessionProvider(session_id, provider);
 
     // Determine model: request override > session model > default setting
     const effectiveModel = model || session.model || getSetting('default_model') || undefined;
@@ -208,6 +213,7 @@ export async function POST(request: NextRequest) {
       skipPermissions: session.skip_permissions === 1,
       abortSignal: abortController.signal,
       dashboardRequest,
+      provider: resolvedProvider,
     });
 
     // Tee the stream: one for client, one for collecting the response

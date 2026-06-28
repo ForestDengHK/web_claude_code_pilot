@@ -4,6 +4,8 @@ import { execFileSync } from 'node:child_process';
 import * as pty from 'node-pty';
 import { findClaudeBinary } from '../platform';
 import { sanitizeEffortLevel } from '../effort';
+import { applyProviderEnv } from '../provider-env';
+import type { ApiProvider } from '@/types';
 
 const MCP_SERVER_PATH = path.join(process.cwd(), 'scripts', 'channels-mcp-server.mjs');
 
@@ -26,6 +28,7 @@ export interface ChannelSession {
   spawnedSkipPermissions?: boolean;
   spawnedPluginPathsKey?: string;  // serialized so we can equality-compare cheaply
   spawnedMcpConfigKey?: string;
+  spawnedProviderKey?: string;
 }
 
 /** Valid values for `claude --permission-mode`. */
@@ -143,6 +146,7 @@ export function buildSpawnArgs(input: SpawnArgsInput): string[] {
 export function buildSpawnEnv(
   base: NodeJS.ProcessEnv,
   runtime: { sessionId: string; channelPort: number; internalUrl: string },
+  provider?: ApiProvider | null,
 ): Record<string, string> {
   const env: Record<string, string> = {
     ...base,
@@ -150,7 +154,9 @@ export function buildSpawnEnv(
     CODEPILOT_CHANNEL_PORT: String(runtime.channelPort),
     CODEPILOT_INTERNAL_URL: runtime.internalUrl,
   } as Record<string, string>;
-  if (base.CLAUDE_CODE_OAUTH_TOKEN && !base.ANTHROPIC_AUTH_TOKEN && !base.ANTHROPIC_API_KEY) {
+  if (provider && provider.api_key) {
+    applyProviderEnv(env, provider);           // provider wins: clears ANTHROPIC_*, injects its config
+  } else if (base.CLAUDE_CODE_OAUTH_TOKEN && !base.ANTHROPIC_AUTH_TOKEN && !base.ANTHROPIC_API_KEY) {
     env.ANTHROPIC_AUTH_TOKEN = base.CLAUDE_CODE_OAUTH_TOKEN;
   }
   return env;
@@ -183,6 +189,7 @@ export interface EnsureInput {
   extraMcpServers?: Record<string, unknown>;
   /** Absolute plugin directories to load via repeated `--plugin-dir` flags. */
   pluginPaths?: string[];
+  provider?: ApiProvider | null;
 }
 
 /** Return a ready ChannelSession, spawning the claude process if needed. */
@@ -199,6 +206,7 @@ export async function ensureSession(input: EnsureInput): Promise<ChannelSession>
   // and avoids pulling in a deep-equal dep.
   const wantedPluginPathsKey = JSON.stringify(input.pluginPaths ?? []);
   const wantedMcpConfigKey = JSON.stringify(input.extraMcpServers ?? {});
+  const wantedProviderKey = input.provider?.id ?? 'default';
   if (existing && existing.state !== 'exited') {
     // Everything compared here is baked in at spawn time; if any of it
     // changed the running process can't honor it — kill it and fall through
@@ -211,7 +219,8 @@ export async function ensureSession(input: EnsureInput): Promise<ChannelSession>
       existing.spawnedFastMode !== wantedFastMode ||
       existing.spawnedSkipPermissions !== wantedSkipPermissions ||
       existing.spawnedPluginPathsKey !== wantedPluginPathsKey ||
-      existing.spawnedMcpConfigKey !== wantedMcpConfigKey;
+      existing.spawnedMcpConfigKey !== wantedMcpConfigKey ||
+      existing.spawnedProviderKey !== wantedProviderKey;
     if (!configChanged) {
       existing.lastUsedAt = Date.now();
       return existing;
@@ -249,7 +258,7 @@ export async function ensureSession(input: EnsureInput): Promise<ChannelSession>
       sessionId: input.codepilotSessionId,
       channelPort,
       internalUrl: input.internalUrl,
-    }),
+    }, input.provider ?? null),
   });
   // Drain PTY output. We read state from the on-disk transcript, not from
   // the PTY (the CLI's interactive UI — spinner, status bar, ANSI escapes —
@@ -272,6 +281,7 @@ export async function ensureSession(input: EnsureInput): Promise<ChannelSession>
     spawnedSkipPermissions: wantedSkipPermissions,
     spawnedPluginPathsKey: wantedPluginPathsKey,
     spawnedMcpConfigKey: wantedMcpConfigKey,
+    spawnedProviderKey: wantedProviderKey,
   };
   reg.set(input.codepilotSessionId, session);
   proc.onExit(({ exitCode, signal }) => {

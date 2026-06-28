@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { getSession as getDbSession, updateChannelSessionId } from './db';
 import { findClaudeBinary } from './platform';
 import { ensureSession, killSession } from './channels/session-manager';
+import type { ApiProvider } from '@/types';
 import { tailTranscript, transcriptPath } from './channels/transcript-tailer';
 import { subscribeChannelEvents } from './channels/event-bus';
 import { resolveFinalReplyText } from './channels/reply-dedup';
@@ -86,6 +87,8 @@ export interface ChannelsStreamOptions {
    * STALL_TIMEOUT_MS of transcript silence elapses.
    */
   abortSignal?: AbortSignal;
+  /** Active provider to inject into the PTY env; null/undefined = default Claude auth. */
+  provider?: ApiProvider | null;
   /**
    * Codex-style dashboard update for T1: the model writes this JSON entry file
    * during the turn, and on a clean turn-end the server reads it and appends it
@@ -240,6 +243,7 @@ function runChannelsTurn(opts: ChannelsStreamOptions): ReadableStream<string> {
             skipPermissions: opts.skipPermissions,
             extraMcpServers,
             pluginPaths,
+            provider: opts.provider ?? null,
           });
           emit({ type: 'status', data: JSON.stringify({ session_id: claudeSessionId }) });
 
