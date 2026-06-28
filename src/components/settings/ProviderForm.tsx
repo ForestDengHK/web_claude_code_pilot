@@ -32,7 +32,7 @@ import type { ApiProvider } from "@/types";
 
 const PROVIDER_PRESETS: Record<string, { base_url: string; extra_env: string }> = {
   anthropic: { base_url: "https://api.anthropic.com", extra_env: "{}" },
-  openrouter: { base_url: "https://openrouter.ai/api", extra_env: '{"ANTHROPIC_API_KEY":""}' },
+  openrouter: { base_url: "https://openrouter.ai/api", extra_env: '{"ANTHROPIC_API_KEY":"","CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS":"1","CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING":"1","DISABLE_PROMPT_CACHING":"1"}' },
   bedrock: { base_url: "", extra_env: '{"CLAUDE_CODE_USE_BEDROCK":"1","AWS_REGION":"us-east-1","CLAUDE_CODE_SKIP_BEDROCK_AUTH":"1"}' },
   vertex: { base_url: "", extra_env: '{"CLAUDE_CODE_USE_VERTEX":"1","CLOUD_ML_REGION":"us-east5","CLAUDE_CODE_SKIP_VERTEX_AUTH":"1"}' },
   foundry: { base_url: "", extra_env: '{"CLAUDE_CODE_USE_FOUNDRY":"1","ANTHROPIC_FOUNDRY_RESOURCE":"your-resource","CLAUDE_CODE_SKIP_FOUNDRY_AUTH":"1"}' },
@@ -300,6 +300,13 @@ function getEnvHelp(providerType: string): ReactNode {
         <>
           <p><HelpCode>ANTHROPIC_FOUNDRY_RESOURCE</HelpCode> &mdash; your Azure resource name (required).</p>
           <p className="text-muted-foreground">For direct key auth, add <HelpCode>ANTHROPIC_FOUNDRY_API_KEY</HelpCode>. The <HelpCode>CLAUDE_CODE_SKIP_FOUNDRY_AUTH</HelpCode> flag is for gateway auth.</p>
+        </>
+      );
+    case "custom":
+      return (
+        <>
+          <p>JSON key-value pairs passed as env vars to Claude Code.</p>
+          <p className="text-muted-foreground">If this endpoint serves non-Claude models, add <HelpCode>CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1</HelpCode> to extra_env to avoid API errors.</p>
         </>
       );
     default:
