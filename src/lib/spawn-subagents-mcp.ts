@@ -81,6 +81,23 @@ const SPAWN_TOOL_DESCRIPTION = [
   '- Forks are READ-ONLY: they may use Read/Glob/Grep/NotebookRead/WebFetch/WebSearch but cannot Edit, Write, or run Bash. If you need a fork that modifies files, use the regular Task tool instead.',
 ].join('\n');
 
+/**
+ * Strip ANSI / OSC / control-char noise from captured fork stderr so the
+ * real error text (status code, request_id, retry-after) is readable when
+ * surfaced in the tool result. Mirrors the cleaning the main query does for
+ * its own stderr stream in claude-client.ts.
+ */
+function cleanForkStderr(raw: string): string {
+  if (!raw) return '';
+  return raw
+    .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')              // CSI sequences (colors, cursor)
+    .replace(/\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)/g, '')   // OSC sequences
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')        // control chars (keep \t \n \r)
+    .replace(/\r\n?/g, '\n')                             // normalize CR/CRLF
+    .replace(/\n{3,}/g, '\n\n')                          // collapse blank lines
+    .trim();
+}
+
 export function createSpawnSubagentsMcp(config: SpawnSubagentsConfig): SpawnSubagentsHandle {
   const sessionRef: { current: string | null } = { current: null };
 
@@ -120,6 +137,16 @@ export function createSpawnSubagentsMcp(config: SpawnSubagentsConfig): SpawnSuba
           let result: string | null = null;
           let resultSubtype: string | null = null;
           let errorMessage: string | null = null;
+          // Capture the fork subprocess's stderr. This is where the Claude
+          // Code CLI writes the REAL API error detail (HTTP status,
+          // request_id, retry-after, rate-limit headers). Without it a failed
+          // fork only ever surfaces a generic one-liner and the true cause is
+          // lost — making it impossible to tell a server-side 529 overload
+          // apart from an account-level 429. Capped so a chatty fork can't
+          // bloat the tool result.
+          const stderrParts: string[] = [];
+          let stderrLen = 0;
+          const STDERR_CAP = 8000;
 
           try {
             for await (const msg of query({
@@ -140,6 +167,12 @@ export function createSpawnSubagentsMcp(config: SpawnSubagentsConfig): SpawnSuba
                 // transcript is not user-visible in CodePilot's chat list.
                 persistSession: false,
                 includePartialMessages: false,
+                stderr: (data: string) => {
+                  if (stderrLen >= STDERR_CAP) return;
+                  const slice = data.slice(0, STDERR_CAP - stderrLen);
+                  stderrParts.push(slice);
+                  stderrLen += slice.length;
+                },
               },
             })) {
               if (msg.type === 'result') {
@@ -148,6 +181,11 @@ export function createSpawnSubagentsMcp(config: SpawnSubagentsConfig): SpawnSuba
                 // SDKResultMessage; narrow the union before reading it.
                 if (msg.subtype === 'success') {
                   result = msg.result;
+                } else if ('errors' in msg && (msg as { errors?: unknown }).errors) {
+                  // Non-success result: keep the structured error detail the
+                  // SDK surfaces (request_id, status, message) so we can
+                  // return it instead of swallowing it.
+                  errorMessage = JSON.stringify((msg as { errors?: unknown }).errors);
                 }
               }
             }
@@ -162,6 +200,7 @@ export function createSpawnSubagentsMcp(config: SpawnSubagentsConfig): SpawnSuba
             result,
             subtype: resultSubtype,
             error: errorMessage,
+            stderr: cleanForkStderr(stderrParts.join('')),
           };
         })
       );
@@ -177,13 +216,19 @@ export function createSpawnSubagentsMcp(config: SpawnSubagentsConfig): SpawnSuba
       for (const r of results) {
         const num = r.idx + 1;
         const elapsed = `${(r.elapsedMs / 1000).toFixed(1)}s`;
+        // On any non-success fork, append the captured subprocess stderr so
+        // the real underlying cause (rate-limit status code, request_id,
+        // retry-after, etc.) is visible to the user instead of swallowed.
+        const diag = r.stderr
+          ? `\n\n<details><summary>fork stderr (subprocess diagnostic)</summary>\n\n\`\`\`\n${r.stderr.slice(-2000)}\n\`\`\`\n</details>`
+          : '';
         if (r.error) {
-          lines.push(`\n---\n\n## Subagent ${num} — failed (${elapsed})\n\n${r.error}`);
+          lines.push(`\n---\n\n## Subagent ${num} — failed (${elapsed})\n\n${r.error}${diag}`);
           continue;
         }
         if (!r.ok) {
           lines.push(
-            `\n---\n\n## Subagent ${num} — incomplete (${elapsed}, subtype=${r.subtype ?? 'unknown'})\n\n${r.result || '(no text returned)'}`
+            `\n---\n\n## Subagent ${num} — incomplete (${elapsed}, subtype=${r.subtype ?? 'unknown'})\n\n${r.result || '(no text returned)'}${diag}`
           );
           continue;
         }

@@ -8,6 +8,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import type { ServerMessage, ClientMessage } from '@/lib/terminal/provider';
 import { TerminalPaneHeader } from './TerminalPaneHeader';
+import { TerminalAccessoryBar } from './TerminalAccessoryBar';
 
 interface TerminalPaneProps {
   paneId: string;
@@ -35,10 +36,39 @@ export function TerminalPane({
   const [status, setStatus] = useState<'connecting' | 'ready' | 'error'>('connecting');
   const [errorMsg, setErrorMsg] = useState('');
 
+  // Sticky Ctrl for the accessory key bar (phones lack a physical Ctrl key). The
+  // ref is read inside the once-mounted onData handler; the state drives the UI.
+  const [ctrlArmed, setCtrlArmed] = useState(false);
+  const ctrlArmedRef = useRef(false);
+  const setCtrl = useCallback((v: boolean) => {
+    ctrlArmedRef.current = v;
+    setCtrlArmed(v);
+  }, []);
+
+  // The accessory bar only helps where the keyboard is missing those keys, so
+  // show it on touch devices / narrow screens, not on a desktop with a keyboard.
+  const [showBar, setShowBar] = useState(false);
+
   const sendJson = useCallback((msg: ClientMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(msg));
     }
+  }, []);
+
+  // Send a raw key sequence from the accessory bar through the normal input
+  // channel, clear any armed Ctrl, and keep xterm focused so typing continues.
+  const sendKey = useCallback((seq: string) => {
+    sendJson({ type: 'input', data: seq });
+    if (ctrlArmedRef.current) setCtrl(false);
+    termRef.current?.focus();
+  }, [sendJson, setCtrl]);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(pointer: coarse), (max-width: 768px)');
+    const update = () => setShowBar(mq.matches);
+    update();
+    mq.addEventListener('change', update);
+    return () => mq.removeEventListener('change', update);
   }, []);
 
   // Mount xterm.js, measure actual size, then open WebSocket with those dimensions
@@ -76,7 +106,19 @@ export function TerminalPane({
 
     termRef.current = term;
     fitRef.current = fitAddon;
-    term.onData((data) => sendJson({ type: 'input', data }));
+    term.onData((data) => {
+      let out = data;
+      // If Ctrl is armed, fold the next typed character to its control code
+      // (e.g. 'r' → \x12 = Ctrl-R) so phone keyboards can reach Ctrl combos.
+      if (ctrlArmedRef.current) {
+        if (data.length === 1) {
+          const c = data.charCodeAt(0);
+          if (c >= 64 && c <= 122) out = String.fromCharCode(c & 0x1f);
+        }
+        setCtrl(false);
+      }
+      sendJson({ type: 'input', data: out });
+    });
 
     let disposed = false;
 
@@ -209,6 +251,13 @@ export function TerminalPane({
           style={{ visibility: status === 'ready' ? 'visible' : 'hidden' }}
         />
       </div>
+      {showBar && status === 'ready' && (
+        <TerminalAccessoryBar
+          onKey={sendKey}
+          ctrlArmed={ctrlArmed}
+          onToggleCtrl={() => setCtrl(!ctrlArmedRef.current)}
+        />
+      )}
     </div>
   );
 }
