@@ -41,6 +41,7 @@ export interface ChatSession {
   view_mode?: string | null; // 'verbose' | 'normal' | 'summary', NULL = 'normal'
   source?: string | null; // e.g. 'scheduled' for sessions spawned by the scheduler
   scheduled_task_id?: string | null;
+  provider_id?: string;
 }
 
 // ==========================================
@@ -251,6 +252,7 @@ export interface SendMessageRequest {
   prompt?: string;
   model?: string;
   mode?: string;
+  provider?: string;
 }
 
 export interface CodexReviewLineRange {

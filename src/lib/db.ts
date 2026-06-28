@@ -301,6 +301,9 @@ function migrateDb(db: Database.Database): void {
   if (!colNames.includes('branch_summary')) {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN branch_summary TEXT");
   }
+  if (!colNames.includes('provider_id')) {
+    db.exec("ALTER TABLE chat_sessions ADD COLUMN provider_id TEXT NOT NULL DEFAULT ''");
+  }
   if (!colNames.includes('branch_source_session_id')) {
     db.exec("ALTER TABLE chat_sessions ADD COLUMN branch_source_session_id TEXT");
   }
@@ -602,6 +605,10 @@ export function updateSessionTitle(id: string, title: string): void {
 export function updateSdkSessionId(id: string, sdkSessionId: string): void {
   const db = getDb();
   db.prepare('UPDATE chat_sessions SET sdk_session_id = ? WHERE id = ?').run(sdkSessionId, id);
+}
+
+export function setSessionProvider(sessionId: string, providerId: string): void {
+  getDb().prepare('UPDATE chat_sessions SET provider_id = ? WHERE id = ?').run(providerId, sessionId);
 }
 
 export function updateCodexThreadId(id: string, codexThreadId: string): void {
