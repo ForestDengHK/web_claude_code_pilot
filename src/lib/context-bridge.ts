@@ -8,7 +8,7 @@
  * No LLM call — purely text extraction for speed and cost.
  */
 
-import { getAllMessages, getMessagesSince, getSession, getLastAssistantBackend, updateLastBridgedMsgId } from '@/lib/db';
+import { getAllMessages, getMessagesSince, getSession, getLastAssistantBackend, updateLastBridgedMsgId, getProviderLane, setProviderLaneBridgedMsgId } from '@/lib/db';
 import { parseMessageContent } from '@/types';
 import type { Message } from '@/types';
 
@@ -329,5 +329,56 @@ export function buildIncrementalBridge(
   const lastGapMsg = messagesForBridge[messagesForBridge.length - 1];
   updateLastBridgedMsgId(sessionId, targetBackend, lastGapMsg.id);
 
+  return parts.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Provider Lane Bridge
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a plain-text bridge for the first turn a given provider sees in a session
+ * (or the gap since it was last bridged). Each provider has its own transcript lane,
+ * so when you switch to a provider whose lane is new/behind, it needs the prior
+ * conversation as text (it cannot resume another provider's .jsonl).
+ *
+ * Mirrors buildIncrementalBridge but keyed on the provider lane cursor instead of
+ * the per-vendor last_*_bridged_msg_id. Returns '' when there is no gap.
+ */
+export function buildProviderBridge(
+  sessionId: string,
+  providerKey: string,
+  options?: { maxRecentTurns?: number },
+): string {
+  const maxRecentTurns = options?.maxRecentTurns ?? 10;
+  const lane = getProviderLane(sessionId, providerKey);
+  const gapMessages = getMessagesSince(sessionId, lane?.last_bridged_msg_id || null);
+  if (gapMessages.length === 0) return '';
+
+  // Exclude the just-saved current user message (sent separately as the prompt).
+  const lastMsg = gapMessages[gapMessages.length - 1];
+  const forBridge = lastMsg.role === 'user' ? gapMessages.slice(0, -1) : gapMessages;
+  if (forBridge.length === 0) return '';
+
+  const simple: SimpleMessage[] = forBridge.map((m: Message) => ({ role: m.role, content: m.content }));
+  const recentCount = maxRecentTurns * 2;
+  const splitIndex = Math.max(0, simple.length - recentCount);
+  const oldMessages = simple.slice(0, splitIndex);
+  const recentMessages = simple.slice(splitIndex);
+
+  const parts: string[] = ['[Context from your previous conversation in this session]'];
+  if (oldMessages.length > 0) {
+    const { topics, filePaths } = summarizeOlderMessages(oldMessages);
+    parts.push('', 'Summary of earlier discussion:');
+    if (topics.length > 0) parts.push(`Topics discussed: ${topics.join('; ')}`);
+    if (filePaths.length > 0) parts.push(`Files referenced: ${filePaths.join(', ')}`);
+  }
+  if (recentMessages.length > 0) {
+    const formatted = formatMessagesForContext(recentMessages);
+    if (formatted) parts.push('', `Recent messages (${recentMessages.length}):`, '---', formatted, '---');
+  }
+  parts.push('', 'Please continue the conversation with this context in mind.');
+
+  setProviderLaneBridgedMsgId(sessionId, providerKey, forBridge[forBridge.length - 1].id);
   return parts.join('\n');
 }
