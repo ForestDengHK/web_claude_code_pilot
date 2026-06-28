@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { getSession as getDbSession, updateChannelSessionId } from './db';
+import { getSession as getDbSession, updateChannelSessionId, getProviderLane, setProviderLaneSessionId } from './db';
 import { findClaudeBinary } from './platform';
 import { ensureSession, killSession } from './channels/session-manager';
 import type { ApiProvider } from '@/types';
@@ -89,6 +89,8 @@ export interface ChannelsStreamOptions {
   abortSignal?: AbortSignal;
   /** Active provider to inject into the PTY env; null/undefined = default Claude auth. */
   provider?: ApiProvider | null;
+  /** Provider key string (e.g. 'default', 'my-custom-provider') for lane-scoped resume. */
+  providerKey: string;
   /**
    * Codex-style dashboard update for T1: the model writes this JSON entry file
    * during the turn, and on a clean turn-end the server reads it and appends it
@@ -209,18 +211,24 @@ function runChannelsTurn(opts: ChannelsStreamOptions): ReadableStream<string> {
           const dashboardBeforeMtimeMs = opts.dashboardRequest
             ? readArtifactMtimeMs(resolveArtifactPath(opts.workingDirectory, opts.dashboardRequest.filePath))
             : null;
-          // Prefer channel_session_id; fall back to sdk_session_id when T1 is
-          // entered for the first time after T2 has already been logging turns
-          // (channel_session_id is empty in that case). Both backends write
-          // their transcripts to the same `~/.claude/projects/{cwd}/{id}.jsonl`
-          // scheme, so reusing the SDK's id lets `--resume` pick up the full
-          // conversation. The seed normally happens at switch-time via
-          // seedChannelResumeFromSdk, but this safety net covers paths that
-          // don't go through switchToTier (e.g. backend changed externally).
-          const existingId = db?.channel_session_id || db?.sdk_session_id || null;
-          const resuming = !!existingId;
-          const claudeSessionId = existingId ?? randomUUID();
-          if (!db?.channel_session_id) updateChannelSessionId(opts.sessionId, claudeSessionId);
+          // Prefer the provider-scoped lane; fall back to legacy columns only
+          // for the 'default' lane so existing official-Claude conversations
+          // keep resuming after upgrade (channel_session_id / sdk_session_id
+          // columns hold the legacy T1/T2 ids). Non-default providers always
+          // start fresh until their lane has been written.
+          const lane = getProviderLane(opts.sessionId, opts.providerKey);
+          const laneId = lane?.claude_session_id
+            || (opts.providerKey === 'default' ? (db?.channel_session_id || db?.sdk_session_id) : '')
+            || null;
+          const resuming = !!laneId;
+          const claudeSessionId = laneId ?? randomUUID();
+          if (!resuming) setProviderLaneSessionId(opts.sessionId, opts.providerKey, claudeSessionId);
+          // Keep legacy column in sync for the 'default' lane so T1↔T2
+          // cross-seeding (seedChannelResumeFromSdk / seedSdkResumeFromChannel)
+          // continues to work for official Claude.
+          if (opts.providerKey === 'default' && !db?.channel_session_id) {
+            updateChannelSessionId(opts.sessionId, claudeSessionId);
+          }
 
           // Load plugins + user/project MCP servers via the shared loader
           // so T1 sees the same set as T2. Done per turn (not cached) so the

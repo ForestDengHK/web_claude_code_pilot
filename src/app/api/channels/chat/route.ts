@@ -6,7 +6,8 @@ import {
   defaultDashboardEntryPath,
   type CodexDashboardRequest as DashboardEntryRequest,
 } from '@/lib/codex-artifacts';
-import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected, setSessionProvider } from '@/lib/db';
+import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected, setSessionProvider, getProviderLane, setProviderLaneSessionId } from '@/lib/db';
+import { buildProviderBridge } from '@/lib/context-bridge';
 import { resolveProvider } from '@/lib/provider-resolution';
 import { sendPushNotification } from '@/lib/push-notifications';
 import { registerAbort, unregisterAbort } from '@/lib/abort-registry';
@@ -106,7 +107,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Resolve provider: request override > session-persisted provider > default
-    const { provider: resolvedProvider } = resolveProvider(provider ?? session.provider_id);
+    const { provider: resolvedProvider, key: providerKey } = resolveProvider(provider ?? session.provider_id);
     if (provider !== undefined) setSessionProvider(session_id, provider);
 
     // Determine model: request override > session model > default setting
@@ -174,6 +175,15 @@ export async function POST(request: NextRequest) {
       effectivePrompt = `[Context from previous conversation]\n---\n${session.branch_summary}\n---\n\n${effectivePrompt}`;
     }
 
+    // When this provider's T1 lane has no transcript yet, bridge the prior
+    // conversation as text so the model has context. Skip when resuming an existing lane.
+    const laneForBridge = getProviderLane(session_id, providerKey);
+    const t1Resuming = !!(laneForBridge?.claude_session_id || (providerKey === 'default' ? session.sdk_session_id : ''));
+    if (!t1Resuming) {
+      const providerBridge = buildProviderBridge(session_id, providerKey);
+      if (providerBridge) effectivePrompt = `${providerBridge}\n\n---\n\n${effectivePrompt}`;
+    }
+
     // Inject memory context at most once per session, regardless of backend switches.
     // Mirrors the T2 (claude SDK) route — T1 has no built-in memory, so without this
     // toggling Memory ON in the UI would be a no-op when the channels backend is active.
@@ -214,13 +224,14 @@ export async function POST(request: NextRequest) {
       abortSignal: abortController.signal,
       dashboardRequest,
       provider: resolvedProvider,
+      providerKey,
     });
 
     // Tee the stream: one for client, one for collecting the response
     const [streamForClient, streamForCollect] = stream.tee();
 
     // Save assistant message in background; clean up abort registry when done
-    collectStreamResponse(streamForCollect, session_id).finally(() => {
+    collectStreamResponse(streamForCollect, session_id, providerKey).finally(() => {
       unregisterAbort(session_id);
     });
 
@@ -273,7 +284,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function collectStreamResponse(stream: ReadableStream<string>, sessionId: string) {
+async function collectStreamResponse(stream: ReadableStream<string>, sessionId: string, providerKey: string) {
   const reader = stream.getReader();
   const contentBlocks: MessageContentBlock[] = [];
   let currentText = '';
@@ -448,7 +459,8 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
               try {
                 const statusData = JSON.parse(event.data);
                 if (statusData.session_id) {
-                  updateSdkSessionId(sessionId, statusData.session_id);
+                  if (providerKey === 'default') updateSdkSessionId(sessionId, statusData.session_id);
+                  setProviderLaneSessionId(sessionId, providerKey, statusData.session_id);
                   setStreamStatusText(sessionId, `Connected (${statusData.model || statusData.session_id || 'model'})`);
                 } else if (statusData.notification) {
                   setStreamStatusText(sessionId, statusData.message || statusData.title || undefined);
@@ -464,7 +476,8 @@ async function collectStreamResponse(stream: ReadableStream<string>, sessionId: 
                 }
                 // Also capture session_id from result if we missed it from init
                 if (resultData.session_id) {
-                  updateSdkSessionId(sessionId, resultData.session_id);
+                  if (providerKey === 'default') updateSdkSessionId(sessionId, resultData.session_id);
+                  setProviderLaneSessionId(sessionId, providerKey, resultData.session_id);
                 }
               } catch {
                 // skip malformed result data
