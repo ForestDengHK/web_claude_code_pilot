@@ -121,6 +121,41 @@ export function buildSpawnArgs(input: SpawnArgsInput): string[] {
   return args;
 }
 
+/**
+ * Pure, testable: build the env for the channels PTY.
+ *
+ * Auth note — the fix for the recurring "⚠️ Please run /login · API Error: 401".
+ * The channels CLI runs *interactively* (a long-lived PTY). Interactive Claude
+ * Code resolves auth in this order: ANTHROPIC_AUTH_TOKEN > the macOS Keychain
+ * login session > CLAUDE_CODE_OAUTH_TOKEN. Headless (the T2 SDK / `claude -p`)
+ * is the opposite — it honors CLAUDE_CODE_OAUTH_TOKEN directly, which is why T2
+ * never 401s. So forwarding only CLAUDE_CODE_OAUTH_TOKEN (via `...process.env`)
+ * leaves the interactive PTY pinned to the Keychain login session, whose
+ * short-lived (~8h) access token goes stale on a long-lived process — and once
+ * that token has no refresh token it can never re-mint, so every send 401s.
+ *
+ * We mirror the subscription token into ANTHROPIC_AUTH_TOKEN so the long-lived
+ * OAuth token is used directly as the bearer and the Keychain is never
+ * consulted: same Max-subscription billing, no 8h staleness, no refresh race.
+ * Only for the subscription-token path — if the user already configured an
+ * explicit ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN we leave their choice alone.
+ */
+export function buildSpawnEnv(
+  base: NodeJS.ProcessEnv,
+  runtime: { sessionId: string; channelPort: number; internalUrl: string },
+): Record<string, string> {
+  const env: Record<string, string> = {
+    ...base,
+    CODEPILOT_SESSION_ID: runtime.sessionId,
+    CODEPILOT_CHANNEL_PORT: String(runtime.channelPort),
+    CODEPILOT_INTERNAL_URL: runtime.internalUrl,
+  } as Record<string, string>;
+  if (base.CLAUDE_CODE_OAUTH_TOKEN && !base.ANTHROPIC_AUTH_TOKEN && !base.ANTHROPIC_API_KEY) {
+    env.ANTHROPIC_AUTH_TOKEN = base.CLAUDE_CODE_OAUTH_TOKEN;
+  }
+  return env;
+}
+
 /** Auto-confirm the dev-channels prompt by sending Enter a few times after boot. */
 function autoConfirm(proc: pty.IPty): void {
   for (const delayMs of [6000, 11000, 15000]) {
@@ -210,12 +245,11 @@ export async function ensureSession(input: EnsureInput): Promise<ChannelSession>
   });
   const proc = pty.spawn(claudeBin, args, {
     name: 'xterm-256color', cols: 120, rows: 40, cwd: input.cwd,
-    env: {
-      ...process.env,
-      CODEPILOT_SESSION_ID: input.codepilotSessionId,
-      CODEPILOT_CHANNEL_PORT: String(channelPort),
-      CODEPILOT_INTERNAL_URL: input.internalUrl,
-    } as Record<string, string>,
+    env: buildSpawnEnv(process.env, {
+      sessionId: input.codepilotSessionId,
+      channelPort,
+      internalUrl: input.internalUrl,
+    }),
   });
   // Drain PTY output. We read state from the on-disk transcript, not from
   // the PTY (the CLI's interactive UI — spinner, status bar, ANSI escapes —

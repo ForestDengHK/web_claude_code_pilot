@@ -3,7 +3,7 @@ import assert from 'node:assert';
 
 // Use require to avoid top-level await issues with CJS output (matches channels-db.test.ts style)
 /* eslint-disable @typescript-eslint/no-require-imports */
-const { buildSpawnArgs, allocatePort } = require('../../lib/channels/session-manager') as typeof import('../../lib/channels/session-manager');
+const { buildSpawnArgs, buildSpawnEnv, allocatePort } = require('../../lib/channels/session-manager') as typeof import('../../lib/channels/session-manager');
 
 test('buildSpawnArgs includes channels + mcp-config + pre-approved reply tool', () => {
   const args = buildSpawnArgs({
@@ -140,6 +140,46 @@ test('buildSpawnArgs omits --plugin-dir when pluginPaths is empty', () => {
     claudeSessionId: 'U-10', mcpConfigJson: '{}', pluginPaths: [],
   });
   assert.ok(!args.includes('--plugin-dir'));
+});
+
+test('buildSpawnEnv always sets the CODEPILOT_* runtime vars', () => {
+  const env = buildSpawnEnv({}, { sessionId: 'S-1', channelPort: 5123, internalUrl: 'http://127.0.0.1:4000' });
+  assert.strictEqual(env.CODEPILOT_SESSION_ID, 'S-1');
+  assert.strictEqual(env.CODEPILOT_CHANNEL_PORT, '5123');
+  assert.strictEqual(env.CODEPILOT_INTERNAL_URL, 'http://127.0.0.1:4000');
+});
+
+test('buildSpawnEnv mirrors CLAUDE_CODE_OAUTH_TOKEN into ANTHROPIC_AUTH_TOKEN (interactive auth fix)', () => {
+  // The crux of the 401 fix: the interactive PTY ignores CLAUDE_CODE_OAUTH_TOKEN
+  // and would otherwise fall to the (stale) Keychain login session. Mirroring it
+  // into ANTHROPIC_AUTH_TOKEN forces the bearer path, bypassing the Keychain.
+  const env = buildSpawnEnv(
+    { CLAUDE_CODE_OAUTH_TOKEN: 'oauth-xyz' },
+    { sessionId: 'S-2', channelPort: 1, internalUrl: 'u' },
+  );
+  assert.strictEqual(env.ANTHROPIC_AUTH_TOKEN, 'oauth-xyz');
+});
+
+test('buildSpawnEnv does NOT override an existing ANTHROPIC_AUTH_TOKEN', () => {
+  const env = buildSpawnEnv(
+    { CLAUDE_CODE_OAUTH_TOKEN: 'oauth-xyz', ANTHROPIC_AUTH_TOKEN: 'user-set' },
+    { sessionId: 'S-3', channelPort: 1, internalUrl: 'u' },
+  );
+  assert.strictEqual(env.ANTHROPIC_AUTH_TOKEN, 'user-set');
+});
+
+test('buildSpawnEnv leaves an explicit ANTHROPIC_API_KEY path untouched', () => {
+  const env = buildSpawnEnv(
+    { CLAUDE_CODE_OAUTH_TOKEN: 'oauth-xyz', ANTHROPIC_API_KEY: 'sk-ant-real' },
+    { sessionId: 'S-4', channelPort: 1, internalUrl: 'u' },
+  );
+  assert.strictEqual(env.ANTHROPIC_AUTH_TOKEN, undefined);
+  assert.strictEqual(env.ANTHROPIC_API_KEY, 'sk-ant-real');
+});
+
+test('buildSpawnEnv sets no auth token when CLAUDE_CODE_OAUTH_TOKEN is absent', () => {
+  const env = buildSpawnEnv({}, { sessionId: 'S-5', channelPort: 1, internalUrl: 'u' });
+  assert.strictEqual(env.ANTHROPIC_AUTH_TOKEN, undefined);
 });
 
 test('allocatePort returns a usable TCP port', async () => {
