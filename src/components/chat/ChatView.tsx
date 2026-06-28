@@ -141,6 +141,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   );
   const [currentBackend, setCurrentBackendRaw] = useState<'claude' | 'codex' | 'channels'>(backend || 'claude');
   const [currentModel, setCurrentModelRaw] = useState(modelName || '');
+  const [currentProvider, setCurrentProviderRaw] = useState<string>(''); // '' = default/active
   const [currentEffort, setCurrentEffort] = useState<string | undefined>();
   // Fast mode — ephemeral per-view state, sent per turn (mirrors currentEffort,
   // which is also not persisted to the DB). Defaults off.
@@ -404,6 +405,17 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: newModel }),
       }).catch(() => { /* silent */ });
+    }
+  }, [sessionId]);
+
+  const setCurrentProvider = useCallback((id: string) => {
+    setCurrentProviderRaw(id);
+    if (sessionId) {
+      fetch(`/api/chat/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider_id: id }),
+      }).catch(() => {});
     }
   }, [sessionId]);
 
@@ -1189,6 +1201,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             mode,
             model: branchMode ? branchModelOverride : currentModel,
             ...(files && files.length > 0 ? { files } : {}),
+            ...(currentProvider ? { provider: currentProvider } : {}),
             ...(currentEffort ? { effort: currentEffort } : {}),
             ...(currentFastMode ? { fastMode: true } : {}),
             ...(codexSkills && codexSkills.length > 0 ? { codexSkills } : {}),
@@ -2085,6 +2098,8 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         onEffortChange={setCurrentEffort}
         fastMode={currentFastMode}
         onFastModeChange={setCurrentFastMode}
+        providerId={currentProvider}
+        onProviderChange={setCurrentProvider}
         onSteered={(message) => setMessages((prev) => [...prev, message])}
       />
       {/* Image picker for `/img` with no path — browse & pick an image file. */}

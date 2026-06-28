@@ -102,6 +102,8 @@ interface MessageInputProps {
   onEffortChange?: (effort: string) => void;
   fastMode?: boolean;
   onFastModeChange?: (fastMode: boolean) => void;
+  providerId?: string;
+  onProviderChange?: (id: string) => void;
   /** Called after a steer message is successfully injected into the active
    *  Codex turn, with the persisted message so it can be rendered into the
    *  live conversation (Codex-only). */
@@ -571,6 +573,8 @@ export function MessageInput({
   onEffortChange,
   fastMode,
   onFastModeChange,
+  providerId,
+  onProviderChange,
   onSteered,
 }: MessageInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -578,6 +582,7 @@ export function MessageInput({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const modeMenuRef = useRef<HTMLDivElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
+  const providerMenuRef = useRef<HTMLDivElement>(null);
 
   const [popoverMode, setPopoverMode] = useState<PopoverMode>(null);
   const [popoverItems, setPopoverItems] = useState<PopoverItem[]>([]);
@@ -586,6 +591,8 @@ export function MessageInput({
   const [triggerPos, setTriggerPos] = useState<number | null>(null);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [providerMenuOpen, setProviderMenuOpen] = useState(false);
+  const [providers, setProviders] = useState<{ id: string; name: string }[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [dynamicModels, setDynamicModels] = useState<Array<{ value: string; label: string; group?: 'claude' | 'codex' }> | null>(null);
   const [codexModelInfo, setCodexModelInfo] = useState<Map<string, CodexModelInfo>>(new Map());
@@ -664,6 +671,18 @@ export function MessageInput({
     window.addEventListener('provider-changed', handler);
     return () => window.removeEventListener('provider-changed', handler);
   }, [fetchModels]);
+
+  // Fetch available providers for the per-turn provider picker
+  useEffect(() => {
+    const load = () =>
+      fetch('/api/providers')
+        .then(r => r.ok ? r.json() : { providers: [] })
+        .then(d => setProviders((d.providers || []).map((p: { id: string; name: string }) => ({ id: p.id, name: p.name }))))
+        .catch(() => {});
+    load();
+    window.addEventListener('provider-changed', load);
+    return () => window.removeEventListener('provider-changed', load);
+  }, []);
 
   const MODEL_OPTIONS = dynamicModels || FALLBACK_MODEL_OPTIONS;
 
@@ -1183,6 +1202,18 @@ export function MessageInput({
     return () => document.removeEventListener('mousedown', handler);
   }, [modelMenuOpen]);
 
+  // Click outside to close provider menu
+  useEffect(() => {
+    if (!providerMenuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (providerMenuRef.current && !providerMenuRef.current.contains(e.target as Node)) {
+        setProviderMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [providerMenuOpen]);
+
   const filteredItems = popoverItems.filter((item) =>
     item.label.toLowerCase().includes(popoverFilter.toLowerCase())
   );
@@ -1489,6 +1520,60 @@ export function MessageInput({
                     </div>
                   )}
                 </div>
+
+                {/* Provider picker — only rendered when multiple providers are configured */}
+                {providers.length > 0 && (
+                  <div className="relative" ref={providerMenuRef}>
+                    <PromptInputButton
+                      onClick={() => setProviderMenuOpen((prev) => !prev)}
+                    >
+                      <span className="text-xs max-w-[8ch] truncate sm:max-w-none">
+                        {providerId ? (providers.find(p => p.id === providerId)?.name ?? 'Default') : 'Default'}
+                      </span>
+                      <HugeiconsIcon icon={ArrowDown01Icon} className={cn("h-2.5 w-2.5 shrink-0 transition-transform duration-200", providerMenuOpen && "rotate-180")} />
+                    </PromptInputButton>
+
+                    {providerMenuOpen && (
+                      <div className="absolute bottom-full left-0 mb-1.5 w-44 rounded-lg border bg-popover shadow-lg overflow-hidden z-50">
+                        <div className="py-0.5">
+                          {/* Default entry — clears provider override */}
+                          <button
+                            type="button"
+                            className={cn(
+                              "flex w-full items-center px-3 py-[5px] text-left transition-colors",
+                              !providerId ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
+                            )}
+                            onClick={() => {
+                              onProviderChange?.('');
+                              setProviderMenuOpen(false);
+                            }}
+                          >
+                            <span className="font-mono text-[11px]">Default</span>
+                          </button>
+                          {providers.map((p) => {
+                            const isActive = p.id === providerId;
+                            return (
+                              <button
+                                type="button"
+                                key={p.id}
+                                className={cn(
+                                  "flex w-full items-center px-3 py-[5px] text-left transition-colors",
+                                  isActive ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
+                                )}
+                                onClick={() => {
+                                  onProviderChange?.(p.id);
+                                  setProviderMenuOpen(false);
+                                }}
+                              >
+                                <span className="font-mono text-[11px] truncate">{p.name}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Model selector (with effort for Codex) */}
                 <div className="relative min-w-0 shrink" ref={modelMenuRef}>

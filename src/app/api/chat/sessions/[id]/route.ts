@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { deleteSession, getSession, updateSessionWorkingDirectory, updateSessionTitle, updateSessionModel, updateSessionMode, updateSessionSkipPermissions, clearSessionMessages, updateSessionBackend, updateSessionAdvisorModel, updateSessionGitBranch, updateSessionMemoryEnabled, updateSessionViewMode } from '@/lib/db';
+import { deleteSession, getSession, updateSessionWorkingDirectory, updateSessionTitle, updateSessionModel, updateSessionMode, updateSessionSkipPermissions, clearSessionMessages, updateSessionBackend, updateSessionAdvisorModel, updateSessionGitBranch, updateSessionMemoryEnabled, updateSessionViewMode, setSessionProvider } from '@/lib/db';
 
 export async function GET(
   _request: NextRequest,
@@ -63,6 +63,9 @@ export async function PATCH(
     }
     if (body.view_mode !== undefined) {
       updateSessionViewMode(id, body.view_mode);
+    }
+    if (body.provider_id !== undefined) {
+      setSessionProvider(id, body.provider_id || '');
     }
 
     const updated = getSession(id);
