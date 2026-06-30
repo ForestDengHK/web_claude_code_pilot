@@ -137,6 +137,8 @@ function initDb(db: Database.Database): void {
       is_active INTEGER NOT NULL DEFAULT 0,
       sort_order INTEGER NOT NULL DEFAULT 0,
       extra_env TEXT NOT NULL DEFAULT '{}',
+      models TEXT NOT NULL DEFAULT '[]',
+      enabled INTEGER NOT NULL DEFAULT 1,
       notes TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -367,11 +369,23 @@ function migrateDb(db: Database.Database): void {
       is_active INTEGER NOT NULL DEFAULT 0,
       sort_order INTEGER NOT NULL DEFAULT 0,
       extra_env TEXT NOT NULL DEFAULT '{}',
+      models TEXT NOT NULL DEFAULT '[]',
       notes TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+
+  // Add models column to api_providers for databases created before this feature
+  const providerColumns = db.prepare("PRAGMA table_info(api_providers)").all() as { name: string }[];
+  if (!providerColumns.some((c) => c.name === 'models')) {
+    db.exec("ALTER TABLE api_providers ADD COLUMN models TEXT NOT NULL DEFAULT '[]'");
+  }
+  // Add enabled column — providers default to enabled (shown in the model menu);
+  // toggling off hides a provider from the picker without deleting its config/key.
+  if (!providerColumns.some((c) => c.name === 'enabled')) {
+    db.exec("ALTER TABLE api_providers ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1");
+  }
 
   // Migrate existing settings to a default provider if api_providers is empty
   const providerCount = db.prepare('SELECT COUNT(*) as count FROM api_providers').get() as { count: number };
@@ -1213,7 +1227,7 @@ export function createProvider(data: CreateProviderRequest): ApiProvider {
   const sortOrder = (maxRow.max_order ?? -1) + 1;
 
   db.prepare(
-    'INSERT INTO api_providers (id, name, provider_type, base_url, api_key, is_active, sort_order, extra_env, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO api_providers (id, name, provider_type, base_url, api_key, is_active, sort_order, extra_env, models, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(
     id,
     data.name,
@@ -1223,6 +1237,7 @@ export function createProvider(data: CreateProviderRequest): ApiProvider {
     0,
     sortOrder,
     data.extra_env || '{}',
+    data.models || '[]',
     data.notes || '',
     now,
     now,
@@ -1242,12 +1257,14 @@ export function updateProvider(id: string, data: UpdateProviderRequest): ApiProv
   const baseUrl = data.base_url ?? existing.base_url;
   const apiKey = data.api_key ?? existing.api_key;
   const extraEnv = data.extra_env ?? existing.extra_env;
+  const models = data.models ?? existing.models;
   const notes = data.notes ?? existing.notes;
   const sortOrder = data.sort_order ?? existing.sort_order;
+  const enabled = data.enabled ?? existing.enabled;
 
   db.prepare(
-    'UPDATE api_providers SET name = ?, provider_type = ?, base_url = ?, api_key = ?, extra_env = ?, notes = ?, sort_order = ?, updated_at = ? WHERE id = ?'
-  ).run(name, providerType, baseUrl, apiKey, extraEnv, notes, sortOrder, now, id);
+    'UPDATE api_providers SET name = ?, provider_type = ?, base_url = ?, api_key = ?, extra_env = ?, models = ?, notes = ?, sort_order = ?, enabled = ?, updated_at = ? WHERE id = ?'
+  ).run(name, providerType, baseUrl, apiKey, extraEnv, models, notes, sortOrder, enabled, now, id);
 
   return getProvider(id);
 }

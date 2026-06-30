@@ -1,9 +1,9 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
-import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected, setSessionProvider, getProviderLane, setProviderLaneSessionId } from '@/lib/db';
+import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected, setSessionProvider, setProviderLaneSessionId } from '@/lib/db';
 import { sendPushNotification } from '@/lib/push-notifications';
 import { resolveProvider } from '@/lib/provider-resolution';
-import { detectBackendSwitch, buildIncrementalBridge, buildProviderBridge } from '@/lib/context-bridge';
+import { detectBackendSwitch, buildIncrementalBridge, buildProviderBridge, resolveLaneResumeId } from '@/lib/context-bridge';
 import { normalizeClaudeMode } from '@/lib/permission-modes';
 import { registerAbort, registerQuery, unregisterAbort } from '@/lib/abort-registry';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
@@ -190,13 +190,14 @@ export async function POST(request: NextRequest) {
     const { provider: resolvedProvider, key: providerKey } = resolveProvider(provider ?? session.provider_id);
     if (provider !== undefined) setSessionProvider(session_id, provider); // remember the per-turn pick
 
-    // Lane-scoped resume id. Back-compat: the 'default' lane falls back to the legacy column
-    // so existing official-Claude conversations keep resuming after upgrade.
-    const lane = getProviderLane(session_id, providerKey);
-    const resumeId = (lane?.claude_session_id || (providerKey === 'default' ? session.sdk_session_id : '')) || undefined;
+    // Lane-scoped resume id. Back-compat: the 'default' lane falls back to the legacy
+    // column so existing official-Claude conversations keep resuming after upgrade. A
+    // dangling id (transcript missing on disk) is dropped here so the lane self-heals
+    // instead of wedging every turn with "No conversation found".
+    const resumeId = resolveLaneResumeId(session_id, providerKey, session.sdk_session_id);
 
-    // When this provider's lane has no transcript yet, it can't --resume the prior
-    // conversation; bridge it as text instead. (Skip when resuming an existing lane.)
+    // When this provider's lane has no transcript to resume, bridge the prior
+    // conversation as text instead. (Skip when resuming an existing lane.)
     if (!resumeId) {
       const providerBridge = buildProviderBridge(session_id, providerKey);
       if (providerBridge) effectivePrompt = `${providerBridge}\n\n---\n\n${effectivePrompt}`;

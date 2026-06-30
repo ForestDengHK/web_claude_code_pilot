@@ -8,7 +8,8 @@
  * No LLM call — purely text extraction for speed and cost.
  */
 
-import { getAllMessages, getMessagesSince, getSession, getLastAssistantBackend, updateLastBridgedMsgId, getProviderLane, setProviderLaneBridgedMsgId } from '@/lib/db';
+import { getAllMessages, getMessagesSince, getSession, getLastAssistantBackend, updateLastBridgedMsgId, getProviderLane, setProviderLaneBridgedMsgId, setProviderLaneSessionId } from '@/lib/db';
+import { claudeTranscriptExists } from '@/lib/claude-session-parser';
 import { parseMessageContent } from '@/types';
 import type { Message } from '@/types';
 
@@ -381,4 +382,33 @@ export function buildProviderBridge(
 
   setProviderLaneBridgedMsgId(sessionId, providerKey, forBridge[forBridge.length - 1].id);
   return parts.join('\n');
+}
+
+/**
+ * Resolve the `--resume` session id for a provider lane, dropping dangling ids.
+ *
+ * A lane stores the CLI session id of its last turn so the next turn can resume that
+ * transcript. But a turn that died before the CLI flushed its .jsonl leaves an id that
+ * points at nothing; resuming it fails with "No conversation found" and wedges the lane
+ * on every future turn. When the transcript is missing we clear the lane and return
+ * undefined so the caller starts a fresh session and text-bridges the history instead —
+ * the lane self-heals on its next turn.
+ *
+ * The `default` lane falls back to the legacy per-session sdk_session_id for back-compat
+ * with conversations created before per-provider lanes existed.
+ */
+export function resolveLaneResumeId(
+  sessionId: string,
+  providerKey: string,
+  legacyDefaultSessionId: string,
+  transcriptExists: (claudeSessionId: string) => boolean = claudeTranscriptExists,
+): string | undefined {
+  const lane = getProviderLane(sessionId, providerKey);
+  const stored = lane?.claude_session_id || (providerKey === 'default' ? legacyDefaultSessionId : '');
+  if (!stored) return undefined;
+  if (!transcriptExists(stored)) {
+    if (lane?.claude_session_id) setProviderLaneSessionId(sessionId, providerKey, '');
+    return undefined;
+  }
+  return stored;
 }

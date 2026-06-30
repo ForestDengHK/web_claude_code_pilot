@@ -63,6 +63,7 @@ export interface ProviderFormData {
   base_url: string;
   api_key: string;
   extra_env: string;
+  models: string;
   notes: string;
 }
 
@@ -118,6 +119,25 @@ function HelpLink({ url, label }: { url: string; label: string }) {
       {label}
     </a>
   );
+}
+
+// Convert a stored models JSON array (e.g. '["a","b"]') to textarea text (one per line).
+function modelsJsonToText(json: string | undefined): string {
+  try {
+    const arr = JSON.parse(json || "[]");
+    return Array.isArray(arr) ? arr.filter((m) => typeof m === "string").join("\n") : "";
+  } catch {
+    return "";
+  }
+}
+
+// Convert textarea text (one slug per line/comma) to a JSON array string.
+function modelsTextToJson(text: string): string {
+  const slugs = text
+    .split(/[\n,]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return JSON.stringify(slugs);
 }
 
 // ---------------------------------------------------------------------------
@@ -336,6 +356,8 @@ export function ProviderForm({
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [extraEnv, setExtraEnv] = useState("{}");
+  // One model slug per line (e.g. "openai/gpt-5"). Serialized to a JSON array on save.
+  const [models, setModels] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -354,6 +376,7 @@ export function ProviderForm({
       setBaseUrl(provider.base_url);
       setApiKey("");
       setExtraEnv(provider.extra_env || "{}");
+      setModels(modelsJsonToText(provider.models));
       setNotes(provider.notes || "");
       setPresetHint("");
       // Show advanced if extra_env has content
@@ -371,6 +394,7 @@ export function ProviderForm({
       // Use extra_env from preset if provided, otherwise look up by type
       const envStr = initialPreset.extra_env || PROVIDER_PRESETS[initialPreset.provider_type]?.extra_env || "{}";
       setExtraEnv(envStr);
+      setModels("");
       setNotes("");
       setPresetHint(initialPreset.name);
       try {
@@ -385,6 +409,7 @@ export function ProviderForm({
       setBaseUrl(PROVIDER_PRESETS.anthropic.base_url);
       setApiKey("");
       setExtraEnv("{}");
+      setModels("");
       setNotes("");
       setShowAdvanced(false);
       setPresetHint("");
@@ -431,6 +456,7 @@ export function ProviderForm({
         base_url: baseUrl.trim(),
         api_key: apiKey,
         extra_env: extraEnv,
+        models: modelsTextToJson(models),
         notes: notes.trim(),
       });
       onOpenChange(false);
@@ -519,6 +545,27 @@ export function ProviderForm({
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               className="font-mono text-sm"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="provider-models" className="text-xs text-muted-foreground">
+                Models
+              </Label>
+              <FieldHelp>
+                <p>One model slug per line — these appear in the chat model picker under this provider.</p>
+                <p className="text-muted-foreground">e.g. <HelpCode>openai/gpt-5</HelpCode>, <HelpCode>qwen3.6-plus</HelpCode>, <HelpCode>deepseek-chat</HelpCode></p>
+                <p className="text-muted-foreground">Leave empty for Anthropic-direct/Bedrock/Vertex (uses Claude&apos;s built-in model list).</p>
+              </FieldHelp>
+            </div>
+            <Textarea
+              id="provider-models"
+              placeholder={"openai/gpt-5\nqwen3.6-plus"}
+              value={models}
+              onChange={(e) => setModels(e.target.value)}
+              className="font-mono text-sm min-h-[60px]"
+              rows={2}
             />
           </div>
 

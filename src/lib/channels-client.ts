@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { getSession as getDbSession, updateChannelSessionId, getProviderLane, setProviderLaneSessionId } from './db';
+import { getSession as getDbSession, updateChannelSessionId, setProviderLaneSessionId } from './db';
+import { resolveLaneResumeId } from './context-bridge';
 import { findClaudeBinary } from './platform';
 import { ensureSession, killSession } from './channels/session-manager';
 import type { ApiProvider } from '@/types';
@@ -215,11 +216,16 @@ function runChannelsTurn(opts: ChannelsStreamOptions): ReadableStream<string> {
           // for the 'default' lane so existing official-Claude conversations
           // keep resuming after upgrade (channel_session_id / sdk_session_id
           // columns hold the legacy T1/T2 ids). Non-default providers always
-          // start fresh until their lane has been written.
-          const lane = getProviderLane(opts.sessionId, opts.providerKey);
-          const laneId = lane?.claude_session_id
-            || (opts.providerKey === 'default' ? (db?.channel_session_id || db?.sdk_session_id) : '')
-            || null;
+          // start fresh until their lane has been written. resolveLaneResumeId
+          // also drops a dangling id (transcript missing on disk) and clears the
+          // lane, so a turn that died before the PTY flushed its .jsonl can't
+          // pin every later turn to `--resume <missing>` → "channel never
+          // started the turn (no dequeue)".
+          const laneId = resolveLaneResumeId(
+            opts.sessionId,
+            opts.providerKey,
+            db?.channel_session_id || db?.sdk_session_id || '',
+          ) ?? null;
           const resuming = !!laneId;
           const claudeSessionId = laneId ?? randomUUID();
           if (!resuming) setProviderLaneSessionId(opts.sessionId, opts.providerKey, claudeSessionId);

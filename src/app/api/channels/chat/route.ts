@@ -6,8 +6,8 @@ import {
   defaultDashboardEntryPath,
   type CodexDashboardRequest as DashboardEntryRequest,
 } from '@/lib/codex-artifacts';
-import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected, setSessionProvider, getProviderLane, setProviderLaneSessionId } from '@/lib/db';
-import { buildProviderBridge } from '@/lib/context-bridge';
+import { addMessage, addDraftMessage, updateDraftMessage, finalizeDraftMessage, getDb, getSession, updateSessionTitle, updateSdkSessionId, getSetting, isMemoryEnabled, buildMemoryContext, hasSessionInjectedMemory, markSessionMemoryInjected, setSessionProvider, setProviderLaneSessionId } from '@/lib/db';
+import { buildProviderBridge, resolveLaneResumeId } from '@/lib/context-bridge';
 import { resolveProvider } from '@/lib/provider-resolution';
 import { sendPushNotification } from '@/lib/push-notifications';
 import { registerAbort, unregisterAbort } from '@/lib/abort-registry';
@@ -175,10 +175,11 @@ export async function POST(request: NextRequest) {
       effectivePrompt = `[Context from previous conversation]\n---\n${session.branch_summary}\n---\n\n${effectivePrompt}`;
     }
 
-    // When this provider's T1 lane has no transcript yet, bridge the prior
-    // conversation as text so the model has context. Skip when resuming an existing lane.
-    const laneForBridge = getProviderLane(session_id, providerKey);
-    const t1Resuming = !!(laneForBridge?.claude_session_id || (providerKey === 'default' ? (session.sdk_session_id || session.channel_session_id) : ''));
+    // When this provider's T1 lane has no transcript to resume, bridge the prior
+    // conversation as text so the model has context. A dangling lane id (transcript
+    // gone) resolves to no-resume here too, so the recovered turn gets its bridge
+    // and stays consistent with the fresh session channels-client will spawn.
+    const t1Resuming = !!resolveLaneResumeId(session_id, providerKey, session.sdk_session_id || session.channel_session_id || '');
     if (!t1Resuming) {
       const providerBridge = buildProviderBridge(session_id, providerKey);
       if (providerBridge) effectivePrompt = `${providerBridge}\n\n---\n\n${effectivePrompt}`;

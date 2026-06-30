@@ -590,7 +590,7 @@ export function MessageInput({
   const [triggerPos, setTriggerPos] = useState<number | null>(null);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const [providers, setProviders] = useState<{ id: string; name: string }[]>([]);
+  const [providers, setProviders] = useState<{ id: string; name: string; models: string[] }[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [dynamicModels, setDynamicModels] = useState<Array<{ value: string; label: string; group?: 'claude' | 'codex' }> | null>(null);
   const [codexModelInfo, setCodexModelInfo] = useState<Map<string, CodexModelInfo>>(new Map());
@@ -670,12 +670,30 @@ export function MessageInput({
     return () => window.removeEventListener('provider-changed', handler);
   }, [fetchModels]);
 
-  // Fetch available providers for the per-turn provider picker
+  // Fetch available providers for the per-turn provider picker.
+  // Each provider's models[] populates its model group in the picker. For
+  // back-compat with providers that pinned the model via extra_env
+  // (ANTHROPIC_MODEL) instead of the models field, fall back to that slug.
   useEffect(() => {
     const load = () =>
       fetch('/api/providers')
         .then(r => r.ok ? r.json() : { providers: [] })
-        .then(d => setProviders((d.providers || []).map((p: { id: string; name: string }) => ({ id: p.id, name: p.name }))))
+        .then(d => setProviders((d.providers || [])
+          .filter((p: { enabled?: number }) => p.enabled !== 0)
+          .map((p: { id: string; name: string; models?: string; extra_env?: string }) => {
+          let models: string[] = [];
+          try {
+            const parsed = JSON.parse(p.models || '[]');
+            if (Array.isArray(parsed)) models = parsed.filter((m): m is string => typeof m === 'string' && m.length > 0);
+          } catch { /* ignore */ }
+          if (models.length === 0) {
+            try {
+              const env = JSON.parse(p.extra_env || '{}');
+              if (typeof env.ANTHROPIC_MODEL === 'string' && env.ANTHROPIC_MODEL) models = [env.ANTHROPIC_MODEL];
+            } catch { /* ignore */ }
+          }
+          return { id: p.id, name: p.name, models };
+        })))
         .catch(() => {});
     load();
     window.addEventListener('provider-changed', load);
@@ -1510,9 +1528,10 @@ export function MessageInput({
                 {/* Model selector (with effort for Codex; provider picker lives inside this menu) */}
                 <div className="relative min-w-0 shrink" ref={modelMenuRef}>
                   <PromptInputButton
+                    className="min-w-0 max-w-full"
                     onClick={() => setModelMenuOpen((prev) => !prev)}
                   >
-                    <span className="text-xs font-mono max-w-[10ch] truncate sm:max-w-none">
+                    <span className="text-xs font-mono min-w-0 max-w-[10ch] truncate sm:max-w-none">
                       {getShortModelName(currentModelOption.label)}
                       {currentModelEfforts.length > 0 && currentEffort && (
                         <span className="hidden sm:inline">{`\u00B7${effortShortLabel(currentEffort)}`}</span>
@@ -1527,50 +1546,12 @@ export function MessageInput({
                   {modelMenuOpen && (
                     <div className="absolute bottom-full left-0 mb-1.5 w-40 rounded-lg border bg-popover shadow-lg z-50 max-h-[50vh] flex flex-col overflow-hidden">
                       <div className="overflow-y-auto py-0.5 flex-1 min-h-0">
-                        {/* Provider group — per-turn endpoint: official Claude (Default) vs a configured provider */}
-                        {providers.length > 0 && (
-                          <>
-                            <div className="px-2 py-0.5 text-[9px] font-medium text-muted-foreground/50 uppercase tracking-wider">Provider</div>
-                            <button
-                              type="button"
-                              className={cn(
-                                "flex w-full items-center px-2 py-[5px] text-left transition-colors",
-                                !providerId ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
-                              )}
-                              onClick={() => {
-                                onProviderChange?.('');
-                                setModelMenuOpen(false);
-                              }}
-                            >
-                              <span className="font-mono text-[11px]">Default</span>
-                            </button>
-                            {providers.map((p) => {
-                              const isActive = p.id === providerId;
-                              return (
-                                <button
-                                  type="button"
-                                  key={`prov-${p.id}`}
-                                  className={cn(
-                                    "flex w-full items-center px-2 py-[5px] text-left transition-colors",
-                                    isActive ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
-                                  )}
-                                  onClick={() => {
-                                    onProviderChange?.(p.id);
-                                    setModelMenuOpen(false);
-                                  }}
-                                >
-                                  <span className="font-mono text-[11px] truncate">{p.name}</span>
-                                </button>
-                              );
-                            })}
-                          </>
-                        )}
-                        {/* Claude models group */}
+                        {/* Claude models group — official Claude endpoint (provider = '') */}
                         {MODEL_OPTIONS.some(m => m.group === 'claude' || (!m.group && !codexModelInfo.has(m.value))) && (
-                          <div className={cn("px-2 py-0.5 text-[9px] font-medium text-muted-foreground/50 uppercase tracking-wider", providers.length > 0 && "border-t border-border/50 mt-0.5 pt-1")}>Claude</div>
+                          <div className="px-2 py-0.5 text-[9px] font-medium text-muted-foreground/50 uppercase tracking-wider">Claude</div>
                         )}
                         {MODEL_OPTIONS.filter(m => m.group === 'claude' || (!m.group && !codexModelInfo.has(m.value))).map((opt) => {
-                          const isActive = opt.value === currentModelValue;
+                          const isActive = opt.value === currentModelValue && !providerId;
                           return (
                             <button
                               type="button"
@@ -1580,6 +1561,7 @@ export function MessageInput({
                                 isActive ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
                               )}
                               onClick={() => {
+                                onProviderChange?.(''); // official Claude
                                 onModelChange?.(opt.value);
                                 // Claude-family models run on BOTH T1 (channels) and
                                 // T2 (claude SDK). Only promote a non-Claude backend
@@ -1605,12 +1587,12 @@ export function MessageInput({
                             </button>
                           );
                         })}
-                        {/* Codex models group */}
+                        {/* Codex models group — official Codex endpoint (provider = '') */}
                         {MODEL_OPTIONS.some(m => m.group === 'codex' || codexModelInfo.has(m.value)) && (
                           <div className="px-2 py-0.5 text-[9px] font-medium text-muted-foreground/50 uppercase tracking-wider border-t border-border/50 mt-0.5 pt-1">Codex</div>
                         )}
                         {MODEL_OPTIONS.filter(m => m.group === 'codex' || codexModelInfo.has(m.value)).map((opt) => {
-                          const isActive = opt.value === currentModelValue;
+                          const isActive = opt.value === currentModelValue && !providerId;
                           return (
                             <button
                               type="button"
@@ -1620,6 +1602,7 @@ export function MessageInput({
                                 isActive ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
                               )}
                               onClick={() => {
+                                onProviderChange?.(''); // official Codex
                                 onModelChange?.(opt.value);
                                 if (backend !== 'codex') onBackendChange?.('codex');
                                 const nextEffort = getDefaultEffortForModel(
@@ -1637,6 +1620,57 @@ export function MessageInput({
                             >
                               <span className="font-mono text-[11px]">{opt.label}</span>
                             </button>
+                          );
+                        })}
+                        {/* Per-provider model groups — picking a model also selects
+                            its provider (endpoint + auth), atomically. Providers with
+                            no declared models fall back to the Claude catalog so
+                            real-Claude endpoints (Bedrock/Vertex) stay selectable. */}
+                        {providers.map((p) => {
+                          const providerModels = p.models.length > 0
+                            ? p.models.map((slug) => ({ value: slug, label: slug }))
+                            : MODEL_OPTIONS
+                                .filter(m => m.group === 'claude' || (!m.group && !codexModelInfo.has(m.value)))
+                                .map((m) => ({ value: m.value, label: m.label }));
+                          if (providerModels.length === 0) return null;
+                          return (
+                            <div key={`prov-${p.id}`}>
+                              <div className="px-2 py-0.5 text-[9px] font-medium text-muted-foreground/50 uppercase tracking-wider border-t border-border/50 mt-0.5 pt-1 truncate">{p.name}</div>
+                              {providerModels.map((opt) => {
+                                const isActive = opt.value === currentModelValue && providerId === p.id;
+                                return (
+                                  <button
+                                    type="button"
+                                    key={`${p.id}-${opt.value}`}
+                                    className={cn(
+                                      "flex w-full items-center px-2 py-[5px] text-left transition-colors",
+                                      isActive ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
+                                    )}
+                                    onClick={() => {
+                                      onProviderChange?.(p.id);
+                                      onModelChange?.(opt.value);
+                                      // Third-party providers run on the Claude SDK (T2)
+                                      // or channels (T1) — never Codex. Demote codex →
+                                      // claude; preserve channels so T1 provider lanes work.
+                                      if (backend === 'codex') onBackendChange?.('claude');
+                                      const nextEffort = getDefaultEffortForModel(
+                                        opt.value,
+                                        claudeEffortInfo,
+                                        codexModelInfo,
+                                      );
+                                      if (nextEffort) {
+                                        onEffortChange?.(nextEffort);
+                                      } else {
+                                        onEffortChange?.('');
+                                        setModelMenuOpen(false);
+                                      }
+                                    }}
+                                  >
+                                    <span className="font-mono text-[11px] truncate">{opt.label}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
                           );
                         })}
                         {/* Channels backend option */}

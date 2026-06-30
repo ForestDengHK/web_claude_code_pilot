@@ -1540,7 +1540,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         }
       }
     },
-    [sessionId, isStreaming, setStreamingSessionId, setPendingApprovalSessionId, mode, currentModel, stopRecovery, startRecovery, currentBackend, currentEffort, currentFastMode]
+    [sessionId, isStreaming, setStreamingSessionId, setPendingApprovalSessionId, mode, currentModel, currentProvider, stopRecovery, startRecovery, currentBackend, currentEffort, currentFastMode]
   );
 
   // Keep sendMessageRef in sync so timeout auto-retry can call it

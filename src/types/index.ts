@@ -182,6 +182,8 @@ export interface ApiProvider {
   is_active: number; // SQLite boolean: 0 or 1
   sort_order: number;
   extra_env: string; // JSON string of Record<string, string>
+  models: string; // JSON string of string[] — model slugs this provider serves (e.g. ["qwen3.6-plus","openai/gpt-5"])
+  enabled: number; // SQLite boolean: 1 = shown in model menu, 0 = hidden (config/key kept)
   notes: string;
   created_at: string;
   updated_at: string;
@@ -193,6 +195,7 @@ export interface CreateProviderRequest {
   base_url?: string;
   api_key?: string;
   extra_env?: string;
+  models?: string;
   notes?: string;
 }
 
@@ -202,8 +205,10 @@ export interface UpdateProviderRequest {
   base_url?: string;
   api_key?: string;
   extra_env?: string;
+  models?: string;
   notes?: string;
   sort_order?: number;
+  enabled?: number;
 }
 
 export interface ProvidersResponse {

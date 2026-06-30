@@ -50,6 +50,33 @@ export function getClaudeProjectsDir(): string {
 }
 
 /**
+ * True if a Claude Code transcript (.jsonl) for this session id exists on disk.
+ * Scans every project directory because session ids are globally-unique UUIDs.
+ *
+ * Used to guard `--resume <id>`: a turn that died before the CLI flushed its
+ * transcript leaves a dangling id whose resume fails with "No conversation found",
+ * wedging the lane permanently.
+ */
+export function claudeTranscriptExists(
+  sessionId: string,
+  projectsDir: string = getClaudeProjectsDir(),
+): boolean {
+  if (!sessionId) return false;
+  if (!fs.existsSync(projectsDir)) return false;
+  try {
+    for (const projectDir of fs.readdirSync(projectsDir, { withFileTypes: true })) {
+      if (!projectDir.isDirectory()) continue;
+      if (fs.existsSync(path.join(projectsDir, projectDir.name, `${sessionId}.jsonl`))) {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+/**
  * List all available Claude Code CLI sessions.
  * Scans ~/.claude/projects/ for .jsonl files and extracts metadata.
  */

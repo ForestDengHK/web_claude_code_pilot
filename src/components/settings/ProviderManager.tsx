@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -64,6 +65,8 @@ export function ProviderManager() {
 
   // Activating state
   const [activatingId, setActivatingId] = useState<string | null>(null);
+  // Show/hide-in-menu toggle state
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const fetchProviders = useCallback(async () => {
     try {
@@ -201,6 +204,31 @@ export function ProviderManager() {
     }
   };
 
+  // Toggle whether a provider appears in the chat model menu (keeps config/key).
+  const handleToggleEnabled = async (provider: ApiProvider) => {
+    const next = provider.enabled === 0 ? 1 : 0;
+    setTogglingId(provider.id);
+    try {
+      const res = await fetch(`/api/providers/${provider.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (res.ok) {
+        const result = await res.json();
+        setProviders((prev) =>
+          prev.map((p) => (p.id === provider.id ? result.provider : p))
+        );
+        // Notify the chat model menu to refresh its provider list.
+        window.dispatchEvent(new CustomEvent('provider-changed'));
+      }
+    } catch {
+      // ignore
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
   const sorted = [...providers].sort((a, b) => a.sort_order - b.sort_order);
 
   return (
@@ -322,6 +350,8 @@ export function ProviderManager() {
           {sorted.map((provider) => {
             const isActive = provider.is_active === 1;
             const isActivating = activatingId === provider.id;
+            const isHidden = provider.enabled === 0;
+            const isToggling = togglingId === provider.id;
 
             return (
               <div
@@ -330,7 +360,7 @@ export function ProviderManager() {
                   isActive
                     ? "border-border bg-green-500/5"
                     : "border-border/50 hover:border-border"
-                }`}
+                } ${isHidden ? "opacity-55" : ""}`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
@@ -346,6 +376,11 @@ export function ProviderManager() {
                           Active
                         </Badge>
                       )}
+                      {isHidden && (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-muted-foreground border-border">
+                          Hidden
+                        </Badge>
+                      )}
                     </div>
                     {provider.base_url && (
                       <p className="text-xs text-muted-foreground font-mono truncate mt-0.5">
@@ -356,6 +391,15 @@ export function ProviderManager() {
 
                   {/* Actions */}
                   <div className="flex items-center gap-1 shrink-0">
+                    {/* Show/hide this provider in the chat model menu */}
+                    <Switch
+                      size="sm"
+                      checked={!isHidden}
+                      disabled={isToggling}
+                      onCheckedChange={() => handleToggleEnabled(provider)}
+                      title={isHidden ? "Hidden from model menu — click to show" : "Shown in model menu — click to hide"}
+                      className="mr-1"
+                    />
                     {isActive ? (
                       <Button
                         variant="ghost"
